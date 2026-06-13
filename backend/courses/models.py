@@ -1,0 +1,150 @@
+from django.db import models
+from django.conf import settings
+
+
+class Module(models.Model):
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    icon = models.CharField(max_length=10)  # emoji
+    order = models.PositiveIntegerField(default=0)
+    money_chat_criteria = models.TextField(
+        blank=True,
+        help_text=(
+            'Optional custom Money Chat checkpoints for this module. If set, these '
+            'are merged with the AI-generated benchmarks. One criterion per line.'
+        ),
+    )
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return self.title
+
+
+class Lesson(models.Model):
+    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name='lessons')
+    title = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return f"{self.module.title} — {self.title}"
+
+
+class Question(models.Model):
+    TYPE_CHOICES = [
+        ('true_false', 'True / False'),
+        ('mcq', 'Multiple Choice'),
+        ('select_all', 'Select All That Apply'),
+    ]
+
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='questions')
+    question_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    prompt = models.TextField()
+    explanation = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return f"{self.lesson.title} Q{self.order}: {self.prompt[:60]}"
+
+
+class Answer(models.Model):
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='answers')
+    text = models.CharField(max_length=500)
+    is_correct = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"{'✓' if self.is_correct else '✗'} {self.text[:60]}"
+
+
+class OnboardingQuestion(models.Model):
+    """Editable financial-literacy onboarding question (was hardcoded)."""
+    slug = models.SlugField(
+        max_length=50, unique=True,
+        help_text='Stable identifier sent to/from clients (e.g. "interest").',
+    )
+    topic = models.CharField(max_length=100)
+    emoji = models.CharField(max_length=10, blank=True)
+    vibe = models.CharField(max_length=255, blank=True, help_text='Short friendly framing line.')
+    prompt = models.TextField()
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f'{self.topic}: {self.prompt[:50]}'
+
+
+class OnboardingOption(models.Model):
+    question = models.ForeignKey(
+        OnboardingQuestion, on_delete=models.CASCADE, related_name='options'
+    )
+    key = models.CharField(max_length=10, help_text='Option id sent to clients (e.g. "a").')
+    text = models.CharField(max_length=255)
+    is_correct = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f"{'✓' if self.is_correct else '✗'} {self.text[:50]}"
+
+
+class UserProgress(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='lesson_progress')
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='user_progress')
+    completed_at = models.DateTimeField(auto_now_add=True)
+    xp_earned = models.PositiveIntegerField(default=50)
+    stars = models.PositiveIntegerField(default=3)  # 1-3
+
+    class Meta:
+        unique_together = ('user', 'lesson')
+
+    def __str__(self):
+        return f"{self.user.email} completed {self.lesson.title}"
+
+
+class UserStats(models.Model):
+    BADGE_CHOICES = [
+        ('first_lesson', 'First Step'),
+        ('module_1', 'Budget Master'),
+        ('module_2', 'Savings Pro'),
+        ('module_3', 'Credit Wise'),
+        ('module_4', 'Tax Savvy'),
+        ('module_5', 'Insurance Expert'),
+        ('streak_7', '7-Day Streak'),
+        ('streak_30', '30-Day Streak'),
+        ('all_courses', 'Graduate'),
+    ]
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='stats')
+    xp = models.PositiveIntegerField(default=0)
+    streak_days = models.PositiveIntegerField(default=0)
+    last_active = models.DateField(null=True, blank=True)
+    badges = models.JSONField(default=list)
+    bot_bucks = models.PositiveIntegerField(default=0)
+    equipped_character = models.ForeignKey(
+        'moneyverse.Character',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    # Onboarding financial-literacy assessment (the Big Five questions).
+    onboarding_completed = models.BooleanField(default=False)
+    onboarding_score = models.PositiveIntegerField(
+        default=0, help_text='Number of onboarding questions answered correctly.'
+    )
+    onboarding_answers = models.JSONField(
+        default=dict, blank=True, help_text='Raw {question_id: option_id} answers.'
+    )
+
+    def __str__(self):
+        return f"{self.user.email} — {self.xp} XP, {self.streak_days} day streak"

@@ -4,6 +4,7 @@
     "slug": "moneybot",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "moneybot",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -13,11 +14,30 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.moneybot.app"
+      "bundleIdentifier": "com.moneybot.app",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.153959048568-ji63jtsd7eo4e6u1bpn7743t34l15hu0"
+            ]
+          }
+        ]
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          }
+        ]
+      }
     },
     "android": {
+      "package": "com.moneybot.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0A0A0A",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -25,6 +45,24 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "apiUrl": "https://REPLACE-WITH-RAILWAY-DOMAIN.up.railway.app/api"
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-secure-store",
+      "expo-asset",
+      "expo-splash-screen",
+      "expo-web-browser",
+      "expo-apple-authentication",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo.png",
+          "color": "#3DDC5F"
+        }
+      ]
+    ]
   }
 }

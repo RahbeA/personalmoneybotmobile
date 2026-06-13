@@ -1,21 +1,22 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
-  Image,
   StyleSheet,
   TouchableOpacity,
   Animated,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors } from '../theme/colors';
-
-const { width, height } = Dimensions.get('window');
+import { useTheme } from '../context/ThemeContext';
+import { BrandLogo } from '../components/brand';
+import LegalFooter from '../components/LegalFooter';
+import { BRAND_URL, LANDING } from '../constants/brandCopy';
 
 export default function LandingScreen({ navigation }) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
   const logoScale = useRef(new Animated.Value(0.7)).current;
@@ -53,10 +54,10 @@ export default function LandingScreen({ navigation }) {
 
   return (
     <LinearGradient
-      colors={['#0A0A0A', '#0F1A0F', '#0A0A0A']}
+      colors={colors.bgGradient}
       style={styles.gradient}
     >
-      <StatusBar style="light" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.container}>
         {/* Logo */}
         <Animated.View
@@ -65,11 +66,7 @@ export default function LandingScreen({ navigation }) {
             { opacity: fadeAnim, transform: [{ scale: logoScale }] },
           ]}
         >
-          <Image
-            source={require('../../assets/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+          <BrandLogo size="hero" />
         </Animated.View>
 
         {/* Tagline */}
@@ -82,9 +79,9 @@ export default function LandingScreen({ navigation }) {
             },
           ]}
         >
-          <Text style={styles.tagline}>Your money, automated.</Text>
+          <Text style={styles.tagline}>{LANDING.tagline}</Text>
           <Text style={styles.subTagline}>
-            Smart financial tracking powered by AI.
+            {LANDING.subTagline}
           </Text>
         </Animated.View>
 
@@ -126,14 +123,15 @@ export default function LandingScreen({ navigation }) {
 
         {/* Footer */}
         <Animated.View style={[styles.footer, { opacity: buttonOpacity }]}>
-          <Text style={styles.footerText}>getmoneybot.com</Text>
+          <Text style={styles.footerText}>{BRAND_URL}</Text>
+          <LegalFooter style={styles.legalFooter} />
         </Animated.View>
       </SafeAreaView>
     </LinearGradient>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   gradient: {
     flex: 1,
   },
@@ -146,10 +144,6 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     marginBottom: 32,
-  },
-  logo: {
-    width: width * 0.62,
-    height: width * 0.62,
   },
   taglineContainer: {
     alignItems: 'center',
@@ -227,10 +221,17 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute',
     bottom: 24,
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 32,
   },
   footerText: {
     color: colors.textMuted,
     fontSize: 12,
     letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  legalFooter: {
+    marginTop: 4,
   },
 });

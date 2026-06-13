@@ -20,6 +20,12 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
+    name = models.CharField(max_length=255, blank=True, default='')
+    avatar_url = models.URLField(blank=True, default='')
+    # Google's stable account identifier (the "sub" claim). Null for password-only users.
+    google_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    # Apple's stable account identifier (the "sub" claim). Null for non-Apple users.
+    apple_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)

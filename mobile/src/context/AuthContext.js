@@ -46,6 +46,31 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  async function googleSignIn(idToken) {
+    const data = await authApi.google(idToken);
+    await SecureStore.setItemAsync('authToken', data.token);
+    await SecureStore.setItemAsync('authUser', JSON.stringify(data.user));
+    setToken(data.token);
+    setUser(data.user);
+    return data;
+  }
+
+  async function appleSignIn({ identityToken, email, fullName }) {
+    const data = await authApi.apple({ identityToken, email, fullName });
+    await SecureStore.setItemAsync('authToken', data.token);
+    await SecureStore.setItemAsync('authUser', JSON.stringify(data.user));
+    setToken(data.token);
+    setUser(data.user);
+    return data;
+  }
+
+  async function clearSession() {
+    await SecureStore.deleteItemAsync('authToken');
+    await SecureStore.deleteItemAsync('authUser');
+    setToken(null);
+    setUser(null);
+  }
+
   async function logout() {
     try {
       if (token) {
@@ -54,15 +79,22 @@ export function AuthProvider({ children }) {
     } catch {
       // logout API call is best-effort
     } finally {
-      await SecureStore.deleteItemAsync('authToken');
-      await SecureStore.deleteItemAsync('authUser');
-      setToken(null);
-      setUser(null);
+      await clearSession();
     }
   }
 
+  async function deleteAccount() {
+    if (!token) {
+      throw new Error('You must be signed in to delete your account.');
+    }
+    await authApi.deleteAccount(token);
+    await clearSession();
+  }
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, token, loading, login, register, googleSignIn, appleSignIn, logout, deleteAccount }}
+    >
       {children}
     </AuthContext.Provider>
   );

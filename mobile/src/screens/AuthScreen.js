@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,10 +15,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 import { useAuth } from '../context/AuthContext';
-import { colors } from '../theme/colors';
+import { useTheme } from '../context/ThemeContext';
+import { BrandLogo } from '../components/brand';
+import LegalFooter from '../components/LegalFooter';
+import { BRAND_NAME } from '../constants/brandCopy';
+import { isGoogleConfigured } from '../config/google';
+import { buildGoogleAuthConfig, getGoogleSignInBlockedMessage } from '../utils/googleAuth';
+
+// Lets the auth popup/redirect resolve correctly when returning to the app.
+WebBrowser.maybeCompleteAuthSession();
 
 export default function AuthScreen({ route, navigation }) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const initialMode = route?.params?.mode || 'login';
   const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState('');
@@ -26,9 +38,15 @@ export default function AuthScreen({ route, navigation }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
-  const { login, register } = useAuth();
+  const { login, register, googleSignIn } = useAuth();
+
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
+    buildGoogleAuthConfig(),
+  );
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -40,6 +58,62 @@ export default function AuthScreen({ route, navigation }) {
       Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
   }, []);
+
+  // Handle the result of the Google auth flow once the user returns to the app.
+  useEffect(() => {
+    if (!response) return;
+
+    if (response.type === 'success') {
+      const idToken = response.params?.id_token;
+      if (!idToken) {
+        setError('Google did not return a valid token. Try again.');
+        setGoogleLoading(false);
+        shake();
+        return;
+      }
+      (async () => {
+        try {
+          await googleSignIn(idToken);
+          // Navigation handled by root navigator watching auth state
+        } catch (err) {
+          setError(err.message || 'Google sign-in failed. Try again.');
+          shake();
+        } finally {
+          setGoogleLoading(false);
+        }
+      })();
+    } else if (response.type === 'error') {
+      setError('Google sign-in was cancelled or failed.');
+      setGoogleLoading(false);
+      shake();
+    } else {
+      // dismiss / cancel
+      setGoogleLoading(false);
+    }
+  }, [response]);
+
+  async function handleGoogle() {
+    setError('');
+    const blocked = getGoogleSignInBlockedMessage();
+    if (blocked) {
+      setError(blocked);
+      shake();
+      return;
+    }
+    if (!isGoogleConfigured) {
+      setError('Google sign-in is not configured yet.');
+      shake();
+      return;
+    }
+    setGoogleLoading(true);
+    try {
+      await promptAsync();
+    } catch (err) {
+      setError('Could not open Google sign-in.');
+      setGoogleLoading(false);
+      shake();
+    }
+  }
 
   function shake() {
     Animated.sequence([
@@ -56,6 +130,13 @@ export default function AuthScreen({ route, navigation }) {
     setEmail('');
     setPassword('');
     setConfirmPassword('');
+    if (newMode === 'login') {
+      setAcceptedTerms(false);
+    }
+  }
+
+  function openLegal(document) {
+    navigation.navigate('Legal', { document });
   }
 
   async function handleSubmit() {
@@ -68,6 +149,11 @@ export default function AuthScreen({ route, navigation }) {
     }
 
     if (mode === 'register') {
+      if (!acceptedTerms) {
+        setError('Please agree to the Terms of Service and Privacy Policy.');
+        shake();
+        return;
+      }
       if (password !== confirmPassword) {
         setError('Passwords do not match.');
         shake();
@@ -99,8 +185,8 @@ export default function AuthScreen({ route, navigation }) {
   const isLogin = mode === 'login';
 
   return (
-    <LinearGradient colors={['#0A0A0A', '#0F1A0F', '#0A0A0A']} style={styles.gradient}>
-      <StatusBar style="light" />
+    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -121,11 +207,7 @@ export default function AuthScreen({ route, navigation }) {
               >
                 <Text style={styles.backArrow}>←</Text>
               </TouchableOpacity>
-              <Image
-                source={require('../../assets/logo.png')}
-                style={styles.logo}
-                resizeMode="contain"
-              />
+              <BrandLogo size="md" style={styles.logo} />
             </Animated.View>
 
             {/* Title */}
@@ -138,7 +220,7 @@ export default function AuthScreen({ route, navigation }) {
               <Text style={styles.title}>{isLogin ? 'Welcome back' : 'Create account'}</Text>
               <Text style={styles.subtitle}>
                 {isLogin
-                  ? 'Sign in to your MoneyBot account'
+                  ? `Sign in to your ${BRAND_NAME} account`
                   : 'Start automating your finances today'}
               </Text>
             </Animated.View>
@@ -226,6 +308,31 @@ export default function AuthScreen({ route, navigation }) {
                 </View>
               )}
 
+              {/* Terms acceptance (register only) */}
+              {!isLogin && (
+                <TouchableOpacity
+                  style={styles.termsRow}
+                  onPress={() => setAcceptedTerms(!acceptedTerms)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.checkbox, acceptedTerms && styles.checkboxChecked]}>
+                    {acceptedTerms ? (
+                      <Text style={styles.checkmark}>✓</Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.termsText}>
+                    I agree to the{' '}
+                    <Text style={styles.termsLink} onPress={() => openLegal('terms')}>
+                      Terms of Service
+                    </Text>
+                    {' '}and{' '}
+                    <Text style={styles.termsLink} onPress={() => openLegal('privacy')}>
+                      Privacy Policy
+                    </Text>
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {/* Error */}
               {error ? (
                 <View style={styles.errorBox}>
@@ -255,6 +362,39 @@ export default function AuthScreen({ route, navigation }) {
                   )}
                 </LinearGradient>
               </TouchableOpacity>
+
+              {/* Divider */}
+              {isGoogleConfigured && (
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+              )}
+
+              {/* Continue with Google */}
+              {isGoogleConfigured && (
+                <TouchableOpacity
+                  style={styles.googleButton}
+                  onPress={handleGoogle}
+                  disabled={googleLoading || loading || !request}
+                  activeOpacity={0.85}
+                >
+                  {googleLoading ? (
+                    <ActivityIndicator color="#1a1a1a" />
+                  ) : (
+                    <>
+                      <Image
+                        source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
+                        style={styles.googleIcon}
+                      />
+                      <Text style={styles.googleButtonText}>Continue with Google</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              <LegalFooter style={styles.legalFooter} />
             </Animated.View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -263,7 +403,7 @@ export default function AuthScreen({ route, navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   gradient: { flex: 1 },
   safeArea: { flex: 1 },
   keyboardView: { flex: 1 },
@@ -413,5 +553,83 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.4,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginHorizontal: 12,
+    letterSpacing: 0.3,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DADCE0',
+    paddingVertical: 15,
+  },
+  googleIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 12,
+  },
+  googleButtonText: {
+    color: '#1a1a1a',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginTop: 4,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.inputBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  checkmark: {
+    color: colors.background,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.textSecondary,
+  },
+  termsLink: {
+    color: colors.primary,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  legalFooter: {
+    marginTop: 8,
   },
 });

@@ -1,0 +1,15 @@
+export const brand = {
+  primary: '#3DDC5F',
+  primaryDark: '#2AB84A',
+  primaryLight: '#6FE88A',
+  botBucks: '#F5B72B',
+  background: '#0A0A0A',
+  surface: '#141414',
+  surfaceElevated: '#1E1E1E',
+  border: '#2A2A2A',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#A0A0A0',
+  textMuted: '#606060',
+  error: '#FF4D4D',
+  sidebarWidth: 240,
+};

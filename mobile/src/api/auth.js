@@ -1,4 +1,6 @@
-const BASE_URL = 'http://localhost:8000/api';
+import { API_BASE_URL } from '../config/api';
+
+const BASE_URL = API_BASE_URL;
 
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint}`;
@@ -38,6 +40,22 @@ export const authApi = {
       body: JSON.stringify({ email, password }),
     }),
 
+  google: (idToken) =>
+    request('/auth/google/', {
+      method: 'POST',
+      body: JSON.stringify({ id_token: idToken }),
+    }),
+
+  apple: ({ identityToken, email, fullName }) =>
+    request('/auth/apple/', {
+      method: 'POST',
+      body: JSON.stringify({
+        identity_token: identityToken,
+        email: email || undefined,
+        full_name: fullName || undefined,
+      }),
+    }),
+
   logout: (token) =>
     request('/auth/logout/', {
       method: 'POST',
@@ -47,6 +65,12 @@ export const authApi = {
   getProfile: (token) =>
     request('/auth/profile/', {
       method: 'GET',
+      headers: { Authorization: `Token ${token}` },
+    }),
+
+  deleteAccount: (token) =>
+    request('/auth/account/', {
+      method: 'DELETE',
       headers: { Authorization: `Token ${token}` },
     }),
 };

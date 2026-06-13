@@ -1,479 +1,545 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Image,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Animated,
-  Alert,
-  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { colors } from '../theme/colors';
+import { useUserProgress, BADGE_META, getModuleIonIcon, getRankMeta } from '../context/UserProgressContext';
+import { useTheme } from '../context/ThemeContext';
+import { BrandAvatar, BrandLogo, BrandToast } from '../components/brand';
+import { BRAND_NAME } from '../constants/brandCopy';
 
-function StatCard({ label, value, delay }) {
+const DAILY_TIPS = [
+  'Pay yourself first — automate savings before spending.',
+  'The best time to invest was yesterday. The next best time is today.',
+  'Track every dollar for 30 days. The results will surprise you.',
+  'An emergency fund is the foundation of every financial plan.',
+  'Credit cards are tools. Use them — don\'t let them use you.',
+  'Your net worth is not your self-worth, but it\'s worth growing.',
+  'Compound interest rewards patience above all else.',
+];
+
+const QUICK_ACTIONS = [
+  { key: 'courses', label: 'Courses', subtitle: 'Keep learning', icon: 'book', tab: 'CoursesTab', colors: ['#3DDC5F', '#2BA84A'] },
+  { key: 'moneyverse', label: 'Moneyverse', subtitle: 'Characters & shop', icon: 'planet', tab: 'MoneyverseTab', colors: ['#7C5CFC', '#5B3FD4'] },
+  { key: 'tutor', label: 'AI Tutor', subtitle: 'Ask anything', icon: 'chatbubbles', tab: 'TutorTab', colors: ['#3B9EE3', '#2563EB'] },
+  { key: 'profile', label: 'Profile', subtitle: 'Stats & settings', icon: 'person', tab: 'SettingsTab', colors: ['#FB8C3C', '#EA580C'] },
+];
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getDailyTip() {
+  return DAILY_TIPS[new Date().getDay() % DAILY_TIPS.length];
+}
+
+function AnimatedCard({ delay = 0, style, children }) {
   const anim = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 500,
-      delay,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(anim, { toValue: 1, duration: 450, delay, useNativeDriver: true }).start();
   }, []);
-
   return (
     <Animated.View
       style={[
-        styles.statCard,
+        style,
         {
           opacity: anim,
           transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
         },
       ]}
     >
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      {children}
     </Animated.View>
   );
 }
 
-export default function HomeScreen() {
-  const { user, logout } = useAuth();
-  const [loggingOut, setLoggingOut] = useState(false);
+function QuickActionTile({ action, onPress, styles }) {
+  return (
+    <TouchableOpacity style={styles.quickTile} activeOpacity={0.85} onPress={onPress}>
+      <LinearGradient colors={action.colors} style={styles.quickTileGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+        <View style={styles.quickTileIcon}>
+          <Ionicons name={action.icon} size={22} color="#fff" />
+        </View>
+        <Text style={styles.quickTileLabel}>{action.label}</Text>
+        <Text style={styles.quickTileSub}>{action.subtitle}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
 
-  const headerAnim = useRef(new Animated.Value(0)).current;
-  const contentAnim = useRef(new Animated.Value(0)).current;
+export default function HomeScreen({ navigation }) {
+  const { user } = useAuth();
+  const {
+    xp, streakDays, badges, lessonsCompleted, modules, level,
+    xpInCurrentLevel, XP_PER_LEVEL, botBucks, equippedCharacter, rank,
+  } = useUserProgress();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [streakToast, setStreakToast] = useState(null);
 
   useEffect(() => {
-    Animated.sequence([
-      Animated.timing(headerAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-      Animated.timing(contentAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  function confirmLogout() {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out of MoneyBot?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: handleLogout,
-        },
-      ]
-    );
-  }
-
-  async function handleLogout() {
-    setLoggingOut(true);
-    try {
-      await logout();
-    } finally {
-      setLoggingOut(false);
+    const milestones = [7, 30, 100];
+    if (milestones.includes(streakDays)) {
+      setStreakToast(`${streakDays}-day streak! Keep it going with MoneyBot.`);
     }
-  }
+  }, [streakDays]);
 
-  const emailDisplay = user?.email || 'user@moneybot.com';
+  const emailDisplay = user?.email || '';
   const firstName = emailDisplay.split('@')[0];
-  const displayName =
-    firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+  const displayName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+  const rankMeta = getRankMeta(rank?.key);
+  const levelProgress = xpInCurrentLevel / XP_PER_LEVEL;
+
+  const nextLesson = (() => {
+    for (const mod of modules) {
+      if (!mod.lessons) continue;
+      for (const lesson of mod.lessons) {
+        if (!lesson.is_completed) {
+          return { lesson, module: mod };
+        }
+      }
+    }
+    return null;
+  })();
+
+  const moduleProgress = modules.slice(0, 4).map((mod) => ({
+    ...mod,
+    pct: mod.lesson_count ? Math.round((mod.completed_lesson_count / mod.lesson_count) * 100) : 0,
+  }));
+
+  const earnedBadges = badges.map((key) => ({
+    key,
+    ...(BADGE_META[key] || { label: key, ionIcon: 'ribbon', color: colors.primary }),
+  }));
+
+  function goToTab(tab) {
+    navigation.navigate(tab);
+  }
 
   return (
-    <LinearGradient colors={['#0A0A0A', '#0F1A0F', '#0A0A0A']} style={styles.gradient}>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-          {/* Header */}
-          <Animated.View
-            style={[
-              styles.header,
-              {
-                opacity: headerAnim,
-                transform: [
-                  {
-                    translateY: headerAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-20, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
+          {/* Hub header */}
+          <AnimatedCard delay={0} style={styles.header}>
             <View style={styles.headerLeft}>
-              <Image
-                source={require('../../assets/logo.png')}
-                style={styles.headerLogo}
-                resizeMode="contain"
-              />
-              <View>
-                <Text style={styles.greeting}>Good morning,</Text>
-                <Text style={styles.username}>{displayName} 👋</Text>
-              </View>
+              <Text style={styles.greeting}>{getGreeting()}</Text>
+              <Text style={styles.username}>{displayName}</Text>
             </View>
             <TouchableOpacity
-              style={styles.logoutButton}
-              onPress={confirmLogout}
-              disabled={loggingOut}
-              activeOpacity={0.8}
+              style={styles.profileBtn}
+              activeOpacity={0.85}
+              onPress={() => goToTab('SettingsTab')}
             >
-              <Text style={styles.logoutIcon}>{loggingOut ? '⏳' : '→'}</Text>
+              <BrandAvatar character={equippedCharacter} size={44} autoRotate={!!equippedCharacter} />
+              <View style={styles.profileBtnDot} />
             </TouchableOpacity>
-          </Animated.View>
+          </AnimatedCard>
 
-          {/* Hero Card */}
-          <Animated.View
-            style={[
-              styles.heroCard,
-              {
-                opacity: contentAnim,
-                transform: [
-                  {
-                    translateY: contentAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [30, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
+          {/* Status hero */}
+          <AnimatedCard delay={60}>
             <LinearGradient
-              colors={[colors.primaryDark, '#1A5C2A', '#0F3A1A']}
-              style={styles.heroGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+              colors={['rgba(61,220,95,0.18)', 'rgba(61,220,95,0.04)']}
+              style={styles.heroCard}
             >
-              <View style={styles.heroDot} />
-              <Text style={styles.heroLabel}>Total Balance</Text>
-              <Text style={styles.heroBalance}>$0.00</Text>
-              <Text style={styles.heroSub}>Connect your accounts to get started</Text>
-            </LinearGradient>
-          </Animated.View>
-
-          {/* Stats Row */}
-          <Animated.View
-            style={[styles.statsRow, { opacity: contentAnim }]}
-          >
-            <StatCard label="Income" value="$0" delay={100} />
-            <StatCard label="Expenses" value="$0" delay={200} />
-            <StatCard label="Savings" value="0%" delay={300} />
-          </Animated.View>
-
-          {/* Welcome Banner */}
-          <Animated.View style={[styles.welcomeBanner, { opacity: contentAnim }]}>
-            <View style={styles.welcomeIconContainer}>
-              <Text style={styles.welcomeIcon}>🤖</Text>
-            </View>
-            <View style={styles.welcomeTextContainer}>
-              <Text style={styles.welcomeTitle}>Welcome to MoneyBot!</Text>
-              <Text style={styles.welcomeBody}>
-                Your AI-powered financial assistant is ready. Connect your accounts to unlock insights.
-              </Text>
-            </View>
-          </Animated.View>
-
-          {/* Quick Actions */}
-          <Animated.View style={[styles.section, { opacity: contentAnim }]}>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
-            <View style={styles.actionGrid}>
-              {quickActions.map((action, i) => (
-                <TouchableOpacity key={i} style={styles.actionItem} activeOpacity={0.7}>
-                  <View style={styles.actionIcon}>
-                    <Text style={styles.actionEmoji}>{action.icon}</Text>
+              <View style={styles.heroTop}>
+                {rank ? (
+                  <View style={styles.rankChip}>
+                    <LinearGradient colors={rankMeta.gradient} style={styles.rankChipIcon}>
+                      <Ionicons name={rankMeta.ionIcon} size={14} color="#fff" />
+                    </LinearGradient>
+                    <Text style={[styles.rankChipText, { color: rankMeta.color }]}>{rank.label}</Text>
                   </View>
-                  <Text style={styles.actionLabel}>{action.label}</Text>
-                </TouchableOpacity>
+                ) : (
+                  <Text style={styles.heroEyebrow}>Your progress</Text>
+                )}
+                <Text style={styles.heroLevel}>Level {level}</Text>
+              </View>
+
+              <View style={styles.heroStats}>
+                <View style={styles.heroStat}>
+                  <Ionicons name="flame" size={18} color={colors.streak} />
+                  <Text style={styles.heroStatVal}>{streakDays}</Text>
+                  <Text style={styles.heroStatLbl}>Streak</Text>
+                </View>
+                <View style={styles.heroStatDivider} />
+                <View style={styles.heroStat}>
+                  <Ionicons name="logo-bitcoin" size={18} color={colors.botBucks} />
+                  <Text style={styles.heroStatVal}>{botBucks}</Text>
+                  <Text style={styles.heroStatLbl}>Bot Bucks</Text>
+                </View>
+                <View style={styles.heroStatDivider} />
+                <View style={styles.heroStat}>
+                  <Ionicons name="school" size={18} color={colors.primary} />
+                  <Text style={styles.heroStatVal}>{lessonsCompleted}</Text>
+                  <Text style={styles.heroStatLbl}>Lessons</Text>
+                </View>
+                <View style={styles.heroStatDivider} />
+                <View style={styles.heroStat}>
+                  <Ionicons name="flash" size={18} color={colors.primaryLight} />
+                  <Text style={styles.heroStatVal}>{xp}</Text>
+                  <Text style={styles.heroStatLbl}>XP</Text>
+                </View>
+              </View>
+
+              <View style={styles.xpSection}>
+                <View style={styles.xpRow}>
+                  <Text style={styles.xpLabel}>Level progress</Text>
+                  <Text style={styles.xpValue}>{xpInCurrentLevel} / {XP_PER_LEVEL} XP</Text>
+                </View>
+                <View style={styles.xpTrack}>
+                  <View style={[styles.xpFill, { width: `${Math.min(levelProgress * 100, 100)}%` }]} />
+                </View>
+                {rank?.next_label && (
+                  <Text style={styles.rankNext}>{rank.points_to_next} pts to {rank.next_label}</Text>
+                )}
+              </View>
+            </LinearGradient>
+          </AnimatedCard>
+
+          {/* Quick access */}
+          <AnimatedCard delay={120} style={styles.section}>
+            <Text style={styles.sectionTitle}>Quick Access</Text>
+            <View style={styles.quickGrid}>
+              {QUICK_ACTIONS.map((action) => (
+                <QuickActionTile
+                  key={action.key}
+                  action={action}
+                  styles={styles}
+                  onPress={() => goToTab(action.tab)}
+                />
               ))}
             </View>
-          </Animated.View>
+          </AnimatedCard>
 
-          {/* Account + email display */}
-          <Animated.View style={[styles.accountRow, { opacity: contentAnim }]}>
-            <Text style={styles.accountLabel}>Signed in as</Text>
-            <View style={styles.accountBadge}>
-              <View style={styles.accountDot} />
-              <Text style={styles.accountEmail}>{emailDisplay}</Text>
+          {/* Continue learning */}
+          <AnimatedCard delay={180} style={styles.section}>
+            <Text style={styles.sectionTitle}>Pick Up Where You Left Off</Text>
+            {nextLesson ? (
+              <TouchableOpacity
+                style={styles.continueCard}
+                activeOpacity={0.85}
+                onPress={() => goToTab('CoursesTab')}
+              >
+                <View style={styles.continueIconWrap}>
+                  <Ionicons name={getModuleIonIcon(nextLesson.module)} size={26} color={colors.primary} />
+                </View>
+                <View style={styles.continueBody}>
+                  <Text style={styles.continueMod}>{nextLesson.module.title}</Text>
+                  <Text style={styles.continueLesson}>{nextLesson.lesson.title}</Text>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          width: `${(nextLesson.module.completed_lesson_count / nextLesson.module.lesson_count) * 100}%`,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressLabel}>
+                    {nextLesson.module.completed_lesson_count}/{nextLesson.module.lesson_count} lessons in module
+                  </Text>
+                </View>
+                <View style={styles.continueGo}>
+                  <Ionicons name="play" size={16} color={colors.background} />
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.allDoneCard}>
+                <Ionicons name="trophy" size={32} color={colors.primary} />
+                <Text style={styles.allDoneTitle}>All caught up!</Text>
+                <Text style={styles.allDoneText}>You've completed every lesson. Nice work.</Text>
+              </View>
+            )}
+          </AnimatedCard>
+
+          {/* Module overview */}
+          {moduleProgress.length > 0 && (
+            <AnimatedCard delay={240} style={styles.section}>
+              <View style={styles.sectionRow}>
+                <Text style={[styles.sectionTitle, styles.sectionTitleInline]}>Your Roadmap</Text>
+                <TouchableOpacity onPress={() => goToTab('CoursesTab')}>
+                  <Text style={styles.sectionLink}>View all</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.roadmapList}>
+                {moduleProgress.map((mod) => (
+                  <TouchableOpacity
+                    key={mod.id}
+                    style={styles.roadmapItem}
+                    activeOpacity={0.8}
+                    onPress={() => goToTab('CoursesTab')}
+                  >
+                    <View style={styles.roadmapIcon}>
+                      <Ionicons name={getModuleIonIcon(mod)} size={18} color={colors.primary} />
+                    </View>
+                    <View style={styles.roadmapBody}>
+                      <Text style={styles.roadmapTitle} numberOfLines={1}>{mod.title}</Text>
+                      <View style={styles.roadmapTrack}>
+                        <View style={[styles.roadmapFill, { width: `${mod.pct}%` }]} />
+                      </View>
+                    </View>
+                    <Text style={styles.roadmapPct}>{mod.pct}%</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </AnimatedCard>
+          )}
+
+          {/* Badges */}
+          {earnedBadges.length > 0 && (
+            <AnimatedCard delay={300} style={styles.section}>
+              <Text style={styles.sectionTitle}>Badges Earned</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
+                {earnedBadges.map((badge) => (
+                  <View key={badge.key} style={styles.badgeItem}>
+                    <View style={[styles.badgeCircle, { backgroundColor: badge.color + '22', borderColor: badge.color + '55' }]}>
+                      <Ionicons name={badge.ionIcon || 'ribbon'} size={26} color={badge.color} />
+                    </View>
+                    <Text style={styles.badgeLabel}>{badge.label}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </AnimatedCard>
+          )}
+
+          {/* Daily tip */}
+          <AnimatedCard delay={360} style={styles.section}>
+            <Text style={styles.sectionTitle}>Today's Tip</Text>
+            <View style={styles.tipCard}>
+              <BrandLogo size="sm" style={styles.tipLogo} />
+              <View style={styles.tipBody}>
+                <Text style={styles.tipTag}>{BRAND_NAME}</Text>
+                <Text style={styles.tipText}>{getDailyTip()}</Text>
+              </View>
             </View>
-          </Animated.View>
-
-          {/* Sign Out */}
-          <Animated.View style={[styles.signOutContainer, { opacity: contentAnim }]}>
-            <TouchableOpacity
-              style={styles.signOutButton}
-              onPress={confirmLogout}
-              disabled={loggingOut}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.signOutText}>
-                {loggingOut ? 'Signing out...' : 'Sign Out'}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
+          </AnimatedCard>
 
         </ScrollView>
+
+        <BrandToast
+          visible={!!streakToast}
+          message={streakToast}
+          onHide={() => setStreakToast(null)}
+        />
       </SafeAreaView>
     </LinearGradient>
   );
 }
 
-const quickActions = [
-  { icon: '💳', label: 'Link Account' },
-  { icon: '📊', label: 'Analytics' },
-  { icon: '🔔', label: 'Alerts' },
-  { icon: '⚙️', label: 'Settings' },
-];
-
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   gradient: { flex: 1 },
-  safeArea: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    paddingTop: 8,
-  },
+  safe: { flex: 1 },
+  scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 32 },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 18,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  headerLeft: { flex: 1 },
+  greeting: { fontSize: 14, color: colors.textSecondary, marginBottom: 2 },
+  username: { fontSize: 26, fontWeight: '800', color: colors.white, letterSpacing: -0.5 },
+  profileBtn: { position: 'relative' },
+  profileBtnDot: {
+    position: 'absolute',
+    bottom: 1,
+    right: 1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.primary,
+    borderWidth: 2,
+    borderColor: colors.background,
   },
-  headerLogo: {
-    width: 44,
-    height: 44,
-  },
-  greeting: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  username: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  logoutButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoutIcon: {
-    fontSize: 18,
-    color: colors.textSecondary,
-  },
+
   heroCard: {
     borderRadius: 20,
-    overflow: 'hidden',
-    marginBottom: 16,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  heroGradient: {
-    padding: 28,
-    borderRadius: 20,
-    minHeight: 160,
-    justifyContent: 'center',
-  },
-  heroDot: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.primary,
-    opacity: 0.6,
-  },
-  heroLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.7)',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  heroBalance: {
-    fontSize: 44,
-    fontWeight: '800',
-    color: colors.white,
-    letterSpacing: -1,
-    marginBottom: 6,
-  },
-  heroSub: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.5)',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    padding: 16,
+    padding: 18,
+    marginBottom: 22,
     borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
+    borderColor: 'rgba(61,220,95,0.25)',
   },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.white,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  welcomeBanner: {
-    backgroundColor: 'rgba(61, 220, 95, 0.08)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(61, 220, 95, 0.2)',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 14,
-    marginBottom: 20,
-  },
-  welcomeIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: 'rgba(61, 220, 95, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  welcomeIcon: {
-    fontSize: 22,
-  },
-  welcomeTextContainer: {
-    flex: 1,
-  },
-  welcomeTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.white,
-    marginBottom: 4,
-  },
-  welcomeBody: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.white,
-    marginBottom: 14,
-    letterSpacing: 0.2,
-  },
-  actionGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionItem: {
-    flex: 1,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  actionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionEmoji: {
-    fontSize: 20,
-  },
-  actionLabel: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  accountRow: {
+  heroTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
     marginBottom: 16,
   },
-  accountLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
-  },
-  accountBadge: {
+  heroEyebrow: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  rankChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rankChipIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rankChipText: { fontSize: 13, fontWeight: '800' },
+  heroLevel: { fontSize: 15, fontWeight: '700', color: colors.white },
+  heroStats: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroStat: { flex: 1, alignItems: 'center', gap: 4 },
+  heroStatVal: { fontSize: 18, fontWeight: '800', color: colors.white },
+  heroStatLbl: { fontSize: 10, color: colors.textMuted, fontWeight: '600' },
+  heroStatDivider: { width: 1, backgroundColor: colors.border, marginVertical: 4 },
+  xpSection: { gap: 8 },
+  xpRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  xpLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  xpValue: { fontSize: 12, color: colors.textMuted },
+  xpTrack: { height: 8, backgroundColor: colors.border, borderRadius: 4, overflow: 'hidden' },
+  xpFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 4 },
+  rankNext: { fontSize: 12, color: colors.textMuted },
+
+  section: { marginBottom: 22 },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: colors.white, letterSpacing: -0.2, marginBottom: 12 },
+  sectionTitleInline: { marginBottom: 0 },
+  sectionLink: { fontSize: 13, fontWeight: '600', color: colors.primary },
+
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  quickTile: { width: '47.5%', flexGrow: 1, borderRadius: 16, overflow: 'hidden' },
+  quickTileGrad: { padding: 16, minHeight: 108, justifyContent: 'flex-end' },
+  quickTileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  quickTileLabel: { fontSize: 16, fontWeight: '800', color: '#fff', letterSpacing: -0.2 },
+  quickTileSub: { fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2 },
+
+  continueCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(61,220,95,0.25)',
+  },
+  continueIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: 'rgba(61,220,95,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  continueBody: { flex: 1 },
+  continueMod: { fontSize: 12, color: colors.primary, fontWeight: '600', marginBottom: 2 },
+  continueLesson: { fontSize: 16, fontWeight: '700', color: colors.white, marginBottom: 10 },
+  progressTrack: { height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: 'hidden', marginBottom: 4 },
+  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
+  progressLabel: { fontSize: 11, color: colors.textSecondary },
+  continueGo: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  allDoneCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
     gap: 6,
   },
-  accountDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-  },
-  accountEmail: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  signOutContainer: {
+  allDoneTitle: { fontSize: 17, fontWeight: '700', color: colors.white },
+  allDoneText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center' },
+
+  roadmapList: { gap: 10 },
+  roadmapItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  signOutButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 36,
-    borderRadius: 12,
+    gap: 12,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 14,
+    padding: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 77, 77, 0.3)',
-    backgroundColor: 'rgba(255, 77, 77, 0.06)',
+    borderColor: colors.border,
   },
-  signOutText: {
-    color: colors.error,
-    fontSize: 15,
-    fontWeight: '600',
+  roadmapIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(61,220,95,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  roadmapBody: { flex: 1, gap: 6 },
+  roadmapTitle: { fontSize: 14, fontWeight: '600', color: colors.white },
+  roadmapTrack: { height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: 'hidden' },
+  roadmapFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
+  roadmapPct: { fontSize: 13, fontWeight: '700', color: colors.textMuted, minWidth: 36, textAlign: 'right' },
+
+  badgesScroll: { marginHorizontal: -4 },
+  badgeItem: { alignItems: 'center', marginHorizontal: 8, width: 72 },
+  badgeCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    marginBottom: 6,
+  },
+  badgeLabel: { fontSize: 10, color: colors.textSecondary, textAlign: 'center', fontWeight: '500' },
+
+  tipCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    padding: 18,
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tipLogo: { width: 32, height: 32, marginTop: 2 },
+  tipBody: { flex: 1 },
+  tipTag: { fontSize: 11, fontWeight: '700', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
+  tipText: { fontSize: 14, color: colors.offWhite, lineHeight: 20 },
 });

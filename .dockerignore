@@ -1,0 +1,25 @@
+# Python
+**/__pycache__/
+**/*.pyc
+backend/venv/
+backend/.venv/
+backend/.env
+
+# Local DB + collected artifacts (regenerated in the image / on the volume)
+backend/db.sqlite3
+backend/db.sqlite3-journal
+backend/staticfiles/
+backend/media/
+
+# Node / web build artifacts (rebuilt in stage 1)
+web/node_modules/
+web/dist/
+
+# Mobile app is not part of the backend image
+mobile/
+
+# Git / docs / misc
+.git/
+docs/
+*.md
+.DS_Store
