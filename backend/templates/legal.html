@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="all">
+  <title>{{ doc.title }} — {{ meta.company_name }}</title>
+  <style>
+    :root {
+      --bg: #0A0A0A;
+      --surface: #141414;
+      --border: #242424;
+      --text: #EDEDED;
+      --muted: #9A9A9A;
+      --accent: #3DDC5F;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.65;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      padding: 0;
+    }
+    .wrap { max-width: 740px; margin: 0 auto; padding: 40px 22px 80px; }
+    header.brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand .dot {
+      width: 38px; height: 38px;
+      border-radius: 11px;
+      background: linear-gradient(135deg, var(--accent), #2bb14b);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; color: #062a10; font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+    .brand .name { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+    h1 { font-size: 1.9rem; margin: 0 0 6px; letter-spacing: -0.02em; }
+    .updated { color: var(--muted); font-size: 0.9rem; margin: 0 0 36px; }
+    h2 {
+      font-size: 1.15rem;
+      margin: 34px 0 10px;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    p { font-size: 0.97rem; color: #cfcfcf; margin: 0 0 12px; }
+    ul { padding-left: 1.3rem; margin: 0 0 12px; }
+    li { font-size: 0.97rem; color: #cfcfcf; margin-bottom: 6px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .toc { margin-bottom: 8px; }
+    footer {
+      margin-top: 48px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    footer a { color: var(--muted); text-decoration: underline; }
+    footer .links { margin-top: 10px; display: flex; gap: 18px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="brand">
+      <div class="dot">$</div>
+      <div class="name">{{ meta.company_name }}</div>
+    </header>
+
+    <h1>{{ doc.title }}</h1>
+    <p class="updated">Last updated: {{ meta.last_updated }}</p>
+
+    {% for section in doc.sections %}
+      <h2>{{ section.heading }}</h2>
+      {% if section.intro %}<p>{{ section.intro }}</p>{% endif %}
+      {% if section.bullets %}
+        <ul>
+          {% for bullet in section.bullets %}<li>{{ bullet }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {% for paragraph in section.paragraphs %}
+        <p>{{ paragraph }}</p>
+      {% endfor %}
+    {% endfor %}
+
+    <footer>
+      <p>{{ meta.company_name }} · Questions? <a href="mailto:{{ meta.contact_email }}">{{ meta.contact_email }}</a></p>
+      <div class="links">
+        <a href="/legal/privacy/">Privacy Policy</a>
+        <a href="/legal/terms/">Terms of Service</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -47,7 +47,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiUrl": "https://REPLACE-WITH-RAILWAY-DOMAIN.up.railway.app/api"
+      "apiUrl": "https://moneybotmobile-production.up.railway.app/api"
     },
     "plugins": [
       "expo-dev-client",

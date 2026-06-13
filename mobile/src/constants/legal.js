@@ -1,8 +1,8 @@
 export const LEGAL = {
   contactEmail: 'kahlil@getmoneybot.com',
-  privacyUrl: 'https://getmoneybot.com/privacy',
-  termsUrl: 'https://getmoneybot.com/terms',
-  lastUpdated: 'June 9, 2026',
+  privacyUrl: 'https://moneybotmobile-production.up.railway.app/legal/privacy/',
+  termsUrl: 'https://moneybotmobile-production.up.railway.app/legal/terms/',
+  lastUpdated: 'June 12, 2026',
   companyName: 'MoneyBot',
 };
 
