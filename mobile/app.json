@@ -23,13 +23,16 @@
               "com.googleusercontent.apps.153959048568-ji63jtsd7eo4e6u1bpn7743t34l15hu0"
             ]
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
           {
             "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
           }
         ]
       }
@@ -47,7 +50,10 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiUrl": "https://moneybotmobile-production.up.railway.app/api"
+      "apiUrl": "https://moneybotmobile-production.up.railway.app/api",
+      "eas": {
+        "projectId": "fe4bcf28-9507-4f0c-9fdf-1f8196fecf4f"
+      }
     },
     "plugins": [
       "expo-dev-client",

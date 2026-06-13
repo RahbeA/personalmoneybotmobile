@@ -34,6 +34,17 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  const changePassword = useCallback(async (currentPassword, newPassword) => {
+    const data = await api.post('/change-password/', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+    // The server rotates the token and clears must_change_password.
+    if (data.token) setToken(data.token);
+    if (data.user) setUser(data.user);
+    return data.user;
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await api.post('/logout/');
@@ -46,7 +57,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

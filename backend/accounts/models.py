@@ -28,6 +28,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     apple_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    # Set when an admin's password was created/reset by someone else, so the
+    # control panel can force them to set their own password on next sign-in.
+    must_change_password = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
 
     objects = UserManager()

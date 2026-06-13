@@ -185,6 +185,22 @@ class StaffCreateSerializer(serializers.Serializer):
         return value.strip().lower()
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(min_length=8, write_only=True)
+
+    def validate_current_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Current password is incorrect.')
+        return value
+
+    def validate_new_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value, self.context['request'].user)
+        return value
+
+
 # --- AI inspector (read-only) ----------------------------------------------
 
 class TutorMessageSerializer(serializers.ModelSerializer):

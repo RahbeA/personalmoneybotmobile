@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Layout, Menu, Button, Avatar, Dropdown, Typography } from 'antd';
 import {
   DashboardOutlined,
@@ -9,10 +10,12 @@ import {
   UserOutlined,
   SolutionOutlined,
   SafetyCertificateOutlined,
+  KeyOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import BrandLogo from './BrandLogo';
+import ChangePasswordModal from './ChangePasswordModal';
 import { brand } from '../theme/tokens';
 
 const { Sider, Content, Header } = Layout;
@@ -31,6 +34,13 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+
+  // Force a password change when an owner created/reset this admin's password.
+  const mustChange = !!user?.must_change_password;
+  useEffect(() => {
+    if (mustChange) setPwModalOpen(true);
+  }, [mustChange]);
 
   const selectedKey =
     NAV_ITEMS.map((i) => i.key)
@@ -38,9 +48,14 @@ export default function AppLayout() {
       .sort((a, b) => b.length - a.length)[0] || '/';
 
   const userMenu = {
-    items: [{ key: 'logout', icon: <LogoutOutlined />, label: 'Sign out' }],
+    items: [
+      { key: 'change-password', icon: <KeyOutlined />, label: 'Change password' },
+      { type: 'divider' },
+      { key: 'logout', icon: <LogoutOutlined />, label: 'Sign out' },
+    ],
     onClick: ({ key }) => {
       if (key === 'logout') logout().then(() => navigate('/login'));
+      else if (key === 'change-password') setPwModalOpen(true);
     },
   };
 
@@ -116,6 +131,11 @@ export default function AppLayout() {
           <Outlet />
         </Content>
       </Layout>
+      <ChangePasswordModal
+        open={pwModalOpen}
+        forced={mustChange}
+        onClose={() => setPwModalOpen(false)}
+      />
     </Layout>
   );
 }

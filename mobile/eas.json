@@ -27,9 +27,10 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "REPLACE_WITH_APPLE_ID_EMAIL",
-        "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "REPLACE_WITH_APPLE_TEAM_ID"
+        "language": "en-US",
+        "ascApiKeyPath": "./credentials/AuthKey_9D2KK3FTTT.p8",
+        "ascApiKeyId": "9D2KK3FTTT",
+        "ascApiKeyIssuerId": "fc7fa92f-b44f-483b-a848-f44c58fb47db"
       }
     }
   }

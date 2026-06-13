@@ -27,6 +27,7 @@ from .serializers import (
     AdminUserSerializer,
     AdminStaffSerializer,
     StaffCreateSerializer,
+    ChangePasswordSerializer,
     TutorConversationSerializer,
     TutorConversationDetailSerializer,
     MoneyChatSessionSerializer,
@@ -67,25 +68,24 @@ def admin_login(request):
     token, _ = Token.objects.get_or_create(user=user)
     return Response({
         'token': token.key,
-        'user': {
-            'id': user.id,
-            'email': user.email,
-            'name': user.name,
-            'is_superuser': user.is_superuser,
-        },
+        'user': _user_payload(user),
     })
+
+
+def _user_payload(user):
+    return {
+        'id': user.id,
+        'email': user.email,
+        'name': user.name,
+        'is_superuser': user.is_superuser,
+        'must_change_password': user.must_change_password,
+    }
 
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_me(request):
-    user = request.user
-    return Response({
-        'id': user.id,
-        'email': user.email,
-        'name': user.name,
-        'is_superuser': user.is_superuser,
-    })
+    return Response(_user_payload(request.user))
 
 
 @api_view(['POST'])
@@ -96,6 +96,29 @@ def admin_logout(request):
     except Exception:
         pass
     return Response({'detail': 'Logged out.'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def change_password(request):
+    """Let a signed-in admin set their own password.
+
+    Clears the must_change_password flag and rotates the auth token so the
+    current session stays valid while any other sessions are invalidated.
+    """
+    serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+
+    user = request.user
+    user.set_password(serializer.validated_data['new_password'])
+    user.must_change_password = False
+    user.save(update_fields=['password', 'must_change_password'])
+
+    # Rotate the token: invalidate the old one and issue a fresh one.
+    Token.objects.filter(user=user).delete()
+    token = Token.objects.create(user=user)
+
+    return Response({'detail': 'Password updated.', 'token': token.key, 'user': _user_payload(user)})
 
 
 # --- Content CRUD -----------------------------------------------------------
@@ -246,7 +269,9 @@ class StaffViewSet(viewsets.ModelViewSet):
             if name:
                 user.name = name
             if password:
+                # Password chosen by another admin; require them to set their own.
                 user.set_password(password)
+                user.must_change_password = True
             user.save()
         else:
             if not password:
@@ -259,6 +284,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 password=password,
                 name=name,
                 is_staff=True,
+                must_change_password=True,
             )
 
         return Response(AdminStaffSerializer(user).data, status=status.HTTP_201_CREATED)
