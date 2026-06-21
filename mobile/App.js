@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -12,6 +12,7 @@ import { LOADER_MESSAGES } from './src/constants/brandCopy';
 import { API_BASE_URL } from './src/config/api';
 import { bootstrapNotifications } from './src/utils/notifications';
 import { warmModelViewerOnBoot } from './src/utils/modelCache';
+import { ensureCacheScope } from './src/utils/apiCache';
 import LandingScreen from './src/screens/LandingScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import LegalDocumentScreen from './src/screens/LegalDocumentScreen';
@@ -139,10 +140,20 @@ const makeBootErrorStyles = (colors) => StyleSheet.create({
 });
 
 export default function App() {
+  const [cacheReady, setCacheReady] = useState(false);
+
   useEffect(() => {
-    warmModelViewerOnBoot();
-    bootstrapNotifications().catch(() => {});
+    ensureCacheScope()
+      .then(() => {
+        warmModelViewerOnBoot();
+        bootstrapNotifications().catch(() => {});
+      })
+      .finally(() => setCacheReady(true));
   }, []);
+
+  if (!cacheReady) {
+    return null;
+  }
 
   return (
     <SafeAreaProvider>

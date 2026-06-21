@@ -1,7 +1,8 @@
 import * as SecureStore from 'expo-secure-store';
+import { getCacheScope } from './apiCache';
 
 function storageKey(userId) {
-  return `onboardingCompleted:${userId}`;
+  return `onboardingCompleted:${getCacheScope()}:${userId}`;
 }
 
 /** True when stats (API or cache) show the user already finished the Money IQ quiz. */

@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '../config/api';
 
 const STORAGE_PREFIX = '@moneybot:cache:';
+const SCOPE_STORAGE_KEY = '@moneybot:cache:scope';
 
 export const isApiCacheDebugEnabled =
   __DEV__ || process.env.EXPO_PUBLIC_MODEL_CACHE_DEBUG === '1'
@@ -25,14 +27,33 @@ const stats = {
   write: 0,
 };
 
+let scopeEnsured = false;
+let scopePromise = null;
+
+/** Stable scope so localhost and production caches never share keys. */
+export function getCacheScope() {
+  try {
+    const url = new URL(API_BASE_URL);
+    const host = url.hostname.replace(/\./g, '_');
+    const port = url.port ? `_${url.port}` : '';
+    return `${host}${port}`;
+  } catch {
+    return API_BASE_URL.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 64);
+  }
+}
+
+function scopedKey(key) {
+  return `${getCacheScope()}:${key}`;
+}
+
 function log(category, source, message) {
   if (!isApiCacheDebugEnabled) return;
   // eslint-disable-next-line no-console
   console.log(`[ApiCache] ${category} ← ${source} | ${message}`);
 }
 
-function storageKey(key) {
-  return `${STORAGE_PREFIX}${key}`;
+function diskKey(key) {
+  return `${STORAGE_PREFIX}${scopedKey(key)}`;
 }
 
 export const cacheKeys = {
@@ -49,9 +70,36 @@ export function getCacheStats() {
   return { ...stats };
 }
 
+/**
+ * Wipe stale cache when switching API environments (e.g. localhost → production).
+ * Call once at app boot before UserProgressProvider hydrates.
+ */
+export async function ensureCacheScope() {
+  if (scopeEnsured) return;
+  if (scopePromise) return scopePromise;
+
+  scopePromise = (async () => {
+    const scope = getCacheScope();
+    try {
+      const last = await AsyncStorage.getItem(SCOPE_STORAGE_KEY);
+      if (last && last !== scope) {
+        log('SCOPE', 'changed', `${last} → ${scope}`);
+        await clearAllApiCache();
+      }
+      await AsyncStorage.setItem(SCOPE_STORAGE_KEY, scope);
+    } catch {
+      // ignore storage errors
+    }
+    scopeEnsured = true;
+  })();
+
+  return scopePromise;
+}
+
 export async function readCache(key, { freshMs, staleMs = freshMs } = {}) {
+  const scoped = scopedKey(key);
   const now = Date.now();
-  const mem = memory.get(key);
+  const mem = memory.get(scoped);
   if (mem && now - mem.at <= freshMs) {
     stats.memoryHit += 1;
     log('READ', 'memory', key);
@@ -59,12 +107,12 @@ export async function readCache(key, { freshMs, staleMs = freshMs } = {}) {
   }
 
   try {
-    const raw = await AsyncStorage.getItem(storageKey(key));
+    const raw = await AsyncStorage.getItem(diskKey(key));
     if (raw) {
       const entry = JSON.parse(raw);
       const age = now - entry.at;
       if (age <= staleMs) {
-        memory.set(key, { data: entry.data, at: entry.at });
+        memory.set(scoped, { data: entry.data, at: entry.at });
         const stale = age > freshMs;
         stats.storageHit += 1;
         log('READ', stale ? 'storage-stale' : 'storage', key);
@@ -81,21 +129,23 @@ export async function readCache(key, { freshMs, staleMs = freshMs } = {}) {
 }
 
 export async function writeCache(key, data) {
+  const scoped = scopedKey(key);
   const at = Date.now();
-  memory.set(key, { data, at });
+  memory.set(scoped, { data, at });
   stats.write += 1;
   log('WRITE', 'memory+disk', key);
   try {
-    await AsyncStorage.setItem(storageKey(key), JSON.stringify({ data, at }));
+    await AsyncStorage.setItem(diskKey(key), JSON.stringify({ data, at }));
   } catch {
     // disk full etc.
   }
 }
 
 export async function invalidateCache(key) {
-  memory.delete(key);
+  const scoped = scopedKey(key);
+  memory.delete(scoped);
   try {
-    await AsyncStorage.removeItem(storageKey(key));
+    await AsyncStorage.removeItem(diskKey(key));
   } catch {
     // ignore
   }
@@ -103,16 +153,18 @@ export async function invalidateCache(key) {
 }
 
 export async function invalidateCachePrefix(prefix) {
+  const scopePrefix = `${getCacheScope()}:${prefix}`;
   const toDelete = [];
   for (const key of memory.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(scopePrefix)) {
       memory.delete(key);
-      toDelete.push(storageKey(key));
+      toDelete.push(`${STORAGE_PREFIX}${key}`);
     }
   }
   try {
     const allKeys = await AsyncStorage.getAllKeys();
-    const matching = allKeys.filter((k) => k.startsWith(storageKey(prefix)));
+    const scopedDiskPrefix = `${STORAGE_PREFIX}${scopePrefix}`;
+    const matching = allKeys.filter((k) => k.startsWith(scopedDiskPrefix));
     toDelete.push(...matching);
     if (toDelete.length) await AsyncStorage.multiRemove([...new Set(toDelete)]);
   } catch {
@@ -125,7 +177,7 @@ export async function clearAllApiCache() {
   memory.clear();
   try {
     const allKeys = await AsyncStorage.getAllKeys();
-    const ours = allKeys.filter((k) => k.startsWith(STORAGE_PREFIX));
+    const ours = allKeys.filter((k) => k.startsWith(STORAGE_PREFIX) && k !== SCOPE_STORAGE_KEY);
     if (ours.length) await AsyncStorage.multiRemove(ours);
   } catch {
     // ignore
@@ -166,7 +218,9 @@ export async function getCacheReport() {
   let storageCount = 0;
   try {
     const allKeys = await AsyncStorage.getAllKeys();
-    storageCount = allKeys.filter((k) => k.startsWith(STORAGE_PREFIX)).length;
+    storageCount = allKeys.filter(
+      (k) => k.startsWith(STORAGE_PREFIX) && k !== SCOPE_STORAGE_KEY,
+    ).length;
   } catch {
     // ignore
   }
@@ -174,6 +228,7 @@ export async function getCacheReport() {
     stats: getCacheStats(),
     memoryKeys: keys,
     storageKeyCount: storageCount,
+    scope: getCacheScope(),
     debugEnabled: isApiCacheDebugEnabled,
   };
 }
