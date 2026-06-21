@@ -95,6 +95,16 @@ export default function LessonCompleteScreen({ navigation, route }) {
   const moduleComplete = result?.module_complete;
 
   function handleContinue() {
+    if (newBadge) {
+      navigation.navigate('BadgeReveal', {
+        badgeKey: newBadge,
+        mode: 'earned',
+        next: moduleComplete
+          ? { screen: 'MoneyChat', params: { module, badge: newBadge, xp: xpEarned } }
+          : { screen: 'CourseMap' },
+      });
+      return;
+    }
     if (moduleComplete) {
       navigation.navigate('MoneyChat', { module, badge: newBadge, xp: xpEarned });
     } else {
@@ -150,7 +160,7 @@ export default function LessonCompleteScreen({ navigation, route }) {
           {newBadge && (
             <View style={styles.badgeBanner}>
               <Ionicons name="ribbon" size={16} color="#FFD700" />
-              <Text style={styles.badgeBannerText}>New badge unlocked!</Text>
+              <Text style={styles.badgeBannerText}>New badge waiting — tap continue!</Text>
             </View>
           )}
         </Animated.View>

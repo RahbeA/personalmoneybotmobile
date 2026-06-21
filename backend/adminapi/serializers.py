@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from courses.models import (
     Module, Lesson, Question, Answer, UserProgress, UserStats,
-    OnboardingQuestion, OnboardingOption,
+    OnboardingQuestion, OnboardingOption, Badge, DailyRewardTier,
 )
 from moneyverse.models import Character
 from ai.models import (
@@ -120,6 +120,30 @@ class CharacterSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'price', 'rarity', 'accent_color',
             'model_file', 'preview_image', 'order', 'is_active',
         )
+
+
+class BadgeAdminSerializer(serializers.ModelSerializer):
+    icon_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Badge
+        fields = (
+            'id', 'key', 'name', 'description', 'metric', 'threshold', 'module',
+            'icon', 'icon_url', 'accent_color', 'ion_icon', 'order', 'is_active',
+        )
+
+    def get_icon_url(self, obj):
+        if not obj.icon:
+            return None
+        request = self.context.get('request')
+        url = obj.icon.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class DailyRewardTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DailyRewardTier
+        fields = ('id', 'day', 'bot_bucks')
 
 
 # --- Users ------------------------------------------------------------------

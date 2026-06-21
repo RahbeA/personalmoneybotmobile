@@ -13,6 +13,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_MODEL_CACHE_DEBUG": "1"
+      },
       "ios": {
         "simulator": true
       }

@@ -7,6 +7,7 @@ outline plus the detailed Q&A of only the most relevant module(s).
 import re
 
 from courses.models import Module
+from moneybot.cache_utils import TTL_COURSE_OUTLINE, cache_get_or_set
 
 
 _STOPWORDS = {
@@ -20,8 +21,7 @@ def _tokenize(text):
     return [w for w in re.findall(r'[a-z0-9]+', (text or '').lower()) if w not in _STOPWORDS]
 
 
-def course_outline():
-    """Compact outline of every module and its lessons. Always cheap to include."""
+def _build_course_outline():
     lines = ['COURSE OUTLINE:']
     for module in Module.objects.prefetch_related('lessons').all():
         lines.append(f'- Module {module.order}: {module.title} - {module.description}')
@@ -29,6 +29,12 @@ def course_outline():
         if lesson_titles:
             lines.append(f'  Lessons: {lesson_titles}')
     return '\n'.join(lines)
+
+
+def course_outline():
+    """Compact outline of every module and its lessons. Always cheap to include."""
+    outline, _ = cache_get_or_set('course:outline:v1', _build_course_outline, TTL_COURSE_OUTLINE)
+    return outline
 
 
 def module_context(module):

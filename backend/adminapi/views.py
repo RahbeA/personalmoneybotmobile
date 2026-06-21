@@ -12,6 +12,7 @@ from rest_framework.response import Response
 
 from courses.models import (
     Module, Lesson, Question, Answer, UserProgress, UserStats, OnboardingQuestion,
+    Badge, DailyRewardTier,
 )
 from moneyverse.models import Character, UserCharacter
 from ai.models import TutorConversation, MoneyChatSession
@@ -23,6 +24,8 @@ from .serializers import (
     QuestionSerializer,
     AnswerSerializer,
     CharacterSerializer,
+    BadgeAdminSerializer,
+    DailyRewardTierSerializer,
     OnboardingQuestionSerializer,
     AdminUserSerializer,
     AdminStaffSerializer,
@@ -170,6 +173,19 @@ class CharacterViewSet(viewsets.ModelViewSet):
     serializer_class = CharacterSerializer
     permission_classes = [IsAdminUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+
+class BadgeViewSet(viewsets.ModelViewSet):
+    queryset = Badge.objects.select_related('module').all()
+    serializer_class = BadgeAdminSerializer
+    permission_classes = [IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+
+class DailyRewardTierViewSet(viewsets.ModelViewSet):
+    queryset = DailyRewardTier.objects.all()
+    serializer_class = DailyRewardTierSerializer
+    permission_classes = [IsAdminUser]
 
 
 class OnboardingQuestionViewSet(viewsets.ModelViewSet):
@@ -410,3 +426,30 @@ class MoneyChatSessionViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return MoneyChatSessionDetailSerializer
         return MoneyChatSessionSerializer
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def cache_health(request):
+    """Staff-only Redis / cache diagnostics."""
+    from django.conf import settings
+    from django.core.cache import cache
+
+    from moneybot.cache_utils import CACHE_DEBUG
+
+    backend = settings.CACHES['default']['BACKEND']
+    ping_ok = False
+    ping_error = None
+    try:
+        cache.set('_cache_health_ping', 'ok', 10)
+        ping_ok = cache.get('_cache_health_ping') == 'ok'
+    except Exception as exc:
+        ping_error = str(exc)
+
+    return Response({
+        'backend': backend,
+        'redis_configured': 'redis' in backend.lower(),
+        'ping_ok': ping_ok,
+        'ping_error': ping_error,
+        'cache_debug': CACHE_DEBUG,
+    })

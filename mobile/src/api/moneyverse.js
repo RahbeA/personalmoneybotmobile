@@ -1,39 +1,29 @@
-import { API_BASE_URL } from '../config/api';
+import { apiRequest } from './client';
 
-const BASE_URL = API_BASE_URL;
+const inFlight = new Map();
 
-async function request(endpoint, token, options = {}) {
-  const url = `${BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${token}`,
-      ...options.headers,
-    },
-    ...options,
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.detail || 'Something went wrong');
-  }
-
-  return data;
+function dedupe(key, fn) {
+  if (inFlight.has(key)) return inFlight.get(key);
+  const promise = fn().finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
 }
 
 export const moneyverseApi = {
-  getCharacters: (token) => request('/moneyverse/characters/', token),
+  getCharacters: (token) =>
+    dedupe(`characters:${token}`, () => apiRequest('/moneyverse/characters/', { token })),
 
   purchaseCharacter: (token, characterId) =>
-    request(`/moneyverse/characters/${characterId}/purchase/`, token, {
+    apiRequest(`/moneyverse/characters/${characterId}/purchase/`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      token,
+      body: {},
     }),
 
   equipCharacter: (token, characterId) =>
-    request('/moneyverse/equip/', token, {
+    apiRequest('/moneyverse/equip/', {
       method: 'POST',
-      body: JSON.stringify({ character_id: characterId }),
+      token,
+      body: { character_id: characterId },
     }),
 };

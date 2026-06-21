@@ -1,49 +1,38 @@
-import { API_BASE_URL } from '../config/api';
-
-const BASE_URL = API_BASE_URL;
-
-async function request(endpoint, token, options = {}) {
-  const url = `${BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${token}`,
-      ...options.headers,
-    },
-    ...options,
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.detail || 'Something went wrong');
-  }
-
-  return data;
-}
+import { apiRequest } from './client';
 
 export const coursesApi = {
-  getModules: (token) => request('/courses/modules/', token),
+  getModules: (token) => apiRequest('/courses/modules/', { token }),
 
   getModuleLessons: (token, moduleId) =>
-    request(`/courses/modules/${moduleId}/lessons/`, token),
+    apiRequest(`/courses/modules/${moduleId}/lessons/`, { token }),
 
   getLessonQuestions: (token, lessonId) =>
-    request(`/courses/lessons/${lessonId}/questions/`, token),
+    apiRequest(`/courses/lessons/${lessonId}/questions/`, { token }),
 
   completeLesson: (token, lessonId, mistakes = 0) =>
-    request(`/courses/lessons/${lessonId}/complete/`, token, {
+    apiRequest(`/courses/lessons/${lessonId}/complete/`, {
       method: 'POST',
-      body: JSON.stringify({ mistakes }),
+      token,
+      body: { mistakes },
     }),
 
-  getStats: (token) => request('/courses/stats/', token),
+  getStats: (token) => apiRequest('/courses/stats/', { token }),
 
-  getOnboardingQuestions: (token) => request('/courses/onboarding/questions/', token),
+  claimDailyReward: (token) =>
+    apiRequest('/courses/daily-reward/claim/', { method: 'POST', token }),
+
+  getLeaderboard: (token, { page = 1, pageSize = 20, search = '' } = {}) => {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (search.trim()) params.set('search', search.trim());
+    return apiRequest(`/courses/leaderboard/?${params.toString()}`, { token });
+  },
+
+  getOnboardingQuestions: (token) => apiRequest('/courses/onboarding/questions/', { token }),
 
   submitOnboarding: (token, answers) =>
-    request('/courses/onboarding/submit/', token, {
+    apiRequest('/courses/onboarding/submit/', {
       method: 'POST',
-      body: JSON.stringify({ answers }),
+      token,
+      body: { answers },
     }),
 };

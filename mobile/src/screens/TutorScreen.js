@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,14 +11,17 @@ import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { tutorApi } from '../api/tutor';
+import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import ChatThread from '../components/chat/ChatThread';
 import { BrandHeader, BrandEmptyState } from '../components/brand';
 import { EMPTY_STATES } from '../constants/brandCopy';
+import { useTabBarInset } from '../navigation/tabBarLayout';
 
 export default function TutorScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { equippedCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
+  const tabBarInset = useTabBarInset();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [messages, setMessages] = useState([]);
@@ -27,17 +31,24 @@ export default function TutorScreen() {
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const loadConversations = useCallback(async () => {
+    if (!token || !user?.id) return;
     try {
-      const data = await tutorApi.getConversations(token);
+      const { data } = await fetchWithCache(
+        cacheKeys.tutorConversations(user.id),
+        () => tutorApi.getConversations(token),
+        { freshMs: TTL.TUTOR_CONVERSATIONS_MS, staleMs: TTL.TUTOR_CONVERSATIONS_MS * 5 },
+      );
       setConversations(data || []);
     } catch (e) {
       // ignore
     }
-  }, [token]);
+  }, [token, user?.id]);
 
-  useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+  useFocusEffect(
+    useCallback(() => {
+      loadConversations();
+    }, [loadConversations]),
+  );
 
   async function openConversation(id) {
     setHistoryOpen(false);
@@ -114,6 +125,7 @@ export default function TutorScreen() {
           composerDisabled={sending}
           placeholder="Ask about anything you're learning..."
           keyboardVerticalOffset={8}
+          bottomInset={tabBarInset}
           emptyComponent={emptyState}
           character={equippedCharacter}
         />

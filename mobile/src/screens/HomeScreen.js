@@ -1,17 +1,21 @@
-import React, { useRef, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Animated,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { useUserProgress, BADGE_META, getModuleIonIcon, getRankMeta } from '../context/UserProgressContext';
+import { useUserProgress, getModuleIonIcon, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
+import { useTabBarInset } from '../navigation/tabBarLayout';
 import { BrandAvatar, BrandLogo, BrandToast } from '../components/brand';
 import { BRAND_NAME } from '../constants/brandCopy';
+import DailyRewardCard from '../components/DailyRewardCard';
+import BadgeIcon from '../components/BadgeIcon';
 
 const DAILY_TIPS = [
   'Pay yourself first — automate savings before spending.',
@@ -25,9 +29,9 @@ const DAILY_TIPS = [
 
 const QUICK_ACTIONS = [
   { key: 'courses', label: 'Courses', subtitle: 'Keep learning', icon: 'book', tab: 'CoursesTab', colors: ['#3DDC5F', '#2BA84A'] },
+  { key: 'leaderboard', label: 'Leaderboard', subtitle: 'Global ranks', icon: 'trophy', screen: 'Leaderboard', colors: ['#F5B72B', '#D4920A'] },
   { key: 'moneyverse', label: 'Moneyverse', subtitle: 'Characters & shop', icon: 'planet', tab: 'MoneyverseTab', colors: ['#7C5CFC', '#5B3FD4'] },
   { key: 'tutor', label: 'AI Tutor', subtitle: 'Ask anything', icon: 'chatbubbles', tab: 'TutorTab', colors: ['#3B9EE3', '#2563EB'] },
-  { key: 'profile', label: 'Profile', subtitle: 'Stats & settings', icon: 'person', tab: 'SettingsTab', colors: ['#FB8C3C', '#EA580C'] },
 ];
 
 function getGreeting() {
@@ -80,10 +84,18 @@ export default function HomeScreen({ navigation }) {
   const {
     xp, streakDays, badges, lessonsCompleted, modules, level,
     xpInCurrentLevel, XP_PER_LEVEL, botBucks, equippedCharacter, rank,
+    dailyReward, claimingDaily, claimDailyReward, getBadgeMeta, badgeCatalog, refresh,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tabBarInset = useTabBarInset(24);
+  const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
   const [streakToast, setStreakToast] = useState(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      refresh({ background: true });
+    }, [refresh]),
+  );
 
   useEffect(() => {
     const milestones = [7, 30, 100];
@@ -115,13 +127,33 @@ export default function HomeScreen({ navigation }) {
     pct: mod.lesson_count ? Math.round((mod.completed_lesson_count / mod.lesson_count) * 100) : 0,
   }));
 
-  const earnedBadges = badges.map((key) => ({
-    key,
-    ...(BADGE_META[key] || { label: key, ionIcon: 'ribbon', color: colors.primary }),
+  const earnedBadges = badges.map((key) => getBadgeMeta(key));
+
+  const catalogBadges = badgeCatalog.map((b) => ({
+    ...getBadgeMeta(b.key),
+    earned: badges.includes(b.key),
   }));
 
   function goToTab(tab) {
     navigation.navigate(tab);
+  }
+
+  function handleQuickAction(action) {
+    if (action.screen) {
+      navigation.navigate(action.screen);
+      return;
+    }
+    goToTab(action.tab);
+  }
+
+  async function handleDailyClaim() {
+    const before = new Set(badges);
+    const result = await claimDailyReward();
+    if (!result?.badges) return;
+    const newKey = result.badges.find((key) => !before.has(key));
+    if (newKey) {
+      navigation.navigate('BadgeReveal', { badgeKey: newKey, mode: 'earned' });
+    }
   }
 
   return (
@@ -207,6 +239,17 @@ export default function HomeScreen({ navigation }) {
             </LinearGradient>
           </AnimatedCard>
 
+          {/* Daily reward */}
+          <AnimatedCard delay={90}>
+            <DailyRewardCard
+              dailyReward={dailyReward}
+              botBucks={botBucks}
+              onClaim={handleDailyClaim}
+              claiming={claimingDaily}
+              colors={colors}
+            />
+          </AnimatedCard>
+
           {/* Quick access */}
           <AnimatedCard delay={120} style={styles.section}>
             <Text style={styles.sectionTitle}>Quick Access</Text>
@@ -216,7 +259,7 @@ export default function HomeScreen({ navigation }) {
                   key={action.key}
                   action={action}
                   styles={styles}
-                  onPress={() => goToTab(action.tab)}
+                  onPress={() => handleQuickAction(action)}
                 />
               ))}
             </View>
@@ -298,17 +341,49 @@ export default function HomeScreen({ navigation }) {
           )}
 
           {/* Badges */}
-          {earnedBadges.length > 0 && (
+          {catalogBadges.length > 0 && (
+            <AnimatedCard delay={300} style={styles.section}>
+              <Text style={styles.sectionTitle}>Badges</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
+                {catalogBadges.map((badge) => (
+                  <TouchableOpacity
+                    key={badge.key}
+                    style={[styles.badgeItem, !badge.earned && styles.badgeItemLocked]}
+                    activeOpacity={0.85}
+                    onPress={() => navigation.navigate('BadgeReveal', {
+                      badgeKey: badge.key,
+                      mode: 'view',
+                      earned: badge.earned,
+                    })}
+                  >
+                    <BadgeIcon badge={badge} size={52} style={{ opacity: badge.earned ? 1 : 0.35 }} />
+                    <Text style={[styles.badgeLabel, !badge.earned && styles.badgeLabelLocked]} numberOfLines={2}>
+                      {badge.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </AnimatedCard>
+          )}
+
+          {catalogBadges.length === 0 && earnedBadges.length > 0 && (
             <AnimatedCard delay={300} style={styles.section}>
               <Text style={styles.sectionTitle}>Badges Earned</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
                 {earnedBadges.map((badge) => (
-                  <View key={badge.key} style={styles.badgeItem}>
-                    <View style={[styles.badgeCircle, { backgroundColor: badge.color + '22', borderColor: badge.color + '55' }]}>
-                      <Ionicons name={badge.ionIcon || 'ribbon'} size={26} color={badge.color} />
-                    </View>
+                  <TouchableOpacity
+                    key={badge.key}
+                    style={styles.badgeItem}
+                    activeOpacity={0.85}
+                    onPress={() => navigation.navigate('BadgeReveal', {
+                      badgeKey: badge.key,
+                      mode: 'view',
+                      earned: true,
+                    })}
+                  >
+                    <BadgeIcon badge={badge} size={52} />
                     <Text style={styles.badgeLabel}>{badge.label}</Text>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </AnimatedCard>
@@ -338,10 +413,10 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 32 },
+  scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: tabBarInset },
 
   header: {
     flexDirection: 'row',
@@ -517,6 +592,7 @@ const makeStyles = (colors) => StyleSheet.create({
 
   badgesScroll: { marginHorizontal: -4 },
   badgeItem: { alignItems: 'center', marginHorizontal: 8, width: 72 },
+  badgeItemLocked: { opacity: 0.75 },
   badgeCircle: {
     width: 56,
     height: 56,
@@ -527,6 +603,7 @@ const makeStyles = (colors) => StyleSheet.create({
     marginBottom: 6,
   },
   badgeLabel: { fontSize: 10, color: colors.textSecondary, textAlign: 'center', fontWeight: '500' },
+  badgeLabelLocked: { color: colors.textMuted },
 
   tipCard: {
     backgroundColor: colors.surfaceElevated,

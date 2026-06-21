@@ -4,9 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { BADGE_META, useUserProgress } from '../context/UserProgressContext';
+import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { BrandAvatar } from '../components/brand';
+import BadgeIcon from '../components/BadgeIcon';
 import { CELEBRATIONS } from '../constants/brandCopy';
 
 const MODULE_BADGES = {
@@ -15,12 +16,12 @@ const MODULE_BADGES = {
 
 export default function ModuleCompleteScreen({ navigation, route }) {
   const { module, badge, xp, moneyChatBonus } = route.params;
-  const { equippedCharacter } = useUserProgress();
+  const { equippedCharacter, getBadgeMeta } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const badgeKey = badge || MODULE_BADGES[module.order];
-  const badgeMeta = BADGE_META[badgeKey] || { label: 'Module Complete', icon: '🏅', ionIcon: 'ribbon', color: colors.primary };
+  const badgeMeta = getBadgeMeta(badgeKey);
 
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -91,12 +92,18 @@ export default function ModuleCompleteScreen({ navigation, route }) {
                 },
               ]}
             >
-              <LinearGradient
-                colors={[badgeMeta.color, badgeMeta.color + 'AA']}
-                style={styles.badgeGrad}
-              >
-                <Ionicons name={badgeMeta.ionIcon || 'ribbon'} size={28} color="#FFFFFF" />
-              </LinearGradient>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('BadgeReveal', {
+                badgeKey,
+                mode: 'view',
+                earned: true,
+              })}
+            >
+              <View style={styles.badgeGrad}>
+                <BadgeIcon badge={badgeMeta} size={40} />
+              </View>
+            </TouchableOpacity>
             </Animated.View>
           </View>
 

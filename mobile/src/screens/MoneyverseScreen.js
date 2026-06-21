@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   RefreshControl, Dimensions,
@@ -7,15 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
-import { moneyverseApi } from '../api/moneyverse';
 import { useTheme } from '../context/ThemeContext';
 import CharacterViewer from '../components/CharacterViewer';
 import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
-import { preloadModels } from '../utils/modelCache';
+import { useTabBarInset } from '../navigation/tabBarLayout';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -37,43 +34,31 @@ function CoinBadge({ amount, styles, colors }) {
 }
 
 export default function MoneyverseScreen({ navigation }) {
-  const { token } = useAuth();
-  const { botBucks, equippedCharacter } = useUserProgress();
+  const {
+    botBucks,
+    equippedCharacter,
+    characters,
+    loading: progressLoading,
+    refreshCharacterCache,
+  } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tabBarInset = useTabBarInset(24);
+  const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
 
-  const [characters, setCharacters] = useState([]);
-  const [equippedId, setEquippedId] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const loading = progressLoading && characters.length === 0;
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const data = await moneyverseApi.getCharacters(token);
-      const list = data.characters || [];
-      setCharacters(list);
-      setEquippedId(data.equipped_character_id ?? null);
-      preloadModels(list.map((c) => c.model_url));
-    } catch (e) {
-      // fail silently — offline or server not running
+      await refreshCharacterCache(true);
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, [token]);
+  }, [refreshCharacterCache]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load();
-  }, [load]);
-
-  const equipped = equippedCharacter || characters.find((c) => c.id === equippedId);
+  const equipped = equippedCharacter;
 
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
@@ -136,7 +121,7 @@ export default function MoneyverseScreen({ navigation }) {
               <View style={styles.grid}>
                 {characters.map((c) => {
                   const rarityColor = RARITY_COLORS[c.rarity] || colors.primary;
-                  const isEquipped = c.id === equippedId;
+                  const isEquipped = equippedCharacter?.id === c.id;
                   return (
                     <TouchableOpacity
                       key={c.id}
@@ -182,7 +167,6 @@ export default function MoneyverseScreen({ navigation }) {
                 })}
               </View>
             )}
-            <View style={{ height: 24 }} />
           </ScrollView>
         )}
       </SafeAreaView>
@@ -190,7 +174,7 @@ export default function MoneyverseScreen({ navigation }) {
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
   brandHeader: { paddingHorizontal: 20 },
@@ -200,7 +184,7 @@ const makeStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
   },
   coinBadgeText: { fontSize: 15, fontWeight: '800', color: colors.botBucks },
-  scroll: { paddingHorizontal: 20, paddingBottom: 24 },
+  scroll: { paddingHorizontal: 20, paddingBottom: tabBarInset },
   hero: {
     borderRadius: 24, padding: 18, alignItems: 'center', marginBottom: 24,
     borderWidth: 1, borderColor: 'rgba(61,220,95,0.25)',

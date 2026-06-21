@@ -9,8 +9,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
-import { BrandLoader, BrandHeader } from '../components/brand';
+import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
+import { API_BASE_URL } from '../config/api';
 import { LOADER_MESSAGES } from '../constants/brandCopy';
+import { useTabBarInset } from '../navigation/tabBarLayout';
 
 // Brand greens stay constant across light/dark themes
 const GREEN = { a: '#5BCB3C', b: '#3FB22E', solid: '#46B82F' };
@@ -158,15 +160,17 @@ function RoadmapNode({ styles, lockColor, lesson, index, status, onPress, pulse 
   );
 }
 
-function ModuleSection({ styles, lockColor, module, sectionNumber, isCurrentModule, collapsed, onToggle, onLessonPress, pulse }) {
+function ModuleSection({ styles, lockColor, module, sectionNumber, isCurrentModule, locked, collapsed, onToggle, onLessonPress, pulse }) {
   const lessons = module.lessons || [];
   const lessonCount = module.lesson_count || lessons.length;
   const completedCount = module.completed_lesson_count || 0;
   const progress = lessonCount > 0 ? completedCount / lessonCount : 0;
 
-  // Determine status of each lesson
+  // Determine status of each lesson. A locked module keeps every lesson locked
+  // until the previous module is fully completed.
   let currentAssigned = false;
   const statuses = lessons.map((l) => {
+    if (locked) return 'locked';
     if (l.is_completed) return 'completed';
     if (!currentAssigned) { currentAssigned = true; return 'current'; }
     return 'locked';
@@ -186,7 +190,13 @@ function ModuleSection({ styles, lockColor, module, sectionNumber, isCurrentModu
         <View style={{ flex: 1 }}>
           <View style={styles.sectionLabelRow}>
             <Text style={styles.sectionLabel}>SECTION {sectionNumber}</Text>
-            {isCurrentModule && (
+            {locked && (
+              <View style={styles.lockedBadge}>
+                <Ionicons name="lock-closed" size={10} color="#FFFFFF" />
+                <Text style={styles.currentBadgeText}>LOCKED</Text>
+              </View>
+            )}
+            {!locked && isCurrentModule && (
               <View style={styles.currentBadge}>
                 <Text style={styles.currentBadgeText}>CURRENT</Text>
               </View>
@@ -245,9 +255,10 @@ function getNextLesson(modules) {
 }
 
 export default function CoursesScreen({ navigation }) {
-  const { modules, loading, refresh } = useUserProgress();
+  const { modules, loading, loadError, refresh } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tabBarInset = useTabBarInset(24);
+  const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
   const lockColor = isDark ? '#3A3D42' : '#C2C8D0';
   const [refreshing, setRefreshing] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -272,17 +283,33 @@ export default function CoursesScreen({ navigation }) {
     navigation.navigate('LessonIntro', { lesson, module });
   }
 
-  function toggleSection(id) {
-    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+  function toggleSection(id, isCurrentlyCollapsed) {
+    setCollapsed((prev) => ({ ...prev, [id]: !isCurrentlyCollapsed }));
   }
 
   const nextLesson = getNextLesson(modules);
+
+  // A module is unlocked only once every module before it is fully completed.
+  // This forces users to progress through the roadmap in order.
+  const isModuleComplete = (mod) => {
+    const total = mod.lesson_count || (mod.lessons || []).length;
+    const done = mod.completed_lesson_count || 0;
+    return total > 0 && done >= total;
+  };
+  const lockedModuleIds = useMemo(() => {
+    const locked = new Set();
+    let prevAllComplete = true;
+    for (const mod of modules) {
+      if (!prevAllComplete) locked.add(mod.id);
+      if (!isModuleComplete(mod)) prevAllComplete = false;
+    }
+    return locked;
+  }, [modules]);
+
   // The current module is the first one not fully completed
   const currentModuleId = (() => {
     for (const mod of modules) {
-      const total = mod.lesson_count || (mod.lessons || []).length;
-      const done = mod.completed_lesson_count || 0;
-      if (done < total) return mod.id;
+      if (!isModuleComplete(mod)) return mod.id;
     }
     return null;
   })();
@@ -297,6 +324,19 @@ export default function CoursesScreen({ navigation }) {
           <>
             <BrandHeader title="Courses" subtitle="Your learning roadmap" />
 
+            {loadError ? (
+              <BrandEmptyState
+                title="Couldn't load courses"
+                body={`${loadError}\n\nConnected to:\n${API_BASE_URL}\n\nPull down to retry, or sign out and sign back in.`}
+                style={{ marginTop: 48 }}
+              />
+            ) : modules.length === 0 ? (
+              <BrandEmptyState
+                title="No courses yet"
+                body={`Nothing returned from the server.\n\nConnected to:\n${API_BASE_URL}\n\nPull down to refresh.`}
+                style={{ marginTop: 48 }}
+              />
+            ) : (
             <ScrollView
               contentContainerStyle={styles.scroll}
               showsVerticalScrollIndicator={false}
@@ -330,22 +370,30 @@ export default function CoursesScreen({ navigation }) {
               </TouchableOpacity>
             )}
 
-            {modules.map((module, i) => (
-              <ModuleSection
-                key={module.id}
-                styles={styles}
-                lockColor={lockColor}
-                module={module}
-                sectionNumber={module.order || i + 1}
-                isCurrentModule={module.id === currentModuleId}
-                collapsed={!!collapsed[module.id]}
-                onToggle={() => toggleSection(module.id)}
-                onLessonPress={handleLessonPress}
-                pulse={pulse}
-              />
-            ))}
+            {modules.map((module, i) => {
+              const locked = lockedModuleIds.has(module.id);
+              // Locked modules collapse by default; the user can still expand
+              // them to preview the lessons, but cannot start them.
+              const isCollapsed = module.id in collapsed ? collapsed[module.id] : locked;
+              return (
+                <ModuleSection
+                  key={module.id}
+                  styles={styles}
+                  lockColor={lockColor}
+                  module={module}
+                  sectionNumber={module.order || i + 1}
+                  isCurrentModule={module.id === currentModuleId}
+                  locked={locked}
+                  collapsed={isCollapsed}
+                  onToggle={() => toggleSection(module.id, isCollapsed)}
+                  onLessonPress={handleLessonPress}
+                  pulse={pulse}
+                />
+              );
+            })}
             <View style={{ height: 32 }} />
           </ScrollView>
+            )}
           </>
         )}
       </SafeAreaView>
@@ -353,11 +401,11 @@ export default function CoursesScreen({ navigation }) {
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   safe: { flex: 1 },
   loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scroll: { paddingHorizontal: 20, paddingTop: 8 },
+  scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: tabBarInset },
 
   // Continue Learning
   continueCard: {
@@ -390,6 +438,11 @@ const makeStyles = (colors) => StyleSheet.create({
   sectionLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.9)', letterSpacing: 1.2 },
   currentBadge: {
     backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 2,
+  },
+  lockedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.22)', borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 2,
   },
   currentBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.5 },

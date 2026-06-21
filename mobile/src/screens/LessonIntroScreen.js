@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { coursesApi } from '../api/courses';
+import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { useTheme } from '../context/ThemeContext';
 import { useUserProgress, getModuleIonIcon } from '../context/UserProgressContext';
 import { BrandAvatar } from '../components/brand';
@@ -39,9 +40,18 @@ export default function LessonIntroScreen({ navigation, route }) {
 
   useEffect(() => {
     let cancelled = false;
-    coursesApi.getLessonQuestions(token, lesson.id)
-      .then((data) => { if (!cancelled) setQuestions(data || []); })
-      .catch(() => { if (!cancelled) setQuestions([]); });
+    (async () => {
+      try {
+        const { data } = await fetchWithCache(
+          cacheKeys.lessonQuestions(lesson.id),
+          () => coursesApi.getLessonQuestions(token, lesson.id),
+          { freshMs: TTL.LESSON_QUESTIONS_MS, staleMs: TTL.LESSON_QUESTIONS_MS },
+        );
+        if (!cancelled) setQuestions(data || []);
+      } catch {
+        if (!cancelled) setQuestions([]);
+      }
+    })();
     return () => { cancelled = true; };
   }, [token, lesson.id]);
 

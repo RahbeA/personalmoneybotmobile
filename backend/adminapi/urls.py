@@ -9,6 +9,8 @@ router.register('lessons', views.LessonViewSet, basename='admin-lesson')
 router.register('questions', views.QuestionViewSet, basename='admin-question')
 router.register('answers', views.AnswerViewSet, basename='admin-answer')
 router.register('characters', views.CharacterViewSet, basename='admin-character')
+router.register('badges', views.BadgeViewSet, basename='admin-badge')
+router.register('daily-rewards', views.DailyRewardTierViewSet, basename='admin-daily-reward')
 router.register('onboarding-questions', views.OnboardingQuestionViewSet, basename='admin-onboarding-question')
 router.register('users', views.UserViewSet, basename='admin-user')
 router.register('staff', views.StaffViewSet, basename='admin-staff')
@@ -21,5 +23,6 @@ urlpatterns = [
     path('me/', views.admin_me, name='admin-me'),
     path('change-password/', views.change_password, name='admin-change-password'),
     path('stats/summary/', views.stats_summary, name='admin-stats-summary'),
+    path('cache/health/', views.cache_health, name='admin-cache-health'),
     path('', include(router.urls)),
 ]

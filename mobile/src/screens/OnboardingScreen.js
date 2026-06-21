@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { coursesApi } from '../api/courses';
+import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -106,7 +107,11 @@ export default function OnboardingScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await coursesApi.getOnboardingQuestions(token);
+        const { data } = await fetchWithCache(
+          cacheKeys.onboardingQuestions(),
+          () => coursesApi.getOnboardingQuestions(token),
+          { freshMs: TTL.ONBOARDING_MS, staleMs: TTL.ONBOARDING_MS },
+        );
         if (cancelled) return;
         setQuestions(data.questions || []);
         setPhase('intro');

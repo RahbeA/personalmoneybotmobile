@@ -16,6 +16,7 @@ export default function ChatThread({
   composerDisabled = false,
   placeholder,
   keyboardVerticalOffset = 0,
+  bottomInset = 0,
   footer = null,
   emptyComponent = null,
   character = null,
@@ -66,11 +67,13 @@ export default function ChatThread({
         {footer}
       </View>
       {onSend && (
-        <ChatComposer
-          onSend={onSend}
-          disabled={composerDisabled}
-          placeholder={placeholder}
-        />
+        <View style={{ paddingBottom: bottomInset }}>
+          <ChatComposer
+            onSend={onSend}
+            disabled={composerDisabled}
+            placeholder={placeholder}
+          />
+        </View>
       )}
     </KeyboardAvoidingView>
   );

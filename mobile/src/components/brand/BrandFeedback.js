@@ -1,8 +1,13 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { CELEBRATIONS } from '../../constants/brandCopy';
+import { CELEBRATIONS, CORRECT_ANSWER_MESSAGES } from '../../constants/brandCopy';
 import BrandAvatar from './BrandAvatar';
+
+function pickCorrectMessage() {
+  const idx = Math.floor(Math.random() * CORRECT_ANSWER_MESSAGES.length);
+  return CORRECT_ANSWER_MESSAGES[idx];
+}
 
 export default function BrandFeedback({ visible, correct, character }) {
   const { colors } = useTheme();
@@ -10,12 +15,15 @@ export default function BrandFeedback({ visible, correct, character }) {
   const scale = useRef(new Animated.Value(0.6)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const rotate = useRef(new Animated.Value(0)).current;
+  const [message, setMessage] = useState(CELEBRATIONS.wrongAnswer);
 
   useEffect(() => {
     if (!visible) {
       opacity.setValue(0);
       return undefined;
     }
+
+    setMessage(correct ? pickCorrectMessage() : CELEBRATIONS.wrongAnswer);
 
     scale.setValue(0.6);
     rotate.setValue(0);
@@ -55,9 +63,7 @@ export default function BrandFeedback({ visible, correct, character }) {
       <Animated.View style={{ transform: [{ scale }, { rotate: rotateDeg }] }}>
         <BrandAvatar character={character} size={72} logoSize={48} />
       </Animated.View>
-      <Text style={styles.message}>
-        {correct ? CELEBRATIONS.correctAnswer : CELEBRATIONS.wrongAnswer}
-      </Text>
+      <Text style={styles.message}>{message}</Text>
     </Animated.View>
   );
 }

@@ -23,6 +23,7 @@ export default function BrandAvatar({
           modelUrl={character.model_url}
           previewUrl={character.preview_url}
           autoRotate={autoRotate}
+          logoSize={size <= 48 ? 'sm' : 'md'}
         />
       </View>
     );

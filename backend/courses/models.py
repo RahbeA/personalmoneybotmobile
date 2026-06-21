@@ -39,6 +39,8 @@ class Question(models.Model):
         ('true_false', 'True / False'),
         ('mcq', 'Multiple Choice'),
         ('select_all', 'Select All That Apply'),
+        ('match', 'Match the Following'),
+        ('fill_blank', 'Fill in the Blanks'),
     ]
 
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='questions')
@@ -145,6 +147,73 @@ class UserStats(models.Model):
     onboarding_answers = models.JSONField(
         default=dict, blank=True, help_text='Raw {question_id: option_id} answers.'
     )
+    # Daily login reward ladder (day 1–7 → Bot Bucks tiers).
+    daily_reward_day = models.PositiveIntegerField(
+        default=1, help_text='Next reward tier (1–7) on claim.',
+    )
+    last_daily_claim = models.DateField(null=True, blank=True)
+    daily_claim_streak = models.PositiveIntegerField(
+        default=0, help_text='Consecutive days the daily reward was claimed.',
+    )
+    questions_correct = models.PositiveIntegerField(default=0)
+    questions_answered = models.PositiveIntegerField(default=0)
+    perfect_lessons = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"{self.user.email} — {self.xp} XP, {self.streak_days} day streak"
+
+
+class Badge(models.Model):
+    """Admin-configurable achievement badge."""
+
+    METRIC_CHOICES = [
+        ('lessons_completed', 'Lessons completed'),
+        ('modules_completed', 'Modules completed (all lessons in module)'),
+        ('module_completed', 'Specific module completed'),
+        ('streak_days', 'Lesson activity streak (days)'),
+        ('daily_claim_streak', 'Daily reward claim streak (days)'),
+        ('daily_reward_day', 'Daily reward tier reached (1–7)'),
+        ('bot_bucks', 'Bot Bucks balance'),
+        ('xp', 'Total XP'),
+        ('onboarding_score', 'Onboarding score'),
+        ('characters_owned', 'Characters owned'),
+        ('questions_correct', 'Questions answered correctly'),
+        ('perfect_lessons', 'Perfect lessons (0 mistakes)'),
+    ]
+
+    key = models.SlugField(max_length=50, unique=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    metric = models.CharField(max_length=30, choices=METRIC_CHOICES)
+    threshold = models.PositiveIntegerField(default=1)
+    module = models.ForeignKey(
+        Module, null=True, blank=True, on_delete=models.CASCADE,
+        help_text='Required for module_completed metric.',
+    )
+    icon = models.ImageField(upload_to='badges/', blank=True, null=True)
+    accent_color = models.CharField(max_length=7, default='#3DDC5F')
+    ion_icon = models.CharField(
+        max_length=40, default='ribbon',
+        help_text='Ionicons fallback when no icon image is uploaded.',
+    )
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return self.name
+
+
+class DailyRewardTier(models.Model):
+    """Bot Bucks granted on each consecutive daily claim (days 1–7)."""
+
+    day = models.PositiveIntegerField(unique=True)
+    bot_bucks = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['day']
+
+    def __str__(self):
+        return f'Day {self.day}: {self.bot_bucks} Bot Bucks'

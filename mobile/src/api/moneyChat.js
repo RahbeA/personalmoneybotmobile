@@ -1,37 +1,17 @@
-import { API_BASE_URL } from '../config/api';
-
-const BASE_URL = API_BASE_URL;
-
-async function request(endpoint, token, options = {}) {
-  const url = `${BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${token}`,
-      ...options.headers,
-    },
-    ...options,
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.detail || 'Something went wrong');
-  }
-
-  return data;
-}
+import { apiRequest } from './client';
 
 export const moneyChatApi = {
   start: (token, moduleId) =>
-    request('/ai/money-chat/start/', token, {
+    apiRequest('/ai/money-chat/start/', {
       method: 'POST',
-      body: JSON.stringify({ module_id: moduleId }),
+      token,
+      body: { module_id: moduleId },
     }),
 
   sendMessage: (token, sessionId, message) =>
-    request('/ai/money-chat/message/', token, {
+    apiRequest('/ai/money-chat/message/', {
       method: 'POST',
-      body: JSON.stringify({ session_id: sessionId, message }),
+      token,
+      body: { session_id: sessionId, message },
     }),
 };

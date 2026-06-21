@@ -10,6 +10,8 @@ import OnboardingPage from './pages/OnboardingPage';
 import UsersPage from './pages/UsersPage';
 import AdminAccessPage from './pages/AdminAccessPage';
 import AIInspectorPage from './pages/AIInspectorPage';
+import BadgesPage from './pages/BadgesPage';
+import DailyRewardsPage from './pages/DailyRewardsPage';
 
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
 
@@ -45,6 +47,8 @@ export default function App() {
               </Suspense>
             )}
           />
+          <Route path="badges" element={<BadgesPage />} />
+          <Route path="daily-rewards" element={<DailyRewardsPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="admin-access" element={<AdminAccessPage />} />
           <Route path="ai" element={<AIInspectorPage />} />

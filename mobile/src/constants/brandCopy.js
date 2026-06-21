@@ -27,9 +27,22 @@ export const EMPTY_STATES = {
   },
 };
 
+export const CORRECT_ANSWER_MESSAGES = [
+  'Nice!',
+  'Great job!',
+  'You got it!',
+  'Well done!',
+  'Awesome!',
+  'Spot on!',
+  'Brilliant!',
+  'Money smart!',
+  'Keep it up!',
+  'On fire!',
+];
+
 export const CELEBRATIONS = {
   lessonIntro: 'Ready when you are!',
-  correctAnswer: 'Nice!',
+  correctAnswer: CORRECT_ANSWER_MESSAGES[0],
   wrongAnswer: 'Almost — keep going!',
   moduleComplete: 'MoneyBot is proud of you!',
   levelUp: 'Level up!',

@@ -1,16 +1,19 @@
-import Constants from 'expo-constants';
+// Production Railway backend (TestFlight / prod testing).
+export const PRODUCTION_API_URL =
+  'https://moneybotmobile-production.up.railway.app/api';
 
-// Read the API base URL from app.json -> expo.extra.apiUrl.
-// Set that to your deployed Railway URL (e.g. https://APP.up.railway.app/api)
-// for production / TestFlight builds.
-const extra = Constants.expoConfig?.extra ?? Constants.manifest?.extra ?? {};
+// Local Django when running `python manage.py runserver` on the Mac.
+// iOS Simulator can reach localhost; a physical device needs your Mac's LAN IP.
+export const LOCAL_API_URL = 'http://localhost:8000/api';
 
-const configured = (extra.apiUrl || '').trim();
-
-// During local development the placeholder is left in place, so fall back to the
-// local Django server. iOS Simulator can reach localhost; a physical device needs
-// the deployed URL (or your Mac's LAN IP).
-const LOCAL_FALLBACK = 'http://localhost:8000/api';
+// In dev builds, default to the local backend. Set EXPO_PUBLIC_USE_PRODUCTION_API=1
+// when you want the dev client to hit Railway instead.
+const useProductionInDev = process.env.EXPO_PUBLIC_USE_PRODUCTION_API === '1';
 
 export const API_BASE_URL =
-  configured && !configured.includes('REPLACE') ? configured : LOCAL_FALLBACK;
+  !__DEV__ || useProductionInDev ? PRODUCTION_API_URL : LOCAL_API_URL;
+
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[MoneyBot] API:', API_BASE_URL);
+}

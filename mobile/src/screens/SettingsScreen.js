@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
+import { useTabBarInset } from '../navigation/tabBarLayout';
 import { BrandHeader, BrandAvatar } from '../components/brand';
 import { LEGAL } from '../constants/legal';
 import {
@@ -57,7 +58,8 @@ export default function SettingsScreen({ navigation }) {
   const { xp, streakDays, level, lessonsCompleted, botBucks, equippedCharacter, rank } = useUserProgress();
   const rankMeta = getRankMeta(rank?.key);
   const { colors, isDark, toggleTheme } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tabBarInset = useTabBarInset(24);
+  const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
 
   const [notifPrefs, setNotifPrefs] = useState({ daily: true, streak: true, newContent: false });
   const [notifLoading, setNotifLoading] = useState(true);
@@ -324,10 +326,10 @@ export default function SettingsScreen({ navigation }) {
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: 20, paddingBottom: 40 },
+  scroll: { paddingHorizontal: 20, paddingBottom: tabBarInset },
 
   heroCard: {
     alignItems: 'center',

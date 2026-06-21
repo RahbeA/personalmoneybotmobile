@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
 import HomeScreen from '../screens/HomeScreen';
+import LeaderboardScreen from '../screens/LeaderboardScreen';
 import CoursesScreen from '../screens/CoursesScreen';
 import LessonIntroScreen from '../screens/LessonIntroScreen';
 import QuestionFlowScreen from '../screens/QuestionFlowScreen';
@@ -17,9 +18,11 @@ import MoneyverseScreen from '../screens/MoneyverseScreen';
 import CharacterDetailScreen from '../screens/CharacterDetailScreen';
 import TutorScreen from '../screens/TutorScreen';
 import MoneyChatScreen from '../screens/MoneyChatScreen';
+import BadgeRevealScreen from '../screens/BadgeRevealScreen';
 import { useTheme } from '../context/ThemeContext';
 
 const Tab = createBottomTabNavigator();
+const HomeStack = createNativeStackNavigator();
 const CourseStack = createNativeStackNavigator();
 const MoneyverseStack = createNativeStackNavigator();
 const TutorStack = createNativeStackNavigator();
@@ -32,7 +35,9 @@ const TABS = [
   { name: 'SettingsTab', label: 'Profile', icon: 'person', iconOutline: 'person-outline' },
 ];
 
-const LESSON_ROUTES = new Set(['LessonIntro', 'QuestionFlow', 'LessonComplete', 'ModuleComplete', 'MoneyChat']);
+const LESSON_ROUTES = new Set([
+  'LessonIntro', 'QuestionFlow', 'LessonComplete', 'ModuleComplete', 'MoneyChat', 'BadgeReveal',
+]);
 
 function getDeepestRouteName(route) {
   if (!route.state) return route.name;
@@ -112,6 +117,27 @@ function CustomTabBar({ state, navigation }) {
   );
 }
 
+function HomeStackNavigator() {
+  const { colors } = useTheme();
+  const badgeRevealOptions = {
+    animation: 'slide_from_right',
+    gestureEnabled: false,
+    contentStyle: { backgroundColor: colors.background },
+  };
+
+  return (
+    <HomeStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+      <HomeStack.Screen name="Home" component={HomeScreen} />
+      <HomeStack.Screen name="Leaderboard" component={LeaderboardScreen} />
+      <HomeStack.Screen
+        name="BadgeReveal"
+        component={BadgeRevealScreen}
+        options={badgeRevealOptions}
+      />
+    </HomeStack.Navigator>
+  );
+}
+
 function MoneyverseStackNavigator() {
   return (
     <MoneyverseStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
@@ -122,6 +148,13 @@ function MoneyverseStackNavigator() {
 }
 
 function CoursesStackNavigator() {
+  const { colors } = useTheme();
+  const badgeRevealOptions = {
+    animation: 'slide_from_right',
+    gestureEnabled: false,
+    contentStyle: { backgroundColor: colors.background },
+  };
+
   return (
     <CourseStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <CourseStack.Screen name="CourseMap" component={CoursesScreen} />
@@ -130,6 +163,11 @@ function CoursesStackNavigator() {
       <CourseStack.Screen name="LessonComplete" component={LessonCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
       <CourseStack.Screen name="MoneyChat" component={MoneyChatScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
       <CourseStack.Screen name="ModuleComplete" component={ModuleCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
+      <CourseStack.Screen
+        name="BadgeReveal"
+        component={BadgeRevealScreen}
+        options={badgeRevealOptions}
+      />
     </CourseStack.Navigator>
   );
 }
@@ -143,15 +181,20 @@ function TutorStackNavigator() {
 }
 
 export default function MainTabNavigator() {
+  const { colors } = useTheme();
+
   return (
     <Tab.Navigator
       tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.background },
+      }}
     >
-      <Tab.Screen name="HomeTab" component={HomeScreen} />
+      <Tab.Screen name="HomeTab" component={HomeStackNavigator} />
       <Tab.Screen name="CoursesTab" component={CoursesStackNavigator} />
       <Tab.Screen name="MoneyverseTab" component={MoneyverseStackNavigator} />
-      <Tab.Screen name="TutorTab" component={TutorStackNavigator} />
+      <Tab.Screen name="TutorTab" component={TutorStackNavigator} options={{ lazy: true }} />
       <Tab.Screen name="SettingsTab" component={SettingsScreen} />
     </Tab.Navigator>
   );
@@ -159,6 +202,10 @@ export default function MainTabNavigator() {
 
 const makeStyles = (colors) => StyleSheet.create({
   tabBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,

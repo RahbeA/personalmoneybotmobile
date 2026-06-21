@@ -1,7 +1,17 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { coursesApi } from '../api/courses';
 import { moneyverseApi } from '../api/moneyverse';
 import { useAuth } from './AuthContext';
+import { ensureModelCached, syncCharacterModels } from '../utils/modelCache';
+import {
+  cacheKeys,
+  fetchWithCache,
+  invalidateCache,
+  readCache,
+  writeCache,
+  TTL,
+} from '../utils/apiCache';
+import { readOnboardingCompleted, persistOnboardingCompleted, inferOnboardingCompleted } from '../utils/onboardingStore';
 
 const UserProgressContext = createContext(null);
 
@@ -55,57 +65,256 @@ export function UserProgressProvider({ children }) {
   const [modules, setModules] = useState([]);
   const [botBucks, setBotBucks] = useState(0);
   const [equippedCharacter, setEquippedCharacter] = useState(null);
+  const [characters, setCharacters] = useState([]);
+  const [charactersLoading, setCharactersLoading] = useState(false);
+  const syncGeneration = useRef(0);
+  const charactersRef = useRef([]);
+  const charactersFetchRef = useRef({ at: 0, promise: null });
+  const CHARACTERS_TTL_MS = 5 * 60 * 1000;
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [onboardingScore, setOnboardingScore] = useState(0);
   const [onboardingTotal, setOnboardingTotal] = useState(5);
   const [rank, setRank] = useState(null);
+  const [badgeCatalog, setBadgeCatalog] = useState([]);
+  const [dailyReward, setDailyReward] = useState(null);
+  const [claimingDaily, setClaimingDaily] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
-  const fetchData = useCallback(async () => {
-    if (!token) return;
+  const applyStats = useCallback((statsData) => {
+    setXp(statsData.xp);
+    setStreakDays(statsData.streak_days);
+    setBadges(statsData.badges || []);
+    setCompletedLessonIds(new Set(statsData.completed_lesson_ids || []));
+    setLessonsCompleted(statsData.lessons_completed || 0);
+    setBotBucks(statsData.bot_bucks || 0);
+    setEquippedCharacter(statsData.equipped_character || null);
+    const completed = inferOnboardingCompleted(statsData);
+    setOnboardingCompleted(completed);
+    setOnboardingScore(statsData.onboarding_score || 0);
+    setOnboardingTotal(statsData.onboarding_total || 5);
+    setRank(statsData.rank || null);
+    if (statsData.badge_catalog) setBadgeCatalog(statsData.badge_catalog);
+    if (statsData.daily_reward) setDailyReward(statsData.daily_reward);
+    if (user?.id) {
+      persistOnboardingCompleted(user.id, completed);
+    }
+  }, [user?.id]);
+
+  const getBadgeMeta = useCallback((key) => {
+    const fromCatalog = badgeCatalog.find((b) => b.key === key);
+    if (fromCatalog) {
+      return {
+        ...fromCatalog,
+        label: fromCatalog.name,
+        ionIcon: fromCatalog.ion_icon,
+        color: fromCatalog.accent_color,
+      };
+    }
+    return BADGE_META[key] || { key, label: key, ionIcon: 'ribbon', color: '#3DDC5F' };
+  }, [badgeCatalog]);
+
+  const loadCharacters = useCallback(async ({ force = false } = {}) => {
+    if (!token || !user?.id) return null;
+
+    const now = Date.now();
+    if (!force && charactersFetchRef.current.at && now - charactersFetchRef.current.at < CHARACTERS_TTL_MS) {
+      return null;
+    }
+    if (!force && charactersFetchRef.current.promise) {
+      return charactersFetchRef.current.promise;
+    }
+
+    const charKey = cacheKeys.characters(user.id);
+
+    const promise = (async () => {
+      if (!force) {
+        const cached = await readCache(charKey, {
+          freshMs: TTL.CHARACTERS_FRESH_MS,
+          staleMs: TTL.CHARACTERS_STALE_MS,
+        });
+        if (cached.data?.characters?.length) {
+          charactersRef.current = cached.data.characters;
+          setCharacters(cached.data.characters);
+          if (typeof cached.data.bot_bucks === 'number') setBotBucks(cached.data.bot_bucks);
+          charactersFetchRef.current.at = Date.now();
+        }
+      }
+
+      const { data } = await fetchWithCache(
+        charKey,
+        () => moneyverseApi.getCharacters(token),
+        {
+          freshMs: TTL.CHARACTERS_FRESH_MS,
+          staleMs: TTL.CHARACTERS_STALE_MS,
+          force,
+        },
+      );
+
+      const list = data.characters || [];
+      charactersRef.current = list;
+      charactersFetchRef.current.at = Date.now();
+      setCharacters(list);
+      return data;
+    })().finally(() => {
+      if (charactersFetchRef.current.promise === promise) {
+        charactersFetchRef.current.promise = null;
+      }
+    });
+
+    charactersFetchRef.current.promise = promise;
+    return promise;
+  }, [token, user?.id]);
+
+  const fetchData = useCallback(async ({ refreshModels = false, background = false, showLoading = false } = {}) => {
+    if (!token || !user?.id) {
+      setLoading(false);
+      return;
+    }
+    if (!background) {
+      setLoadError(null);
+    }
+    if (showLoading) {
+      setLoading(true);
+    }
+    const syncId = ++syncGeneration.current;
     try {
-      const dataPromise = Promise.all([
+      const [statsData, modulesData, moneyverseData] = await Promise.all([
         coursesApi.getStats(token),
         coursesApi.getModules(token),
+        loadCharacters({ force: refreshModels }).catch(() => null),
       ]);
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Progress fetch timed out')), 8000);
+
+      const characterList = moneyverseData?.characters ?? charactersRef.current ?? [];
+      if (moneyverseData?.characters) {
+        setCharacters(moneyverseData.characters);
+      }
+
+      applyStats(statsData);
+      setModules(Array.isArray(modulesData) ? modulesData : []);
+
+      await writeCache(cacheKeys.progress(user.id), {
+        stats: statsData,
+        modules: Array.isArray(modulesData) ? modulesData : [],
       });
-      const [statsData, modulesData] = await Promise.race([dataPromise, timeoutPromise]);
-      setXp(statsData.xp);
-      setStreakDays(statsData.streak_days);
-      setBadges(statsData.badges || []);
-      setCompletedLessonIds(new Set(statsData.completed_lesson_ids || []));
-      setLessonsCompleted(statsData.lessons_completed || 0);
-      setBotBucks(statsData.bot_bucks || 0);
-      setEquippedCharacter(statsData.equipped_character || null);
-      setOnboardingCompleted(!!statsData.onboarding_completed);
-      setOnboardingScore(statsData.onboarding_score || 0);
-      setOnboardingTotal(statsData.onboarding_total || 5);
-      setRank(statsData.rank || null);
-      setModules(modulesData);
+
+      const priorityUrl = statsData.equipped_character?.model_url;
+      if (priorityUrl) {
+        try {
+          await ensureModelCached(priorityUrl);
+        } catch (e) {
+          // logged inside modelCache
+        }
+      }
+
+      if (syncId === syncGeneration.current) {
+        syncCharacterModels(characterList, {
+          forceRefresh: refreshModels,
+          priorityUrls: priorityUrl ? [priorityUrl] : [],
+        }).catch(() => {});
+      }
     } catch (e) {
-      // fail silently — offline or server not running
+      if (!background) {
+        setLoadError(e.message || 'Could not load your progress.');
+      }
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[MoneyBot] Progress fetch failed:', e.message, e.status);
+      }
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, user?.id, loadCharacters, applyStats]);
+
+  const hydrateFromCache = useCallback(async (userId) => {
+    const cached = await readCache(cacheKeys.progress(userId), {
+      freshMs: TTL.PROGRESS_STALE_MS,
+      staleMs: TTL.PROGRESS_STALE_MS,
+    });
+    if (!cached.data?.stats) {
+      return { hydrated: false, onboardingCompleted: false };
+    }
+
+    applyStats(cached.data.stats);
+    setModules(Array.isArray(cached.data.modules) ? cached.data.modules : []);
+
+    const charCached = await readCache(cacheKeys.characters(userId), {
+      freshMs: TTL.CHARACTERS_STALE_MS,
+      staleMs: TTL.CHARACTERS_STALE_MS,
+    });
+    if (charCached.data?.characters?.length) {
+      charactersRef.current = charCached.data.characters;
+      setCharacters(charCached.data.characters);
+      if (typeof charCached.data.bot_bucks === 'number') {
+        setBotBucks(charCached.data.bot_bucks);
+      }
+    }
+
+    return {
+      hydrated: true,
+      onboardingCompleted: inferOnboardingCompleted(cached.data.stats),
+    };
+  }, [applyStats]);
+
+  const refreshCharacterCache = useCallback(async (forceRefresh = false) => {
+    if (!token) return;
+    setCharactersLoading(true);
+    try {
+      const data = await loadCharacters({ force: forceRefresh });
+      const characterList = data?.characters ?? charactersRef.current ?? [];
+      if (data && typeof data.bot_bucks === 'number') setBotBucks(data.bot_bucks);
+      const priorityUrl = equippedCharacter?.model_url;
+      await syncCharacterModels(characterList, {
+        forceRefresh: forceRefresh,
+        priorityUrls: priorityUrl ? [priorityUrl] : [],
+      });
+    } catch (e) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[MoneyBot] Character cache refresh failed:', e.message);
+      }
+    } finally {
+      setCharactersLoading(false);
+    }
+  }, [token, equippedCharacter?.model_url, loadCharacters]);
 
   useEffect(() => {
-    if (user) {
-      // Gate the app on a fresh fetch whenever the signed-in user changes, so
-      // onboarding state can't leak from a previous account.
+    if (user?.id) {
       setLoading(true);
-      fetchData();
-    } else {
-      setOnboardingCompleted(false);
-      setRank(null);
-      setLoading(false);
+      let cancelled = false;
+      (async () => {
+        const storedCompleted = await readOnboardingCompleted(user.id);
+        if (cancelled) return;
+        if (storedCompleted) {
+          setOnboardingCompleted(true);
+        }
+
+        const { hydrated, onboardingCompleted: cachedCompleted } = await hydrateFromCache(user.id);
+        if (cancelled) return;
+
+        const knownCompleted = storedCompleted || cachedCompleted;
+        if (knownCompleted) {
+          setLoading(false);
+        }
+
+        await fetchData({ background: knownCompleted || hydrated });
+      })();
+      return () => { cancelled = true; };
     }
-  }, [user, fetchData]);
+    setOnboardingCompleted(false);
+    setRank(null);
+    setCharacters([]);
+    charactersRef.current = [];
+    charactersFetchRef.current = { at: 0, promise: null };
+    setLoading(false);
+  }, [user?.id, fetchData, hydrateFromCache]);
+
+  function invalidateCharactersMetadata() {
+    charactersFetchRef.current = { at: 0, promise: null };
+  }
 
   async function completeLesson(lessonId, mistakes = 0) {
-    if (!token) return null;
+    if (!token || !user?.id) return null;
     try {
       const result = await coursesApi.completeLesson(token, lessonId, mistakes);
       if (!result.already_completed) {
@@ -115,6 +324,7 @@ export function UserProgressProvider({ children }) {
         setBotBucks(result.stats.bot_bucks ?? botBucks);
         setCompletedLessonIds((prev) => new Set([...prev, lessonId]));
         setLessonsCompleted((prev) => prev + 1);
+        await invalidateCache(cacheKeys.progress(user.id));
         await fetchData();
       }
       return result;
@@ -124,18 +334,29 @@ export function UserProgressProvider({ children }) {
   }
 
   async function purchaseCharacter(characterId) {
-    if (!token) return null;
+    if (!token || !user?.id) return null;
     const result = await moneyverseApi.purchaseCharacter(token, characterId);
     if (typeof result.bot_bucks === 'number') {
       setBotBucks(result.bot_bucks);
     }
+    if (result.character?.model_url) {
+      ensureModelCached(result.character.model_url).catch(() => {});
+    }
+    await invalidateCache(cacheKeys.progress(user.id));
+    await invalidateCache(cacheKeys.characters(user.id));
+    charactersFetchRef.current = { at: 0, promise: null };
     return result;
   }
 
   async function equipCharacter(characterId) {
-    if (!token) return null;
+    if (!token || !user?.id) return null;
     const result = await moneyverseApi.equipCharacter(token, characterId);
-    setEquippedCharacter(result.character || null);
+    const next = result.character || null;
+    setEquippedCharacter(next);
+    if (next?.model_url) {
+      ensureModelCached(next.model_url).catch(() => {});
+    }
+    await invalidateCache(cacheKeys.progress(user.id));
     return result;
   }
 
@@ -146,9 +367,30 @@ export function UserProgressProvider({ children }) {
     try {
       const result = await coursesApi.submitOnboarding(token, answers);
       const stats = result.stats || {};
-      setOnboardingScore(result.score ?? stats.onboarding_score ?? 0);
-      setOnboardingTotal(result.total ?? stats.onboarding_total ?? onboardingTotal);
-      setRank(result.rank || stats.rank || null);
+      let mergedStats = {
+        ...stats,
+        onboarding_completed: true,
+        onboarding_score: result.score ?? stats.onboarding_score ?? 0,
+        rank: result.rank ?? stats.rank ?? null,
+      };
+      if (user?.id) {
+        const cached = await readCache(cacheKeys.progress(user.id), {
+          freshMs: TTL.PROGRESS_STALE_MS,
+          staleMs: TTL.PROGRESS_STALE_MS,
+        });
+        mergedStats = {
+          ...(cached.data?.stats || {}),
+          ...mergedStats,
+        };
+        applyStats(mergedStats);
+        await persistOnboardingCompleted(user.id, true);
+        await writeCache(cacheKeys.progress(user.id), {
+          stats: mergedStats,
+          modules: cached.data?.modules || [],
+        });
+      } else {
+        applyStats(mergedStats);
+      }
       return result;
     } catch (e) {
       return null;
@@ -158,10 +400,30 @@ export function UserProgressProvider({ children }) {
   // Flip the gate so the root navigator swaps onboarding for the main app.
   function finishOnboarding() {
     setOnboardingCompleted(true);
+    if (user?.id) {
+      persistOnboardingCompleted(user.id, true);
+    }
   }
 
   function isLessonCompleted(lessonId) {
     return completedLessonIds.has(lessonId);
+  }
+
+  async function claimDailyReward() {
+    if (!token || !user?.id || claimingDaily) return null;
+    setClaimingDaily(true);
+    try {
+      const result = await coursesApi.claimDailyReward(token);
+      if (typeof result.bot_bucks === 'number') setBotBucks(result.bot_bucks);
+      if (result.daily_reward) setDailyReward(result.daily_reward);
+      if (result.badges) setBadges(result.badges);
+      await invalidateCache(cacheKeys.progress(user.id));
+      return result;
+    } catch (e) {
+      return null;
+    } finally {
+      setClaimingDaily(false);
+    }
   }
 
   // XP level system: each level requires 200 XP
@@ -169,6 +431,8 @@ export function UserProgressProvider({ children }) {
   const level = Math.floor(xp / XP_PER_LEVEL) + 1;
   const xpInCurrentLevel = xp % XP_PER_LEVEL;
   const xpProgress = xpInCurrentLevel / XP_PER_LEVEL;
+
+  const refresh = useCallback((opts = {}) => fetchData({ background: false, ...opts }), [fetchData]);
 
   return (
     <UserProgressContext.Provider
@@ -181,11 +445,18 @@ export function UserProgressProvider({ children }) {
         modules,
         botBucks,
         equippedCharacter,
+        characters,
+        charactersLoading,
         onboardingCompleted,
         onboardingScore,
         onboardingTotal,
         rank,
+        badgeCatalog,
+        dailyReward,
+        claimingDaily,
+        getBadgeMeta,
         loading,
+        loadError,
         level,
         xpInCurrentLevel,
         xpProgress,
@@ -195,8 +466,11 @@ export function UserProgressProvider({ children }) {
         finishOnboarding,
         purchaseCharacter,
         equipCharacter,
+        claimDailyReward,
         isLessonCompleted,
-        refresh: fetchData,
+        refresh,
+        refreshCharacterCache,
+        invalidateCharactersMetadata,
       }}
     >
       {children}

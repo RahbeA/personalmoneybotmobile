@@ -1,15 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, ActivityIndicator, Image, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '../context/ThemeContext';
-import { getModelBase64, getModelViewerScript } from '../utils/modelCache';
+import { getViewerAssets, getPreviewFileUri, refreshModel, logCharacterViewerEvent, peekViewerAssets } from '../utils/modelCache';
+import BrandLogo from './brand/BrandLogo';
 
-// model-viewer reliably renders .glb (textures, lighting, animation) inside a
-// WebView. We feed it the model as an in-page blob URL built from base64 bytes
-// downloaded by RN, so the WebView never makes an http request (avoids iOS ATS
-// blocking of http://localhost media) and it works offline once cached. The
-// model-viewer library itself is also cached and inlined, so no CDN round-trip.
+// model-viewer renders .glb inside a WebView. iOS inline HTML cannot load file://
+// URLs from the app sandbox, so we inject the model as a blob URL from base64
+// bytes that RN downloaded to disk first.
 function buildHtml({ script, base64, autoRotate, allowDrag }) {
   const cameraControls = allowDrag ? 'camera-controls touch-action="pan-y"' : '';
   const autoRotateAttr = autoRotate
@@ -54,7 +52,7 @@ function buildHtml({ script, base64, autoRotate, allowDrag }) {
       mv.addEventListener('load', function () { send('loaded'); });
       mv.addEventListener('error', function () { send('error'); });
       mv.setAttribute('src', url);
-      setTimeout(function () { if (!mv.loaded) send('timeout'); }, 15000);
+      setTimeout(function () { if (!mv.loaded) send('timeout'); }, 30000);
     } catch (e) {
       send('error');
     }
@@ -63,44 +61,83 @@ function buildHtml({ script, base64, autoRotate, allowDrag }) {
 </html>`;
 }
 
+function PosterFallback({ previewUri, style, logoSize = 'lg' }) {
+  if (previewUri) {
+    return (
+      <Image
+        source={{ uri: previewUri }}
+        style={[styles.fill, style]}
+        resizeMode="contain"
+      />
+    );
+  }
+  return (
+    <View style={[styles.fill, styles.posterFallback, style]}>
+      <BrandLogo size={logoSize} />
+    </View>
+  );
+}
+
 export default function CharacterViewer({
   modelUrl,
   previewUrl,
   style,
   autoRotate = true,
   allowDrag = false,
-  iconColor,
+  logoSize = 'lg',
 }) {
   const { colors } = useTheme();
-  const [status, setStatus] = useState('loading'); // loading | ready | error
-  const [assets, setAssets] = useState(null); // { script, base64 }
+  const initialAssets = useMemo(() => (modelUrl ? peekViewerAssets(modelUrl) : null), [modelUrl]);
+  const [status, setStatus] = useState(initialAssets ? 'webview' : 'loading');
+  const [assets, setAssets] = useState(initialAssets);
+  const [previewUri, setPreviewUri] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!previewUrl) {
+      setPreviewUri(null);
+      return undefined;
+    }
+    let cancelled = false;
+    getPreviewFileUri(previewUrl)
+      .then((uri) => { if (!cancelled) setPreviewUri(uri || previewUrl); })
+      .catch(() => { if (!cancelled) setPreviewUri(previewUrl); });
+    return () => { cancelled = true; };
+  }, [previewUrl]);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus('loading');
-    setAssets(null);
 
     if (!modelUrl) {
       setStatus('error');
-      return;
+      setAssets(null);
+      return undefined;
+    }
+
+    const cached = peekViewerAssets(modelUrl);
+    if (cached) {
+      setAssets(cached);
+      setStatus('webview');
+    } else {
+      setStatus('loading');
+      setAssets(null);
     }
 
     (async () => {
       try {
-        const [script, base64] = await Promise.all([
-          getModelViewerScript(),
-          getModelBase64(modelUrl),
-        ]);
-        if (!cancelled) setAssets({ script, base64 });
+        const next = await getViewerAssets(modelUrl);
+        if (!cancelled) {
+          setAssets(next);
+          setStatus((prev) => (prev === 'ready' ? 'ready' : 'webview'));
+        }
       } catch (e) {
+        logCharacterViewerEvent('assets-failed', { model: modelUrl, error: e.message });
         if (!cancelled) setStatus('error');
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [modelUrl]);
+    return () => { cancelled = true; };
+  }, [modelUrl, attempt]);
 
   const html = useMemo(() => {
     if (!assets) return null;
@@ -109,44 +146,62 @@ export default function CharacterViewer({
 
   function onMessage(event) {
     const data = event?.nativeEvent?.data;
-    if (data === 'loaded') setStatus('ready');
-    else if (data === 'error' || data === 'timeout') setStatus('error');
+    if (data === 'loaded') {
+      logCharacterViewerEvent('3d-ready', { model: modelUrl });
+      setStatus('ready');
+      return;
+    }
+    if (data === 'error' || data === 'timeout') {
+      logCharacterViewerEvent(data, { model: modelUrl, attempt });
+      if (attempt < 1) {
+        refreshModel(modelUrl).finally(() => setAttempt((n) => n + 1));
+        return;
+      }
+      setStatus('error');
+    }
   }
 
+  const poster = previewUri || previewUrl;
+
   if (!modelUrl || status === 'error') {
-    if (previewUrl) {
-      return <Image source={{ uri: previewUrl }} style={[styles.fill, style]} resizeMode="contain" />;
-    }
-    return (
-      <View style={[styles.fill, styles.center, style]}>
-        <Ionicons name="cube-outline" size={48} color={iconColor || colors.textMuted} />
-      </View>
-    );
+    return <PosterFallback previewUri={poster} style={style} logoSize={logoSize} />;
   }
 
   return (
     <View style={[styles.fill, style]}>
-      {html && (
+      {poster ? (
+        <Image
+          source={{ uri: poster }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="contain"
+        />
+      ) : null}
+      {html ? (
         <WebView
           originWhitelist={['*']}
           source={{ html }}
-          style={styles.webview}
+          style={[styles.webview, status !== 'ready' && styles.webviewHidden]}
           containerStyle={styles.webview}
           scrollEnabled={false}
           bounces={false}
           javaScriptEnabled
           domStorageEnabled
-          allowFileAccess
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}
           mixedContentMode="always"
           androidLayerType="hardware"
           onMessage={onMessage}
-          onError={() => setStatus('error')}
+          onError={() => {
+            if (attempt < 1) {
+              refreshModel(modelUrl).finally(() => setAttempt((n) => n + 1));
+            } else {
+              setStatus('error');
+            }
+          }}
         />
-      )}
-      {status === 'loading' && (
-        <View style={[StyleSheet.absoluteFill, styles.center]} pointerEvents="none">
+      ) : null}
+      {status === 'loading' && !poster && (
+        <View style={[StyleSheet.absoluteFill, styles.center, styles.loadingOverlay]} pointerEvents="none">
           <ActivityIndicator color={colors.primary} />
         </View>
       )}
@@ -158,4 +213,11 @@ const styles = StyleSheet.create({
   fill: { flex: 1, width: '100%', height: '100%' },
   center: { alignItems: 'center', justifyContent: 'center' },
   webview: { flex: 1, backgroundColor: 'transparent' },
+  webviewHidden: { opacity: 0 },
+  loadingOverlay: { backgroundColor: 'rgba(255,255,255,0.35)' },
+  posterFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
 });
