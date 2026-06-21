@@ -30,6 +30,7 @@
   "submit": {
     "production": {
       "ios": {
+        "ascAppId": "6778658807",
         "language": "en-US",
         "ascApiKeyPath": "./credentials/AuthKey_9D2KK3FTTT.p8",
         "ascApiKeyId": "9D2KK3FTTT",
