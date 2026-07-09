@@ -17,6 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { BrandLogo } from '../components/brand';
@@ -24,6 +25,7 @@ import LegalFooter from '../components/LegalFooter';
 import { BRAND_NAME } from '../constants/brandCopy';
 import { isGoogleConfigured } from '../config/google';
 import { buildGoogleAuthConfig, getGoogleSignInBlockedMessage } from '../utils/googleAuth';
+import { isAppleSignInAvailable } from '../utils/appleAuth';
 
 // Lets the auth popup/redirect resolve correctly when returning to the app.
 WebBrowser.maybeCompleteAuthSession();
@@ -42,8 +44,10 @@ export default function AuthScreen({ route, navigation }) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
 
-  const { login, register, googleSignIn } = useAuth();
+  const { login, register, googleSignIn, appleSignIn } = useAuth();
 
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
     buildGoogleAuthConfig(),
@@ -59,6 +63,54 @@ export default function AuthScreen({ route, navigation }) {
       Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
   }, []);
+
+  // Sign in with Apple is required on iOS whenever another social login (Google)
+  // is offered (App Store Guideline 4.8). Only shown when the device supports it.
+  useEffect(() => {
+    let active = true;
+    isAppleSignInAvailable().then((ok) => {
+      if (active) setAppleAvailable(ok);
+    });
+    return () => { active = false; };
+  }, []);
+
+  async function handleApple() {
+    if (appleLoading) return;
+    setError('');
+    setAppleLoading(true);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      const { identityToken, email, fullName } = credential;
+      if (!identityToken) {
+        setError('Apple did not return a valid token. Try again.');
+        shake();
+        return;
+      }
+      const nameStr = [fullName?.givenName, fullName?.familyName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      await appleSignIn({
+        identityToken,
+        email: email || undefined,
+        fullName: nameStr || undefined,
+      });
+      // Navigation handled by root navigator watching auth state
+    } catch (err) {
+      // User tapping "Cancel" on the Apple sheet is not an error.
+      if (err?.code !== 'ERR_REQUEST_CANCELED') {
+        setError(err.message || 'Apple sign-in failed. Try again.');
+        shake();
+      }
+    } finally {
+      setAppleLoading(false);
+    }
+  }
 
   // Handle the result of the Google auth flow once the user returns to the app.
   useEffect(() => {
@@ -391,7 +443,7 @@ export default function AuthScreen({ route, navigation }) {
               </TouchableOpacity>
 
               {/* Divider */}
-              {isGoogleConfigured && (
+              {(isGoogleConfigured || appleAvailable) && (
                 <View style={styles.dividerRow}>
                   <View style={styles.dividerLine} />
                   <Text style={styles.dividerText}>or</Text>
@@ -419,6 +471,28 @@ export default function AuthScreen({ route, navigation }) {
                     </>
                   )}
                 </TouchableOpacity>
+              )}
+
+              {/* Sign in with Apple (iOS, required by Guideline 4.8) */}
+              {appleAvailable && (
+                <View style={styles.appleWrap}>
+                  {appleLoading && (
+                    <View style={styles.appleLoadingOverlay} pointerEvents="none">
+                      <ActivityIndicator color={isDark ? '#000' : '#fff'} />
+                    </View>
+                  )}
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                    buttonStyle={
+                      isDark
+                        ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                        : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                    }
+                    cornerRadius={14}
+                    style={styles.appleButton}
+                    onPress={handleApple}
+                  />
+                </View>
               )}
 
               <LegalFooter style={styles.legalFooter} />
@@ -618,6 +692,20 @@ const makeStyles = (colors) => StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     letterSpacing: 0.2,
+  },
+  appleWrap: {
+    marginTop: 12,
+    position: 'relative',
+  },
+  appleButton: {
+    width: '100%',
+    height: 50,
+  },
+  appleLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
   },
   termsRow: {
     flexDirection: 'row',
