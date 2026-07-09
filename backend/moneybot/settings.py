@@ -62,6 +62,9 @@ INSTALLED_APPS = [
     'moneyverse',
     'ai',
     'adminapi',
+    'games',
+    'daily',
+    'social',
 ]
 
 MIDDLEWARE = [

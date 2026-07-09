@@ -7,9 +7,10 @@ export default function ChatComposer({
   onSend,
   disabled,
   placeholder = 'Message...',
+  embedded = false,
 }) {
   const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const styles = useMemo(() => makeStyles(colors, embedded), [colors, embedded]);
   const [text, setText] = useState('');
 
   const canSend = text.trim().length > 0 && !disabled;
@@ -44,16 +45,16 @@ export default function ChatComposer({
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, embedded) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: embedded ? 8 : 12,
+    paddingVertical: embedded ? 6 : 8,
     gap: 8,
-    borderTopWidth: 1,
+    borderTopWidth: embedded ? 0 : 1,
     borderTopColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: embedded ? 'transparent' : colors.surface,
   },
   input: {
     flex: 1,

@@ -22,6 +22,7 @@ SEED_QUESTIONS = [
         'id': 'interest',
         'topic': 'Compound Interest',
         'emoji': '💸',
+        'input_type': 'scale',
         'vibe': "Let's start with how money grows.",
         'prompt': (
             "You drop $100 into a savings account earning 2% a year and never "
@@ -39,6 +40,7 @@ SEED_QUESTIONS = [
         'id': 'inflation',
         'topic': 'Inflation',
         'emoji': '🎈',
+        'input_type': 'scale',
         'vibe': 'Now the sneaky one that eats your money.',
         'prompt': (
             "Your account earns 1% a year, but prices (inflation) go up 2% a "
@@ -56,6 +58,7 @@ SEED_QUESTIONS = [
         'id': 'diversification',
         'topic': 'Risk & Diversification',
         'emoji': '🧺',
+        'input_type': 'truefalse',
         'vibe': "Don't put all your eggs in one basket.",
         'prompt': (
             "True or false: buying a single company's stock usually gives you a "
@@ -72,6 +75,7 @@ SEED_QUESTIONS = [
         'id': 'bonds',
         'topic': 'Bonds',
         'emoji': '📉',
+        'input_type': 'choice',
         'vibe': 'A classic move-the-needle question.',
         'prompt': "When interest rates go up, what usually happens to bond prices?",
         'options': [
@@ -86,6 +90,7 @@ SEED_QUESTIONS = [
         'id': 'mortgage',
         'topic': 'Loans & Mortgages',
         'emoji': '🏠',
+        'input_type': 'truefalse',
         'vibe': 'Last one — big-purchase smarts.',
         'prompt': (
             "True or false: a 15-year mortgage has higher monthly payments than "
@@ -144,6 +149,7 @@ def _questions_from_db():
             'id': q.slug,
             'topic': q.topic,
             'emoji': q.emoji,
+            'input_type': getattr(q, 'input_type', None) or 'choice',
             'vibe': q.vibe,
             'prompt': q.prompt,
             'options': [{'id': o.key, 'text': o.text} for o in q.options.all()],
@@ -168,6 +174,7 @@ def public_questions():
             'id': q['id'],
             'topic': q['topic'],
             'emoji': q['emoji'],
+            'input_type': q.get('input_type', 'choice'),
             'vibe': q['vibe'],
             'prompt': q['prompt'],
             'options': q['options'],

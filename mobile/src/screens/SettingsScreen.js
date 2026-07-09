@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Switch, Alert, ActivityIndicator, Linking, Platform,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Modal,
+  Switch, Alert, ActivityIndicator, Linking, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -13,36 +13,16 @@ import { useTheme } from '../context/ThemeContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 import { BrandHeader, BrandAvatar } from '../components/brand';
 import { LEGAL } from '../constants/legal';
+import { GOALS } from '../constants/goals';
 import {
   loadNotificationPrefs,
   saveNotificationPrefs,
   syncNotificationSchedule,
-  sendTestNotification,
   areNotificationsSupported,
   getNotificationsUnavailableMessage,
 } from '../utils/notifications';
-
-function NotifToggle({ icon, label, value, onChange, colors, styles }) {
-  return (
-    <View style={styles.notifTile}>
-      <View style={styles.notifTop}>
-        <View style={[styles.notifIcon, value && styles.notifIconOn]}>
-          <Ionicons name={icon} size={20} color={value ? colors.primary : colors.textMuted} />
-        </View>
-        <Text style={styles.notifLabel}>{label}</Text>
-      </View>
-      <View style={styles.switchWrap}>
-        <Switch
-          value={value}
-          onValueChange={onChange}
-          trackColor={{ false: colors.border, true: colors.primary + '88' }}
-          thumbColor={value ? colors.primary : colors.textMuted}
-          ios_backgroundColor={colors.border}
-        />
-      </View>
-    </View>
-  );
-}
+import { getFirstName } from '../utils/displayName';
+import { localDate } from '../utils/localDate';
 
 function LinkTile({ icon, label, onPress, colors, styles }) {
   return (
@@ -54,8 +34,11 @@ function LinkTile({ icon, label, onPress, colors, styles }) {
 }
 
 export default function SettingsScreen({ navigation }) {
-  const { user, logout, deleteAccount } = useAuth();
-  const { xp, streakDays, level, lessonsCompleted, botBucks, equippedCharacter, rank } = useUserProgress();
+  const { user, updateProfile, logout, deleteAccount } = useAuth();
+  const {
+    xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
+    onboardingGoals, updateGoals,
+  } = useUserProgress();
   const rankMeta = getRankMeta(rank?.key);
   const { colors, isDark, toggleTheme } = useTheme();
   const tabBarInset = useTabBarInset(24);
@@ -64,14 +47,64 @@ export default function SettingsScreen({ navigation }) {
   const [notifPrefs, setNotifPrefs] = useState({ daily: true, streak: true, newContent: false });
   const [notifLoading, setNotifLoading] = useState(true);
   const [notifSyncing, setNotifSyncing] = useState(false);
-  const [testSending, setTestSending] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // Profile name editing
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editFirst, setEditFirst] = useState('');
+  const [editLast, setEditLast] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState('');
+
+  // Goals editing
+  const [savingGoalKey, setSavingGoalKey] = useState(null);
+  const selectedGoals = onboardingGoals || [];
 
   const notifSupported = areNotificationsSupported();
 
+  const displayName = getFirstName(user);
   const emailDisplay = user?.email || '';
-  const firstName = emailDisplay.split('@')[0];
-  const displayName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+
+  function openProfileEditor() {
+    const parts = (user?.name || '').trim().split(/\s+/);
+    setEditFirst(parts[0] || '');
+    setEditLast(parts.slice(1).join(' ') || '');
+    setProfileError('');
+    setProfileOpen(true);
+  }
+
+  async function saveProfile() {
+    if (!editFirst.trim()) {
+      setProfileError('Please enter your first name.');
+      return;
+    }
+    setProfileError('');
+    setSavingProfile(true);
+    const fullName = `${editFirst.trim()} ${editLast.trim()}`.trim();
+    try {
+      await updateProfile({ name: fullName });
+      setProfileOpen(false);
+    } catch (err) {
+      setProfileError(err.message || 'Could not save. Try again.');
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  const toggleGoal = useCallback(async (key) => {
+    if (savingGoalKey) return;
+    const next = selectedGoals.includes(key)
+      ? selectedGoals.filter((g) => g !== key)
+      : [...selectedGoals, key];
+    setSavingGoalKey(key);
+    try {
+      await updateGoals(next);
+    } catch (err) {
+      Alert.alert('Could Not Update', err.message || 'Try again in a moment.');
+    } finally {
+      setSavingGoalKey(null);
+    }
+  }, [savingGoalKey, selectedGoals, updateGoals]);
 
   function openLegal(document) {
     const rootNav = navigation.getParent?.() ?? navigation;
@@ -85,45 +118,41 @@ export default function SettingsScreen({ navigation }) {
     });
   }, []);
 
-  const updateNotifPref = useCallback(async (key, value) => {
+  const notifOn = notifPrefs.daily || notifPrefs.streak || notifPrefs.newContent;
+
+  const toggleNotifications = useCallback(async (value) => {
     if (!notifSupported) {
       Alert.alert('Rebuild Required', getNotificationsUnavailableMessage());
       return;
     }
-    const next = { ...notifPrefs, [key]: value };
+    const previous = notifPrefs;
+    const next = { daily: value, streak: value, newContent: value };
     setNotifPrefs(next);
     setNotifSyncing(true);
     try {
       await saveNotificationPrefs(next);
-      const result = await syncNotificationSchedule(next);
+      const streakContext = {
+        firstName: getFirstName(user),
+        streakDays,
+        activeToday: lastActive === localDate(),
+      };
+      const result = await syncNotificationSchedule(next, streakContext);
       if (!result.ok && result.reason === 'permission_denied') {
         Alert.alert(
           'Notifications Off',
           'Enable notifications in your device Settings to receive reminders.',
         );
-        const reverted = { ...next, [key]: false };
+        const reverted = { daily: false, streak: false, newContent: false };
         setNotifPrefs(reverted);
         await saveNotificationPrefs(reverted);
       }
     } catch (err) {
       Alert.alert('Could Not Update', err.message || 'Try again in a moment.');
-      setNotifPrefs(notifPrefs);
+      setNotifPrefs(previous);
     } finally {
       setNotifSyncing(false);
     }
-  }, [notifPrefs, notifSupported]);
-
-  async function handleTestNotification() {
-    setTestSending(true);
-    try {
-      await sendTestNotification('daily');
-      Alert.alert('Sent!', 'A test notification will appear in about a second.');
-    } catch (err) {
-      Alert.alert('Test Failed', err.message || 'Could not send test notification.');
-    } finally {
-      setTestSending(false);
-    }
-  }
+  }, [notifPrefs, notifSupported, user, streakDays, lastActive]);
 
   function confirmLogout() {
     Alert.alert('Sign Out', 'Are you sure?', [
@@ -169,6 +198,14 @@ export default function SettingsScreen({ navigation }) {
             colors={['rgba(61,220,95,0.16)', 'rgba(61,220,95,0.04)']}
             style={styles.heroCard}
           >
+            <TouchableOpacity
+              style={styles.heroEditBtn}
+              activeOpacity={0.8}
+              onPress={openProfileEditor}
+              accessibilityLabel="Edit name"
+            >
+              <Ionicons name="pencil" size={16} color={colors.primary} />
+            </TouchableOpacity>
             <BrandAvatar character={equippedCharacter} size={72} autoRotate={!!equippedCharacter} />
             <Text style={styles.heroName}>{displayName}</Text>
             <Text style={styles.heroEmail}>{emailDisplay}</Text>
@@ -208,7 +245,7 @@ export default function SettingsScreen({ navigation }) {
           </LinearGradient>
 
           {/* Notifications */}
-          <Text style={styles.sectionTitle}>Reminders</Text>
+          <Text style={styles.sectionTitle}>Notifications</Text>
           {!notifSupported && (
             <View style={styles.notifBanner}>
               <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
@@ -219,61 +256,35 @@ export default function SettingsScreen({ navigation }) {
               </Text>
             </View>
           )}
-          <View style={[styles.notifGrid, !notifSupported && styles.notifGridDisabled]}>
-            {notifLoading ? (
-              <ActivityIndicator color={colors.primary} style={styles.notifLoader} />
-            ) : (
-              <>
-                <NotifToggle
-                  icon="notifications-outline"
-                  label="Daily"
-                  value={notifPrefs.daily}
-                  onChange={(v) => updateNotifPref('daily', v)}
-                  colors={colors}
-                  styles={styles}
+          <View style={[styles.prefCard, !notifSupported && styles.notifGridDisabled]}>
+            <View style={styles.prefRow}>
+              <View style={styles.prefLeft}>
+                <Ionicons
+                  name={notifOn ? 'notifications' : 'notifications-off-outline'}
+                  size={20}
+                  color={colors.primary}
                 />
-                <NotifToggle
-                  icon="flame-outline"
-                  label="Streak"
-                  value={notifPrefs.streak}
-                  onChange={(v) => updateNotifPref('streak', v)}
-                  colors={colors}
-                  styles={styles}
+                <Text style={styles.prefLabel}>Notifications</Text>
+              </View>
+              {notifLoading ? (
+                <ActivityIndicator color={colors.primary} />
+              ) : (
+                <Switch
+                  value={notifOn}
+                  onValueChange={toggleNotifications}
+                  disabled={notifSyncing}
+                  trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                  thumbColor={notifOn ? colors.primary : colors.textMuted}
+                  ios_backgroundColor={colors.border}
                 />
-                <NotifToggle
-                  icon="sparkles-outline"
-                  label="Updates"
-                  value={notifPrefs.newContent}
-                  onChange={(v) => updateNotifPref('newContent', v)}
-                  colors={colors}
-                  styles={styles}
-                />
-              </>
-            )}
+              )}
+            </View>
           </View>
           <Text style={styles.notifHint}>
             {notifSupported
-              ? `Daily at 6 PM · Streak at 8 PM · Updates Mondays 10 AM${notifSyncing ? ' · syncing…' : ''}`
-              : 'Toggles are saved but won\u2019t fire until you rebuild the app.'}
+              ? `Reminders to keep your streak alive and get back to learning${notifSyncing ? ' · syncing…' : ''}`
+              : 'Your choice is saved but won\u2019t fire until you rebuild the app.'}
           </Text>
-
-          {__DEV__ && notifSupported && (
-            <TouchableOpacity
-              style={styles.testBtn}
-              activeOpacity={0.85}
-              onPress={handleTestNotification}
-              disabled={testSending}
-            >
-              {testSending ? (
-                <ActivityIndicator color={colors.background} />
-              ) : (
-                <>
-                  <Ionicons name="flash-outline" size={18} color={colors.background} />
-                  <Text style={styles.testBtnText}>Send Test Notification</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
 
           {/* Preferences */}
           <Text style={styles.sectionTitle}>Preferences</Text>
@@ -292,6 +303,41 @@ export default function SettingsScreen({ navigation }) {
             </View>
           </View>
 
+          {/* Goals */}
+          <Text style={styles.sectionTitle}>Your goals</Text>
+          <View style={styles.goalsGrid}>
+            {GOALS.map((goal) => {
+              const selected = selectedGoals.includes(goal.key);
+              const saving = savingGoalKey === goal.key;
+              return (
+                <TouchableOpacity
+                  key={goal.key}
+                  style={[styles.goalChip, selected && styles.goalChipSel]}
+                  activeOpacity={0.85}
+                  onPress={() => toggleGoal(goal.key)}
+                  disabled={!!savingGoalKey}
+                >
+                  <View style={[styles.goalIconWrap, selected && styles.goalIconWrapSel]}>
+                    {saving ? (
+                      <ActivityIndicator size="small" color={selected ? colors.background : colors.primary} />
+                    ) : (
+                      <Ionicons name={goal.icon} size={18} color={selected ? colors.background : colors.primary} />
+                    )}
+                  </View>
+                  <Text style={[styles.goalLabel, selected && styles.goalLabelSel]} numberOfLines={2}>
+                    {goal.label}
+                  </Text>
+                  {selected && !saving && (
+                    <View style={styles.goalCheck}>
+                      <Ionicons name="checkmark" size={11} color={colors.background} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={styles.notifHint}>Tap to add or remove goals — we tailor your journey to these.</Text>
+
           {/* Support & legal */}
           <Text style={styles.sectionTitle}>Support</Text>
           <View style={styles.linkGrid}>
@@ -300,7 +346,7 @@ export default function SettingsScreen({ navigation }) {
             <LinkTile icon="mail-outline" label="Contact" onPress={() => Linking.openURL(`mailto:${LEGAL.contactEmail}`)} colors={colors} styles={styles} />
             <LinkTile icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://getmoneybot.com')} colors={colors} styles={styles} />
           </View>
-          <Text style={styles.version}>MoneyBot v1.0.1</Text>
+          <Text style={styles.version}>MoneyBot v1.1.0</Text>
 
           {/* Account */}
           <View style={styles.accountSection}>
@@ -322,6 +368,68 @@ export default function SettingsScreen({ navigation }) {
 
         </ScrollView>
       </SafeAreaView>
+
+      <Modal visible={profileOpen} transparent animationType="fade" onRequestClose={() => setProfileOpen(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit your name</Text>
+            <Text style={styles.modalSub}>This is used to greet you and personalize reminders.</Text>
+
+            <View style={styles.modalInputGroup}>
+              <Text style={styles.modalLabel}>First Name</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editFirst}
+                onChangeText={setEditFirst}
+                placeholder="Jordan"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="next"
+              />
+            </View>
+
+            <View style={styles.modalInputGroup}>
+              <Text style={styles.modalLabel}>Last Name</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editLast}
+                onChangeText={setEditLast}
+                placeholder="Rivera"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={saveProfile}
+              />
+            </View>
+
+            {profileError ? <Text style={styles.modalError}>{profileError}</Text> : null}
+
+            <TouchableOpacity style={styles.modalSaveBtn} activeOpacity={0.85} onPress={saveProfile} disabled={savingProfile}>
+              <LinearGradient
+                colors={[colors.primary, colors.primaryDark]}
+                style={styles.modalSaveGrad}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {savingProfile ? (
+                  <ActivityIndicator color={colors.background} />
+                ) : (
+                  <Text style={styles.modalSaveText}>Save</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.modalCancel} activeOpacity={0.7} onPress={() => setProfileOpen(false)} disabled={savingProfile}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -338,6 +446,19 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     marginBottom: 24,
     borderWidth: 1,
     borderColor: 'rgba(61,220,95,0.25)',
+  },
+  heroEditBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   heroName: {
     fontSize: 22,
@@ -387,11 +508,6 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     letterSpacing: -0.2,
   },
 
-  notifGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 8,
-  },
   notifGridDisabled: { opacity: 0.55 },
   notifBanner: {
     flexDirection: 'row',
@@ -415,43 +531,6 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     color: colors.primary,
     fontWeight: '600',
   },
-  notifLoader: { flex: 1, paddingVertical: 24 },
-  notifTile: {
-    flex: 1,
-    alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    paddingTop: 12,
-    paddingBottom: 10,
-    paddingHorizontal: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    justifyContent: 'space-between',
-    minHeight: 118,
-  },
-  notifTop: {
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    gap: 6,
-  },
-  notifIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifIconOn: { backgroundColor: 'rgba(61,220,95,0.15)' },
-  notifLabel: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, textAlign: 'center' },
-  switchWrap: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    height: 31,
-    marginTop: 4,
-  },
   notifHint: {
     fontSize: 11,
     color: colors.textMuted,
@@ -459,18 +538,6 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     marginBottom: 16,
     lineHeight: 16,
   },
-
-  testBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
-    marginBottom: 24,
-  },
-  testBtnText: { fontSize: 15, fontWeight: '700', color: colors.background },
 
   prefCard: {
     backgroundColor: colors.surfaceElevated,
@@ -534,4 +601,81 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   signOutText: { fontSize: 15, fontWeight: '700', color: colors.error },
   deleteBtn: { paddingVertical: 8 },
   deleteText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
+
+  // Goals
+  goalsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 8 },
+  goalChip: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+  },
+  goalChipSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
+  goalIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(61,220,95,0.12)',
+  },
+  goalIconWrapSel: { backgroundColor: colors.primary },
+  goalLabel: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.textSecondary, lineHeight: 17 },
+  goalLabelSel: { color: colors.white },
+  goalCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Profile edit modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  modalCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: colors.white, letterSpacing: -0.3, marginBottom: 6 },
+  modalSub: { fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: 18 },
+  modalInputGroup: { gap: 6, marginBottom: 14 },
+  modalLabel: {
+    fontSize: 12, fontWeight: '600', color: colors.textSecondary,
+    letterSpacing: 0.4, textTransform: 'uppercase',
+  },
+  modalInput: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.white,
+  },
+  modalError: { color: colors.error, fontSize: 13, textAlign: 'center', marginBottom: 8 },
+  modalSaveBtn: { borderRadius: 14, overflow: 'hidden', marginTop: 4 },
+  modalSaveGrad: { paddingVertical: 16, alignItems: 'center', borderRadius: 14 },
+  modalSaveText: { color: colors.background, fontSize: 17, fontWeight: '800' },
+  modalCancel: { alignSelf: 'center', paddingVertical: 12, marginTop: 6 },
+  modalCancelText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
 });

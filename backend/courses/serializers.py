@@ -86,8 +86,8 @@ class UserStatsSerializer(serializers.ModelSerializer):
         fields = [
             'xp', 'streak_days', 'last_active', 'badges', 'bot_bucks',
             'equipped_character', 'onboarding_completed', 'onboarding_score',
-            'onboarding_total', 'rank', 'daily_reward_day', 'daily_claim_streak',
-            'questions_correct', 'perfect_lessons',
+            'onboarding_total', 'onboarding_goals', 'rank', 'daily_reward_day',
+            'daily_claim_streak', 'questions_correct', 'perfect_lessons',
         ]
 
     def get_equipped_character(self, obj):
@@ -105,6 +105,9 @@ class UserStatsSerializer(serializers.ModelSerializer):
 
 class LessonCompleteSerializer(serializers.Serializer):
     mistakes = serializers.IntegerField(min_value=0, default=0)
+    # Device-local calendar date (YYYY-MM-DD) so streaks reset at the user's
+    # local midnight instead of at midnight UTC. Optional for backward compat.
+    client_date = serializers.DateField(required=False, allow_null=True)
 
 
 class BadgeCatalogSerializer(serializers.ModelSerializer):

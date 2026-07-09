@@ -59,7 +59,7 @@ function diskKey(key) {
 export const cacheKeys = {
   progress: (userId) => `progress:${userId}`,
   lessonQuestions: (lessonId) => `lesson:${lessonId}:questions`,
-  onboardingQuestions: () => 'onboarding:questions',
+  onboardingQuestions: () => 'onboarding:questions:v2',
   leaderboardPage1: () => 'leaderboard:page1',
   leaderboardSearch: (q) => `leaderboard:search:${q.toLowerCase().trim()}`,
   characters: (userId) => `characters:${userId}`,

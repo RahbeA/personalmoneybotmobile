@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { coursesApi } from '../api/courses';
 import { moneyverseApi } from '../api/moneyverse';
+import { gamesApi } from '../api/games';
 import { useAuth } from './AuthContext';
 import { ensureModelCached, syncCharacterModels } from '../utils/modelCache';
 import {
@@ -12,6 +13,9 @@ import {
   TTL,
 } from '../utils/apiCache';
 import { readOnboardingCompleted, persistOnboardingCompleted, inferOnboardingCompleted } from '../utils/onboardingStore';
+import { localDate } from '../utils/localDate';
+import { getFirstName } from '../utils/displayName';
+import { syncStreakNotifications, areNotificationsSupported } from '../utils/notifications';
 
 const UserProgressContext = createContext(null);
 
@@ -55,10 +59,23 @@ export function getRankMeta(key) {
 
 export { BADGE_META, RANK_META };
 
+// Client-side fallback so the Daily Reward card stays visible even if a stats
+// payload arrives without an embedded daily_reward (e.g. right after onboarding).
+// The backend is authoritative and overwrites this on the next successful fetch.
+const DEFAULT_DAILY_REWARD = {
+  tiers: [5, 10, 15, 20, 30, 40, 75].map((bot_bucks, i) => ({ day: i + 1, bot_bucks })),
+  current_day: 1,
+  claim_amount: 5,
+  can_claim: true,
+  claimed_today: false,
+  daily_claim_streak: 0,
+};
+
 export function UserProgressProvider({ children }) {
   const { token, user } = useAuth();
   const [xp, setXp] = useState(0);
   const [streakDays, setStreakDays] = useState(0);
+  const [lastActive, setLastActive] = useState(null);
   const [badges, setBadges] = useState([]);
   const [completedLessonIds, setCompletedLessonIds] = useState(new Set());
   const [lessonsCompleted, setLessonsCompleted] = useState(0);
@@ -74,32 +91,60 @@ export function UserProgressProvider({ children }) {
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [onboardingScore, setOnboardingScore] = useState(0);
   const [onboardingTotal, setOnboardingTotal] = useState(5);
+  const [onboardingGoals, setOnboardingGoals] = useState([]);
   const [rank, setRank] = useState(null);
   const [badgeCatalog, setBadgeCatalog] = useState([]);
   const [dailyReward, setDailyReward] = useState(null);
   const [claimingDaily, setClaimingDaily] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  // Set right after the user finishes onboarding so the app can drop them
+  // straight into their first lesson instead of the Home tab.
+  const [pendingFirstLesson, setPendingFirstLesson] = useState(false);
 
-  const applyStats = useCallback((statsData) => {
+  const refreshStreakNotifications = useCallback((statsData, { activeToday } = {}) => {
+    if (!areNotificationsSupported() || !user) return;
+    const resolvedActiveToday = activeToday ?? statsData.last_active === localDate();
+    syncStreakNotifications({
+      firstName: getFirstName(user),
+      streakDays: statsData.streak_days ?? 0,
+      activeToday: resolvedActiveToday,
+    }).catch(() => {});
+  }, [user]);
+
+  const applyStats = useCallback((statsData, gen = null, { syncGate = true } = {}) => {
+    // Drop results from a superseded fetch so a slow/stale stats response can't
+    // clobber fresher values (e.g. a just-incremented streak from completeLesson
+    // or a newer background refresh). See DEV-460.
+    if (gen !== null && gen !== syncGeneration.current) return;
     setXp(statsData.xp);
     setStreakDays(statsData.streak_days);
+    setLastActive(statsData.last_active ?? null);
     setBadges(statsData.badges || []);
     setCompletedLessonIds(new Set(statsData.completed_lesson_ids || []));
     setLessonsCompleted(statsData.lessons_completed || 0);
     setBotBucks(statsData.bot_bucks || 0);
     setEquippedCharacter(statsData.equipped_character || null);
     const completed = inferOnboardingCompleted(statsData);
-    setOnboardingCompleted(completed);
     setOnboardingScore(statsData.onboarding_score || 0);
     setOnboardingTotal(statsData.onboarding_total || 5);
+    if (Array.isArray(statsData.onboarding_goals)) {
+      setOnboardingGoals(statsData.onboarding_goals);
+    }
     setRank(statsData.rank || null);
     if (statsData.badge_catalog) setBadgeCatalog(statsData.badge_catalog);
-    if (statsData.daily_reward) setDailyReward(statsData.daily_reward);
-    if (user?.id) {
-      persistOnboardingCompleted(user.id, completed);
+    // Always keep a daily_reward object so the card never disappears (DEV-459).
+    setDailyReward(statsData.daily_reward || DEFAULT_DAILY_REWARD);
+    // `syncGate` lets submitOnboarding record a completed baseline WITHOUT
+    // flipping the navigation gate, so the rank reveal can play first.
+    if (syncGate) {
+      setOnboardingCompleted(completed);
+      if (user?.id) {
+        persistOnboardingCompleted(user.id, completed);
+      }
     }
-  }, [user?.id]);
+    refreshStreakNotifications(statsData);
+  }, [user?.id, refreshStreakNotifications]);
 
   const getBadgeMeta = useCallback((key) => {
     const fromCatalog = badgeCatalog.find((b) => b.key === key);
@@ -185,12 +230,18 @@ export function UserProgressProvider({ children }) {
         loadCharacters({ force: refreshModels }).catch(() => null),
       ]);
 
+      // A newer fetch started while this one was in flight — discard these
+      // results so we don't overwrite fresher state or cache with stale data.
+      if (syncId !== syncGeneration.current) {
+        return;
+      }
+
       const characterList = moneyverseData?.characters ?? charactersRef.current ?? [];
       if (moneyverseData?.characters) {
         setCharacters(moneyverseData.characters);
       }
 
-      applyStats(statsData);
+      applyStats(statsData, syncId);
       setModules(Array.isArray(modulesData) ? modulesData : []);
 
       await writeCache(cacheKeys.progress(user.id), {
@@ -318,12 +369,17 @@ export function UserProgressProvider({ children }) {
     try {
       const result = await coursesApi.completeLesson(token, lessonId, mistakes);
       if (!result.already_completed) {
+        // Invalidate any in-flight stats fetch so its (pre-completion) response
+        // can't land after us and revert the streak we just earned (DEV-460).
+        syncGeneration.current += 1;
         setXp((prev) => prev + result.xp_earned);
         setStreakDays(result.stats.streak_days);
+        setLastActive(localDate());
         setBadges(result.stats.badges || []);
         setBotBucks(result.stats.bot_bucks ?? botBucks);
         setCompletedLessonIds((prev) => new Set([...prev, lessonId]));
         setLessonsCompleted((prev) => prev + 1);
+        refreshStreakNotifications(result.stats, { activeToday: true });
         await invalidateCache(cacheKeys.progress(user.id));
         await fetchData();
       }
@@ -362,17 +418,20 @@ export function UserProgressProvider({ children }) {
 
   // Submit the assessment and store the result, but DON'T flip the navigation
   // gate yet so the onboarding screen can show the rank reveal first.
-  async function submitOnboarding(answers) {
+  async function submitOnboarding(answers, goals = []) {
     if (!token) return null;
     try {
-      const result = await coursesApi.submitOnboarding(token, answers);
+      const result = await coursesApi.submitOnboarding(token, answers, goals);
       const stats = result.stats || {};
       let mergedStats = {
         ...stats,
         onboarding_completed: true,
         onboarding_score: result.score ?? stats.onboarding_score ?? 0,
+        onboarding_goals: goals,
         rank: result.rank ?? stats.rank ?? null,
       };
+      // syncGate:false — update XP/rank/etc. now but DON'T flip the navigation
+      // gate yet, so the onboarding screen can show the rank reveal first.
       if (user?.id) {
         const cached = await readCache(cacheKeys.progress(user.id), {
           freshMs: TTL.PROGRESS_STALE_MS,
@@ -382,14 +441,13 @@ export function UserProgressProvider({ children }) {
           ...(cached.data?.stats || {}),
           ...mergedStats,
         };
-        applyStats(mergedStats);
-        await persistOnboardingCompleted(user.id, true);
+        applyStats(mergedStats, null, { syncGate: false });
         await writeCache(cacheKeys.progress(user.id), {
           stats: mergedStats,
           modules: cached.data?.modules || [],
         });
       } else {
-        applyStats(mergedStats);
+        applyStats(mergedStats, null, { syncGate: false });
       }
       return result;
     } catch (e) {
@@ -397,12 +455,37 @@ export function UserProgressProvider({ children }) {
     }
   }
 
-  // Flip the gate so the root navigator swaps onboarding for the main app.
+  // Update the user's selected goals from Settings (post-onboarding edit).
+  async function updateGoals(goals = []) {
+    if (!token) return null;
+    const previous = onboardingGoals;
+    setOnboardingGoals(goals); // optimistic
+    try {
+      const result = await coursesApi.updateGoals(token, goals);
+      const saved = result.onboarding_goals || goals;
+      setOnboardingGoals(saved);
+      if (user?.id) {
+        await invalidateCache(cacheKeys.progress(user.id));
+      }
+      return saved;
+    } catch (e) {
+      setOnboardingGoals(previous); // revert on failure
+      throw e;
+    }
+  }
+
+  // Flip the gate so the root navigator swaps onboarding for the main app,
+  // and flag that the user should land in their first lesson immediately.
   function finishOnboarding() {
+    setPendingFirstLesson(true);
     setOnboardingCompleted(true);
     if (user?.id) {
       persistOnboardingCompleted(user.id, true);
     }
+  }
+
+  function clearPendingFirstLesson() {
+    setPendingFirstLesson(false);
   }
 
   function isLessonCompleted(lessonId) {
@@ -426,6 +509,34 @@ export function UserProgressProvider({ children }) {
     }
   }
 
+  async function startArcadeGame(gameKey) {
+    if (!token || !user?.id) return null;
+    try {
+      const result = await gamesApi.startGame(token, gameKey);
+      if (typeof result.bot_bucks === 'number') setBotBucks(result.bot_bucks);
+      await invalidateCache(cacheKeys.progress(user.id));
+      return result;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  async function finishArcadeGame(gameKey, sessionId, score) {
+    if (!token || !user?.id) return null;
+    try {
+      const result = await gamesApi.finishGame(token, gameKey, sessionId, score);
+      if (typeof result.bot_bucks === 'number') setBotBucks(result.bot_bucks);
+      if (typeof result.xp_earned === 'number' && result.xp_earned > 0) {
+        setXp((prev) => prev + result.xp_earned);
+      }
+      if (result.stats?.badges) setBadges(result.stats.badges);
+      await invalidateCache(cacheKeys.progress(user.id));
+      return result;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // XP level system: each level requires 200 XP
   const XP_PER_LEVEL = 200;
   const level = Math.floor(xp / XP_PER_LEVEL) + 1;
@@ -439,6 +550,7 @@ export function UserProgressProvider({ children }) {
       value={{
         xp,
         streakDays,
+        lastActive,
         badges,
         completedLessonIds,
         lessonsCompleted,
@@ -450,6 +562,10 @@ export function UserProgressProvider({ children }) {
         onboardingCompleted,
         onboardingScore,
         onboardingTotal,
+        onboardingGoals,
+        updateGoals,
+        pendingFirstLesson,
+        clearPendingFirstLesson,
         rank,
         badgeCatalog,
         dailyReward,
@@ -467,6 +583,8 @@ export function UserProgressProvider({ children }) {
         purchaseCharacter,
         equipCharacter,
         claimDailyReward,
+        startArcadeGame,
+        finishArcadeGame,
         isLessonCompleted,
         refresh,
         refreshCharacterCache,

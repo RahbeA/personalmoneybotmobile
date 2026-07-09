@@ -11,6 +11,9 @@ urlpatterns = [
     path('api/courses/', include('courses.urls')),
     path('api/moneyverse/', include('moneyverse.urls')),
     path('api/ai/', include('ai.urls')),
+    path('api/games/', include('games.urls')),
+    path('api/daily/', include('daily.urls')),
+    path('api/social/', include('social.urls')),
     path('api/admin/', include('adminapi.urls')),
     # Public legal pages (URLs submitted to Apple App Store Connect).
     path('legal/privacy/', legal_document, {'doc_id': 'privacy'}, name='privacy-policy'),

@@ -1,13 +1,19 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
 import HomeScreen from '../screens/HomeScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
+import ArcadeScreen from '../screens/arcade/ArcadeScreen';
+import BudgetBlitzScreen from '../games/budgetBlitz/BudgetBlitzScreen';
+import DailyBlitzScreen from '../screens/daily/DailyBlitzScreen';
+import DailyLeaderboardScreen from '../screens/daily/DailyLeaderboardScreen';
+import InflationDodgeScreen from '../games/inflationDodge/InflationDodgeScreen';
+import CreditClimbScreen from '../games/creditClimb/CreditClimbScreen';
+import ScamSpotterScreen from '../games/scamSpotter/ScamSpotterScreen';
 import CoursesScreen from '../screens/CoursesScreen';
 import LessonIntroScreen from '../screens/LessonIntroScreen';
 import QuestionFlowScreen from '../screens/QuestionFlowScreen';
@@ -19,24 +25,40 @@ import CharacterDetailScreen from '../screens/CharacterDetailScreen';
 import TutorScreen from '../screens/TutorScreen';
 import MoneyChatScreen from '../screens/MoneyChatScreen';
 import BadgeRevealScreen from '../screens/BadgeRevealScreen';
+import FriendsScreen from '../screens/social/FriendsScreen';
+import FriendRequestsScreen from '../screens/social/FriendRequestsScreen';
+import NotificationsScreen from '../screens/social/NotificationsScreen';
+import GroupsScreen from '../screens/social/GroupsScreen';
+import CreateGroupScreen from '../screens/social/CreateGroupScreen';
+import GroupDetailScreen from '../screens/social/GroupDetailScreen';
+import InviteFriendsScreen from '../screens/social/InviteFriendsScreen';
+import GroupLeaderboardScreen from '../screens/social/GroupLeaderboardScreen';
+import CreateChallengeScreen from '../screens/social/CreateChallengeScreen';
+import ChallengeLeaderboardScreen from '../screens/social/ChallengeLeaderboardScreen';
 import { useTheme } from '../context/ThemeContext';
+import { useUserProgress } from '../context/UserProgressContext';
 
 const Tab = createBottomTabNavigator();
 const HomeStack = createNativeStackNavigator();
 const CourseStack = createNativeStackNavigator();
 const MoneyverseStack = createNativeStackNavigator();
 const TutorStack = createNativeStackNavigator();
+const SocialStack = createNativeStackNavigator();
 
 const TABS = [
   { name: 'HomeTab', label: 'Home', icon: 'home', iconOutline: 'home-outline' },
   { name: 'CoursesTab', label: 'Courses', icon: 'book', iconOutline: 'book-outline' },
-  { name: 'MoneyverseTab', label: 'Moneyverse', icon: 'planet', iconOutline: 'planet', featured: true },
+  { name: 'MoneyverseTab', label: 'Moneyverse', icon: 'planet', iconOutline: 'planet-outline' },
+  { name: 'SocialTab', label: 'Friends', icon: 'people', iconOutline: 'people-outline' },
   { name: 'TutorTab', label: 'Tutor', icon: 'chatbubbles', iconOutline: 'chatbubbles-outline' },
   { name: 'SettingsTab', label: 'Profile', icon: 'person', iconOutline: 'person-outline' },
 ];
 
 const LESSON_ROUTES = new Set([
   'LessonIntro', 'QuestionFlow', 'LessonComplete', 'ModuleComplete', 'MoneyChat', 'BadgeReveal',
+  'Arcade', 'BudgetBlitz', 'InflationDodge', 'CreditClimb', 'ScamSpotter', 'DailyBlitz', 'DailyLeaderboard',
+  'Groups', 'CreateGroup', 'GroupDetail', 'InviteFriends', 'GroupLeaderboard', 'CreateChallenge', 'ChallengeLeaderboard',
+  'FriendRequests', 'Notifications', 'CharacterDetail',
 ]);
 
 function getDeepestRouteName(route) {
@@ -60,29 +82,6 @@ function CustomTabBar({ state, navigation }) {
         const isFocused = state.index === index;
         const isDisabled = tab.disabled;
 
-        if (tab.featured) {
-          return (
-            <TouchableOpacity
-              key={tab.name}
-              style={styles.featuredItem}
-              activeOpacity={0.85}
-              onPress={() => navigation.navigate(tab.name)}
-            >
-              <LinearGradient
-                colors={[colors.primaryLight, colors.primary, colors.primaryDark]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={[styles.featuredButton, isFocused && styles.featuredButtonActive]}
-              >
-                <Ionicons name="planet" size={24} color="#FFFFFF" />
-              </LinearGradient>
-              <Text style={[styles.featuredLabel, isFocused && styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        }
-
         return (
           <TouchableOpacity
             key={tab.name}
@@ -96,20 +95,11 @@ function CustomTabBar({ state, navigation }) {
             <View style={[styles.iconWrap, isFocused && styles.iconWrapActive]}>
               <Ionicons
                 name={isFocused ? tab.icon : tab.iconOutline}
-                size={22}
+                size={28}
                 color={isDisabled ? colors.textMuted : isFocused ? colors.primary : colors.textSecondary}
               />
-              {isFocused && !tab.featured && <View style={styles.activeDot} />}
+              {isFocused && <View style={styles.activeDot} />}
             </View>
-            <Text
-              style={[
-                styles.tabLabel,
-                isFocused && styles.tabLabelActive,
-                isDisabled && styles.tabLabelDisabled,
-              ]}
-            >
-              {tab.label}
-            </Text>
           </TouchableOpacity>
         );
       })}
@@ -129,6 +119,33 @@ function HomeStackNavigator() {
     <HomeStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <HomeStack.Screen name="Home" component={HomeScreen} />
       <HomeStack.Screen name="Leaderboard" component={LeaderboardScreen} />
+      <HomeStack.Screen name="Arcade" component={ArcadeScreen} />
+      <HomeStack.Screen
+        name="BudgetBlitz"
+        component={BudgetBlitzScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <HomeStack.Screen
+        name="InflationDodge"
+        component={InflationDodgeScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <HomeStack.Screen
+        name="CreditClimb"
+        component={CreditClimbScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <HomeStack.Screen
+        name="ScamSpotter"
+        component={ScamSpotterScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <HomeStack.Screen
+        name="DailyBlitz"
+        component={DailyBlitzScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <HomeStack.Screen name="DailyLeaderboard" component={DailyLeaderboardScreen} />
       <HomeStack.Screen
         name="BadgeReveal"
         component={BadgeRevealScreen}
@@ -164,6 +181,12 @@ function CoursesStackNavigator() {
       <CourseStack.Screen name="MoneyChat" component={MoneyChatScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
       <CourseStack.Screen name="ModuleComplete" component={ModuleCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
       <CourseStack.Screen
+        name="DailyBlitz"
+        component={DailyBlitzScreen}
+        options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <CourseStack.Screen name="DailyLeaderboard" component={DailyLeaderboardScreen} />
+      <CourseStack.Screen
         name="BadgeReveal"
         component={BadgeRevealScreen}
         options={badgeRevealOptions}
@@ -180,11 +203,32 @@ function TutorStackNavigator() {
   );
 }
 
+function SocialStackNavigator() {
+  return (
+    <SocialStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+      <SocialStack.Screen name="Friends" component={FriendsScreen} />
+      <SocialStack.Screen name="FriendRequests" component={FriendRequestsScreen} />
+      <SocialStack.Screen name="Notifications" component={NotificationsScreen} />
+      <SocialStack.Screen name="Groups" component={GroupsScreen} />
+      <SocialStack.Screen name="CreateGroup" component={CreateGroupScreen} />
+      <SocialStack.Screen name="GroupDetail" component={GroupDetailScreen} />
+      <SocialStack.Screen name="InviteFriends" component={InviteFriendsScreen} />
+      <SocialStack.Screen name="GroupLeaderboard" component={GroupLeaderboardScreen} />
+      <SocialStack.Screen name="CreateChallenge" component={CreateChallengeScreen} />
+      <SocialStack.Screen name="ChallengeLeaderboard" component={ChallengeLeaderboardScreen} />
+    </SocialStack.Navigator>
+  );
+}
+
 export default function MainTabNavigator() {
   const { colors } = useTheme();
+  const { pendingFirstLesson } = useUserProgress();
 
   return (
     <Tab.Navigator
+      // Right after onboarding, land on the Courses tab so it can push the
+      // user straight into their first lesson.
+      initialRouteName={pendingFirstLesson ? 'CoursesTab' : 'HomeTab'}
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
@@ -194,6 +238,7 @@ export default function MainTabNavigator() {
       <Tab.Screen name="HomeTab" component={HomeStackNavigator} />
       <Tab.Screen name="CoursesTab" component={CoursesStackNavigator} />
       <Tab.Screen name="MoneyverseTab" component={MoneyverseStackNavigator} />
+      <Tab.Screen name="SocialTab" component={SocialStackNavigator} />
       <Tab.Screen name="TutorTab" component={TutorStackNavigator} options={{ lazy: true }} />
       <Tab.Screen name="SettingsTab" component={SettingsScreen} />
     </Tab.Navigator>
@@ -218,67 +263,26 @@ const makeStyles = (colors) => StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 4,
-  },
-  featuredItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 4,
-  },
-  featuredButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: colors.surface,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  featuredButtonActive: {
-    shadowOpacity: 0.8,
-    shadowRadius: 14,
-  },
-  featuredLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.primary,
+    paddingVertical: 6,
   },
   iconWrap: {
-    width: 36,
-    height: 28,
+    width: 52,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
+    borderRadius: 18,
   },
   iconWrapActive: {
     backgroundColor: colors.primaryTint,
   },
   activeDot: {
     position: 'absolute',
-    bottom: -2,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    bottom: -4,
+    left: '50%',
+    marginLeft: -2.5,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: colors.primary,
-  },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: colors.textSecondary,
-  },
-  tabLabelActive: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  tabLabelDisabled: {
-    color: colors.textMuted,
   },
 });

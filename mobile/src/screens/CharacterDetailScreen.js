@@ -63,7 +63,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Ionicons name="chevron-back" size={24} color={colors.white} />

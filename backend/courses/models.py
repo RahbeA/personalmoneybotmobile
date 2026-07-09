@@ -67,6 +67,16 @@ class Answer(models.Model):
 
 class OnboardingQuestion(models.Model):
     """Editable financial-literacy onboarding question (was hardcoded)."""
+
+    INPUT_CHOICE = 'choice'
+    INPUT_TRUE_FALSE = 'truefalse'
+    INPUT_SCALE = 'scale'
+    INPUT_TYPE_CHOICES = [
+        (INPUT_CHOICE, 'Multiple choice cards'),
+        (INPUT_TRUE_FALSE, 'True / False buttons'),
+        (INPUT_SCALE, 'Slider scale'),
+    ]
+
     slug = models.SlugField(
         max_length=50, unique=True,
         help_text='Stable identifier sent to/from clients (e.g. "interest").',
@@ -75,6 +85,10 @@ class OnboardingQuestion(models.Model):
     emoji = models.CharField(max_length=10, blank=True)
     vibe = models.CharField(max_length=255, blank=True, help_text='Short friendly framing line.')
     prompt = models.TextField()
+    input_type = models.CharField(
+        max_length=20, choices=INPUT_TYPE_CHOICES, default=INPUT_CHOICE,
+        help_text='How the client renders the answer picker for this question.',
+    )
     order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -146,6 +160,9 @@ class UserStats(models.Model):
     )
     onboarding_answers = models.JSONField(
         default=dict, blank=True, help_text='Raw {question_id: option_id} answers.'
+    )
+    onboarding_goals = models.JSONField(
+        default=list, blank=True, help_text='Goal keys the user selected during onboarding.'
     )
     # Daily login reward ladder (day 1–7 → Bot Bucks tiers).
     daily_reward_day = models.PositiveIntegerField(

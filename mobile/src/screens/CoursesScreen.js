@@ -108,6 +108,9 @@ function RoadmapNode({ styles, lockColor, lesson, index, status, onPress, pulse 
 
   const cx = nodeCenterX(index);
   const cy = nodeCenterY(index);
+  // Flip the "JUMP HERE?" pill to the node's left when the node sits on the
+  // right side of the lane, so it never runs off the screen edge.
+  const pillOnLeft = nodeOffsetX(index) > 8;
 
   return (
     <>
@@ -150,9 +153,16 @@ function RoadmapNode({ styles, lockColor, lesson, index, status, onPress, pulse 
         )}
       </TouchableOpacity>
 
-      {/* JUMP HERE pill for current node */}
+      {/* JUMP HERE pill for current node — sits on whichever side has room */}
       {isCurrent && (
-        <View style={[styles.jumpPill, { left: cx + NODE_SIZE / 2 - 4, top: cy + 4 }]}>
+        <View
+          style={[
+            styles.jumpPill,
+            pillOnLeft
+              ? { right: CARD_W - (cx - NODE_SIZE / 2 + 4), top: cy + 4 }
+              : { left: cx + NODE_SIZE / 2 - 4, top: cy + 4 },
+          ]}
+        >
           <Text style={styles.jumpPillText}>JUMP HERE?</Text>
         </View>
       )}
@@ -255,7 +265,7 @@ function getNextLesson(modules) {
 }
 
 export default function CoursesScreen({ navigation }) {
-  const { modules, loading, loadError, refresh } = useUserProgress();
+  const { modules, loading, loadError, refresh, pendingFirstLesson, clearPendingFirstLesson } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(24);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
@@ -282,6 +292,18 @@ export default function CoursesScreen({ navigation }) {
   function handleLessonPress(lesson, module) {
     navigation.navigate('LessonIntro', { lesson, module });
   }
+
+  // Fresh out of onboarding: drop the user straight into their first lesson so
+  // they experience the app right away.
+  useEffect(() => {
+    if (!pendingFirstLesson) return;
+    if (loading || !modules.length) return;
+    const first = getNextLesson(modules);
+    clearPendingFirstLesson();
+    if (first) {
+      navigation.navigate('LessonIntro', { lesson: first.lesson, module: first.module });
+    }
+  }, [pendingFirstLesson, loading, modules, navigation, clearPendingFirstLesson]);
 
   function toggleSection(id, isCurrentlyCollapsed) {
     setCollapsed((prev) => ({ ...prev, [id]: !isCurrentlyCollapsed }));
@@ -344,6 +366,32 @@ export default function CoursesScreen({ navigation }) {
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={GREEN.solid} />
               }
             >
+            {/* MoneyBot Daily */}
+            <TouchableOpacity
+              style={styles.dailyCard}
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('DailyBlitz')}
+            >
+              <LinearGradient
+                colors={['#F5B72B', '#FF9F1C', '#FF6B35']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.dailyCardGrad}
+              >
+                <View style={styles.dailyIconWrap}>
+                  <Ionicons name="today" size={26} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.dailyLabel}>MONEYBOT DAILY</Text>
+                  <Text style={styles.dailyTitle}>Today's puzzle</Text>
+                  <Text style={styles.dailySub}>5 rounds · Same for everyone · Keep your streak</Text>
+                </View>
+                <View style={styles.dailyGo}>
+                  <Ionicons name="arrow-forward" size={20} color="#FF6B35" />
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+
             {/* Continue Learning banner */}
             {nextLesson && (
               <TouchableOpacity
@@ -406,6 +454,26 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   safe: { flex: 1 },
   loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: tabBarInset },
+
+  // MoneyBot Daily
+  dailyCard: { borderRadius: 20, overflow: 'hidden', marginBottom: 16 },
+  dailyCardGrad: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18,
+    shadowColor: '#FF6B35', shadowOpacity: 0.3, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 }, elevation: 5,
+  },
+  dailyIconWrap: {
+    width: 52, height: 52, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  dailyLabel: { fontSize: 10, fontWeight: '800', color: 'rgba(255,255,255,0.9)', letterSpacing: 1.2, marginBottom: 4 },
+  dailyTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', marginBottom: 2 },
+  dailySub: { fontSize: 13, color: 'rgba(255,255,255,0.9)' },
+  dailyGo: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: '#FFFFFF',
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   // Continue Learning
   continueCard: {

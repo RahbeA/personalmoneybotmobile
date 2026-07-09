@@ -190,10 +190,16 @@ def logout(request):
     return Response({'detail': 'Successfully logged out.'})
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def profile(request):
-    return Response(UserSerializer(request.user).data)
+    """Read the current user's profile, or update editable fields (name)."""
+    user = request.user
+    if request.method == 'PATCH':
+        if 'name' in request.data:
+            user.name = (request.data.get('name') or '').strip()[:255]
+            user.save(update_fields=['name'])
+    return Response(UserSerializer(user).data)
 
 
 @api_view(['DELETE'])

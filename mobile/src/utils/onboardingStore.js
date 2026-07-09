@@ -5,14 +5,16 @@ function storageKey(userId) {
   return `onboardingCompleted:${getCacheScope()}:${userId}`;
 }
 
-/** True when stats (API or cache) show the user already finished the Money IQ quiz. */
+/** True when stats (API or cache) show the user already finished the Money IQ quiz.
+ *
+ * Only the authoritative `onboarding_completed` flag counts. We must NOT infer
+ * completion from `rank` (the API always returns a rank, even bronze for brand
+ * new users) or `onboarding_score` (a completed user can score 0), otherwise
+ * onboarding is skipped for every new account.
+ */
 export function inferOnboardingCompleted(stats) {
   if (!stats) return false;
-  return !!(
-    stats.onboarding_completed
-    || stats.rank
-    || (typeof stats.onboarding_score === 'number' && stats.onboarding_score > 0)
-  );
+  return !!stats.onboarding_completed;
 }
 
 export async function readOnboardingCompleted(userId) {

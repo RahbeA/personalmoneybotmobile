@@ -89,8 +89,8 @@ export function AuthProvider({ children }) {
     return data;
   }
 
-  async function register(email, password) {
-    const data = await authApi.register(email, password);
+  async function register(email, password, name) {
+    const data = await authApi.register(email, password, name);
     await persistSession(data);
     return data;
   }
@@ -105,6 +105,14 @@ export function AuthProvider({ children }) {
     const data = await authApi.apple({ identityToken, email, fullName });
     await persistSession(data);
     return data;
+  }
+
+  async function updateProfile(fields) {
+    if (!token) throw new Error('You must be signed in.');
+    const updated = await authApi.updateProfile(token, fields);
+    await SecureStore.setItemAsync('authUser', JSON.stringify(updated));
+    setUser(updated);
+    return updated;
   }
 
   async function logout() {
@@ -129,7 +137,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, login, register, googleSignIn, appleSignIn, logout, deleteAccount }}
+      value={{ user, token, loading, login, register, googleSignIn, appleSignIn, updateProfile, logout, deleteAccount }}
     >
       {children}
     </AuthContext.Provider>

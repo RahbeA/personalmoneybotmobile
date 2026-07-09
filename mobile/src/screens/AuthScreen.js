@@ -33,6 +33,7 @@ export default function AuthScreen({ route, navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const initialMode = route?.params?.mode || 'login';
   const [mode, setMode] = useState(initialMode);
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -127,6 +128,7 @@ export default function AuthScreen({ route, navigation }) {
   function switchMode(newMode) {
     setMode(newMode);
     setError('');
+    setName('');
     setEmail('');
     setPassword('');
     setConfirmPassword('');
@@ -149,6 +151,11 @@ export default function AuthScreen({ route, navigation }) {
     }
 
     if (mode === 'register') {
+      if (!name.trim()) {
+        setError('Please enter your name.');
+        shake();
+        return;
+      }
       if (!acceptedTerms) {
         setError('Please agree to the Terms of Service and Privacy Policy.');
         shake();
@@ -171,7 +178,7 @@ export default function AuthScreen({ route, navigation }) {
       if (mode === 'login') {
         await login(email.trim().toLowerCase(), password);
       } else {
-        await register(email.trim().toLowerCase(), password);
+        await register(email.trim().toLowerCase(), password, name.trim());
       }
       // Navigation handled by root navigator watching auth state
     } catch (err) {
@@ -248,6 +255,26 @@ export default function AuthScreen({ route, navigation }) {
                 { opacity: fadeAnim, transform: [{ translateX: shakeAnim }] },
               ]}
             >
+              {/* Full name (register only) */}
+              {!isLogin && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      style={styles.input}
+                      value={name}
+                      onChangeText={setName}
+                      placeholder="Jordan Rivera"
+                      placeholderTextColor={colors.textMuted}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      autoComplete="name"
+                      textContentType="name"
+                    />
+                  </View>
+                </View>
+              )}
+
               {/* Email */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email</Text>

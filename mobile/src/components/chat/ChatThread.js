@@ -20,6 +20,7 @@ export default function ChatThread({
   footer = null,
   emptyComponent = null,
   character = null,
+  composerStyle = null,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -61,17 +62,19 @@ export default function ChatThread({
             renderItem={renderItem}
             contentContainerStyle={listPadding}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             showsVerticalScrollIndicator={false}
           />
         )}
         {footer}
       </View>
       {onSend && (
-        <View style={{ paddingBottom: bottomInset }}>
+        <View style={[{ paddingBottom: bottomInset }, composerStyle]}>
           <ChatComposer
             onSend={onSend}
             disabled={composerDisabled}
             placeholder={placeholder}
+            embedded={!!composerStyle}
           />
         </View>
       )}

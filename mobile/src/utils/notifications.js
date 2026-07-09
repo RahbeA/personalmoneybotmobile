@@ -1,5 +1,6 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 const PREFS_KEY = 'notificationPrefs';
@@ -9,6 +10,50 @@ export const NOTIFICATION_IDS = {
   STREAK: 'moneybot-streak-alert',
   NEW_CONTENT: 'moneybot-new-content',
 };
+
+/** Rolling streak reminders use moneybot-streak-alert-0 … -6 */
+export const STREAK_WINDOW_DAYS = 7;
+export const STREAK_REMINDER_HOUR = 20;
+export const STREAK_REMINDER_MINUTE = 0;
+
+/** Rolling daily reminders use moneybot-daily-reminder-0 … -13 (rotating copy). */
+export const DAILY_WINDOW_DAYS = 14;
+export const DAILY_REMINDER_HOUR = 18;
+export const DAILY_REMINDER_MINUTE = 0;
+
+// A rotating set of daily reminder messages so the notification feels fresh
+// each day instead of repeating the same line. Each builder takes the user's
+// first name (may be empty) and returns { title, body }.
+const DAILY_MESSAGE_BUILDERS = [
+  (n) => ({
+    title: n ? `${n}, ready for today's lesson?` : "Ready for today's lesson?",
+    body: 'A few minutes now keeps your money skills sharp.',
+  }),
+  (n) => ({
+    title: 'Your daily money move',
+    body: n ? `${n}, one quick lesson keeps your momentum going.` : 'One quick lesson keeps your momentum going.',
+  }),
+  (n) => ({
+    title: n ? `Let's learn something, ${n}` : "Let's learn something new",
+    body: "Today's lesson is waiting — jump back in.",
+  }),
+  (n) => ({
+    title: 'Small steps, big money wins',
+    body: n ? `${n}, spend 5 minutes leveling up your finances.` : 'Spend 5 minutes leveling up your finances.',
+  }),
+  (n) => ({
+    title: n ? `Keep it going, ${n}!` : 'Keep it going!',
+    body: 'A quick MoneyBot session keeps you on track.',
+  }),
+  (n) => ({
+    title: 'Time to grow your Bot Bucks',
+    body: n ? `${n}, finish a lesson and stack more rewards.` : 'Finish a lesson and stack more rewards.',
+  }),
+  (n) => ({
+    title: n ? `${n}, your money brain called` : 'Your money brain called',
+    body: 'It wants a quick workout — hop into a lesson.',
+  }),
+];
 
 export const DEFAULT_NOTIFICATION_PREFS = {
   daily: true,
@@ -85,6 +130,52 @@ async function ensureAndroidChannel() {
   androidChannelReady = true;
 }
 
+export function streakNotificationId(dayOffset) {
+  return `${NOTIFICATION_IDS.STREAK}-${dayOffset}`;
+}
+
+export function dailyNotificationId(dayOffset) {
+  return `${NOTIFICATION_IDS.DAILY}-${dayOffset}`;
+}
+
+/**
+ * Daily reminder content for a given date. Rotates deterministically by
+ * calendar day so each day shows a different message (and the same date always
+ * maps to the same one). Personalized with the first name when available.
+ */
+export function buildDailyNotificationContent(firstName, date = new Date()) {
+  const name = (firstName || '').trim();
+  const dayNumber = Math.floor(date.getTime() / 86400000);
+  const builder = DAILY_MESSAGE_BUILDERS[
+    ((dayNumber % DAILY_MESSAGE_BUILDERS.length) + DAILY_MESSAGE_BUILDERS.length)
+      % DAILY_MESSAGE_BUILDERS.length
+  ];
+  return builder(name);
+}
+
+export function buildStreakNotificationContent(firstName, streakDays) {
+  const name = (firstName || '').trim();
+  const title = name
+    ? `${name}, your streak is slipping!`
+    : "Don't break your streak!";
+  const body = `You're on a ${streakDays}-day streak — finish a lesson before midnight to keep it alive.`;
+  return { title, body };
+}
+
+function reminderDateForOffset(dayOffset) {
+  const date = new Date();
+  date.setHours(STREAK_REMINDER_HOUR, STREAK_REMINDER_MINUTE, 0, 0);
+  date.setDate(date.getDate() + dayOffset);
+  return date;
+}
+
+function isReminderTimePassedToday() {
+  const now = new Date();
+  const reminder = new Date();
+  reminder.setHours(STREAK_REMINDER_HOUR, STREAK_REMINDER_MINUTE, 0, 0);
+  return now >= reminder;
+}
+
 export async function loadNotificationPrefs() {
   try {
     const raw = await SecureStore.getItemAsync(PREFS_KEY);
@@ -106,6 +197,22 @@ export async function getNotificationPermissionStatus() {
   return status;
 }
 
+/**
+ * Detailed permission state used by the onboarding opt-in so it can tell the
+ * difference between "never asked" (can show the system prompt) and "already
+ * denied" (must send the user to Settings).
+ */
+export async function getNotificationPermissionInfo() {
+  const mod = getNotificationsModule();
+  if (!mod) return { supported: false, status: 'unsupported', canAskAgain: false };
+  const perm = await mod.getPermissionsAsync();
+  return {
+    supported: true,
+    status: perm.status,
+    canAskAgain: perm.canAskAgain !== false,
+  };
+}
+
 export async function ensureNotificationPermissions() {
   const mod = getNotificationsModule();
   if (!mod) return false;
@@ -116,17 +223,120 @@ export async function ensureNotificationPermissions() {
   return status === 'granted';
 }
 
-async function cancelManagedNotifications() {
+async function cancelStreakNotifications() {
   const mod = getNotificationsModule();
   if (!mod) return;
+  const ids = [
+    NOTIFICATION_IDS.STREAK,
+    ...Array.from({ length: STREAK_WINDOW_DAYS }, (_, i) => streakNotificationId(i)),
+  ];
   await Promise.all(
-    Object.values(NOTIFICATION_IDS).map((id) =>
-      mod.cancelScheduledNotificationAsync(id).catch(() => {}),
-    ),
+    ids.map((id) => mod.cancelScheduledNotificationAsync(id).catch(() => {})),
   );
 }
 
-export async function syncNotificationSchedule(prefs) {
+async function cancelDailyNotifications() {
+  const mod = getNotificationsModule();
+  if (!mod) return;
+  const ids = [
+    NOTIFICATION_IDS.DAILY,
+    ...Array.from({ length: DAILY_WINDOW_DAYS }, (_, i) => dailyNotificationId(i)),
+  ];
+  await Promise.all(
+    ids.map((id) => mod.cancelScheduledNotificationAsync(id).catch(() => {})),
+  );
+}
+
+async function cancelManagedNotifications() {
+  const mod = getNotificationsModule();
+  if (!mod) return;
+  await cancelStreakNotifications();
+  await cancelDailyNotifications();
+  await mod.cancelScheduledNotificationAsync(NOTIFICATION_IDS.NEW_CONTENT).catch(() => {});
+}
+
+function dailyReminderDateForOffset(dayOffset) {
+  const date = new Date();
+  date.setHours(DAILY_REMINDER_HOUR, DAILY_REMINDER_MINUTE, 0, 0);
+  date.setDate(date.getDate() + dayOffset);
+  return date;
+}
+
+async function scheduleDailyNotifications(mod, firstName) {
+  await cancelDailyNotifications();
+
+  let scheduled = 0;
+  for (let offset = 0; offset < DAILY_WINDOW_DAYS; offset += 1) {
+    const triggerDate = dailyReminderDateForOffset(offset);
+    // Skip today if 6 PM already passed.
+    if (triggerDate.getTime() <= Date.now()) {
+      continue;
+    }
+
+    const content = buildDailyNotificationContent(firstName, triggerDate);
+    await mod.scheduleNotificationAsync({
+      identifier: dailyNotificationId(offset),
+      content: {
+        ...content,
+        sound: true,
+        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+      },
+      trigger: {
+        type: mod.SchedulableTriggerInputTypes.DATE,
+        date: triggerDate,
+      },
+    });
+    scheduled += 1;
+  }
+
+  return scheduled;
+}
+
+async function scheduleStreakNotifications(mod, streakContext) {
+  const { firstName = '', streakDays = 0, activeToday = false } = streakContext || {};
+
+  await cancelStreakNotifications();
+
+  if (!streakDays || streakDays <= 0) {
+    return 0;
+  }
+
+  const content = buildStreakNotificationContent(firstName, streakDays);
+  let scheduled = 0;
+
+  for (let offset = 0; offset < STREAK_WINDOW_DAYS; offset += 1) {
+    if (offset === 0 && (activeToday || isReminderTimePassedToday())) {
+      continue;
+    }
+
+    const triggerDate = reminderDateForOffset(offset);
+    if (triggerDate.getTime() <= Date.now()) {
+      continue;
+    }
+
+    await mod.scheduleNotificationAsync({
+      identifier: streakNotificationId(offset),
+      content: {
+        ...content,
+        sound: true,
+        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+      },
+      trigger: {
+        type: mod.SchedulableTriggerInputTypes.DATE,
+        date: triggerDate,
+      },
+    });
+    scheduled += 1;
+  }
+
+  return scheduled;
+}
+
+/**
+ * Sync all managed local notifications. Pass streakContext when streak state
+ * is known so streak alerts only fire when a streak is genuinely at risk.
+ */
+export async function syncNotificationSchedule(prefs, streakContext = null) {
   if (!areNotificationsSupported()) {
     return { ok: false, reason: 'unsupported' };
   }
@@ -144,39 +354,11 @@ export async function syncNotificationSchedule(prefs) {
   let scheduled = 0;
 
   if (prefs.daily) {
-    await mod.scheduleNotificationAsync({
-      identifier: NOTIFICATION_IDS.DAILY,
-      content: {
-        title: TEST_SAMPLES.daily.title,
-        body: TEST_SAMPLES.daily.body,
-        sound: true,
-        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
-      },
-      trigger: {
-        type: mod.SchedulableTriggerInputTypes.DAILY,
-        hour: 18,
-        minute: 0,
-      },
-    });
-    scheduled += 1;
+    scheduled += await scheduleDailyNotifications(mod, streakContext?.firstName || '');
   }
 
-  if (prefs.streak) {
-    await mod.scheduleNotificationAsync({
-      identifier: NOTIFICATION_IDS.STREAK,
-      content: {
-        title: TEST_SAMPLES.streak.title,
-        body: TEST_SAMPLES.streak.body,
-        sound: true,
-        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
-      },
-      trigger: {
-        type: mod.SchedulableTriggerInputTypes.DAILY,
-        hour: 20,
-        minute: 0,
-      },
-    });
-    scheduled += 1;
+  if (prefs.streak && streakContext) {
+    scheduled += await scheduleStreakNotifications(mod, streakContext);
   }
 
   if (prefs.newContent) {
@@ -199,6 +381,12 @@ export async function syncNotificationSchedule(prefs) {
   }
 
   return { ok: true, scheduled };
+}
+
+/** Load prefs and sync streak-aware notifications in one call. */
+export async function syncStreakNotifications(streakContext) {
+  const prefs = await loadNotificationPrefs();
+  return syncNotificationSchedule(prefs, streakContext);
 }
 
 export async function sendTestNotification(type = 'daily') {
@@ -226,6 +414,93 @@ export async function sendTestNotification(type = 'daily') {
       seconds: 1,
     },
   });
+}
+
+/**
+ * Present a notification right now (used when the client detects a new social
+ * event while running). This surfaces an OS banner without needing a remote
+ * push service. It is best-effort and silently no-ops when unsupported or when
+ * the user hasn't granted permission.
+ */
+export async function presentLocalNotification(title, body, data = {}) {
+  if (!areNotificationsSupported()) return false;
+
+  configureNotificationHandler();
+  const status = await getNotificationPermissionStatus();
+  if (status !== 'granted') return false;
+
+  const mod = getNotificationsModule();
+  if (!mod) return false;
+
+  try {
+    await mod.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data,
+        sound: true,
+        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+      },
+      trigger: {
+        type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 1,
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Subscribe to incoming push events. Returns an unsubscribe function.
+ * - onReceive: fires when a notification arrives while the app is foregrounded
+ * - onRespond: fires when the user taps a notification (foreground/background)
+ */
+export function addNotificationListeners({ onReceive, onRespond } = {}) {
+  const mod = getNotificationsModule();
+  if (!mod) return () => {};
+  configureNotificationHandler();
+  const subs = [];
+  if (onReceive) subs.push(mod.addNotificationReceivedListener(onReceive));
+  if (onRespond) subs.push(mod.addNotificationResponseReceivedListener(onRespond));
+  return () => subs.forEach((s) => s?.remove?.());
+}
+
+function getExpoProjectId() {
+  return (
+    Constants?.expoConfig?.extra?.eas?.projectId
+    || Constants?.easConfig?.projectId
+    || null
+  );
+}
+
+/**
+ * Register this device for remote (Expo) push notifications and return the
+ * Expo push token string, or null when unavailable/denied. Safe to call
+ * repeatedly. Requires a build with push credentials configured.
+ */
+export async function registerForPushNotificationsAsync() {
+  if (!areNotificationsSupported()) return null;
+
+  configureNotificationHandler();
+  await ensureAndroidChannel();
+
+  const granted = await ensureNotificationPermissions();
+  if (!granted) return null;
+
+  const mod = getNotificationsModule();
+  if (!mod) return null;
+
+  try {
+    const projectId = getExpoProjectId();
+    const { data } = await mod.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+    return data || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function bootstrapNotifications() {

@@ -11,4 +11,5 @@ urlpatterns = [
     path('leaderboard/', views.leaderboard, name='leaderboard'),
     path('onboarding/questions/', views.onboarding_questions, name='onboarding-questions'),
     path('onboarding/submit/', views.onboarding_submit, name='onboarding-submit'),
+    path('goals/', views.update_goals, name='update-goals'),
 ]

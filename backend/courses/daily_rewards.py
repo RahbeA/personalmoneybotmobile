@@ -29,9 +29,13 @@ def _normalize_reward_day(stats, today):
     stats.daily_claim_streak = 0
 
 
-def daily_reward_status(stats):
-    """Build payload for GET stats / UI."""
-    today = date.today()
+def daily_reward_status(stats, today=None):
+    """Build payload for GET stats / UI.
+
+    ``today`` is the device-local date so the daily-claim streak resets at the
+    user's local midnight; it defaults to the server date (UTC) when omitted.
+    """
+    today = today or date.today()
     _normalize_reward_day(stats, today)
     tier_map = get_tier_map()
     tiers = get_tier_list()
@@ -50,11 +54,14 @@ def daily_reward_status(stats):
     }
 
 
-def claim_daily_reward(user, stats):
-    """Claim today's Bot Bucks. Returns (amount, status_dict)."""
-    today = date.today()
+def claim_daily_reward(user, stats, today=None):
+    """Claim today's Bot Bucks. Returns (amount, status_dict).
+
+    ``today`` is the device-local date (falls back to the server date).
+    """
+    today = today or date.today()
     _normalize_reward_day(stats, today)
-    status = daily_reward_status(stats)
+    status = daily_reward_status(stats, today)
     if not status['can_claim']:
         raise ValueError('Daily reward already claimed today.')
 
@@ -78,4 +85,4 @@ def claim_daily_reward(user, stats):
     from .badges import evaluate_and_award
     evaluate_and_award(user, stats)
 
-    return amount, daily_reward_status(stats)
+    return amount, daily_reward_status(stats, today)

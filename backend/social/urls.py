@@ -1,0 +1,28 @@
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path('users/search/', views.search_users, name='social-user-search'),
+    path('friends/', views.list_friends, name='social-friends'),
+    path('friends/requests/', views.friend_requests, name='social-friend-requests'),
+    path('friends/requests/<int:request_id>/accept/', views.accept_friend_request, name='social-friend-accept'),
+    path('friends/requests/<int:request_id>/decline/', views.decline_friend_request, name='social-friend-decline'),
+    path('friends/<int:user_id>/', views.remove_friend, name='social-friend-remove'),
+    path('groups/', views.groups_list_create, name='social-groups'),
+    path('groups/invites/', views.group_invites, name='social-group-invites'),
+    path('groups/invites/<int:invite_id>/accept/', views.accept_group_invite, name='social-group-invite-accept'),
+    path('groups/invites/<int:invite_id>/decline/', views.decline_group_invite, name='social-group-invite-decline'),
+    path('groups/<int:group_id>/', views.group_detail, name='social-group-detail'),
+    path('groups/<int:group_id>/members/', views.group_add_members, name='social-group-add-members'),
+    path('groups/<int:group_id>/members/<int:user_id>/', views.group_remove_member, name='social-group-remove-member'),
+    path('groups/<int:group_id>/invites/<int:invite_id>/', views.cancel_group_invite, name='social-group-invite-cancel'),
+    path('groups/<int:group_id>/challenges/', views.group_challenges, name='social-group-challenges'),
+    path('groups/<int:group_id>/leaderboard/', views.group_leaderboard, name='social-group-leaderboard'),
+    path('challenges/<int:challenge_id>/leaderboard/', views.challenge_leaderboard, name='social-challenge-leaderboard'),
+    path('notifications/', views.notifications_list, name='social-notifications'),
+    path('notifications/unread-count/', views.notifications_unread_count, name='social-notifications-unread'),
+    path('notifications/read-all/', views.mark_all_notifications_read, name='social-notifications-read-all'),
+    path('notifications/<int:notification_id>/read/', views.mark_notification_read, name='social-notification-read'),
+    path('notifications/push-token/', views.push_token, name='social-push-token'),
+]

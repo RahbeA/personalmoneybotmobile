@@ -1,0 +1,62 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:daily_dailyitem_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; {% trans 'Bulk import' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+
+  <div class="module aligned" style="padding:16px; margin-bottom:20px;">
+    <h2>1. Generate items with AI</h2>
+    <p style="max-width:820px;">
+      Copy the prompt below into ChatGPT / Claude / etc. It will return a JSON array.
+      Adjust the requested counts in the prompt however you like.
+    </p>
+    <p>
+      <button type="button" class="button" onclick="copyPrompt()">Copy prompt to clipboard</button>
+      <span id="copied" style="margin-left:10px; color:#4caf50; display:none;">Copied!</span>
+    </p>
+    <textarea id="ai-prompt" readonly rows="16"
+      style="width:100%; font-family:monospace; font-size:12px; white-space:pre;">{{ ai_prompt }}</textarea>
+  </div>
+
+  <div class="module aligned" style="padding:16px;">
+    <h2>2. Paste the JSON the AI produced</h2>
+    <p style="max-width:820px;">
+      Paste the JSON array here and submit. Existing items with the same
+      <code>id</code> are updated; new ids are created. Nothing is saved unless the
+      whole batch is valid.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <textarea name="payload" rows="18" placeholder='[ { "type": "estimate", "id": "est_example", ... } ]'
+        style="width:100%; font-family:monospace; font-size:13px;">{{ raw }}</textarea>
+      <div class="submit-row" style="margin-top:12px;">
+        <input type="submit" value="{% trans 'Import items' %}" class="default">
+        <a href="{% url 'admin:daily_dailyitem_changelist' %}" class="button cancel-link">{% trans 'Cancel' %}</a>
+      </div>
+    </form>
+  </div>
+
+</div>
+
+<script>
+  function copyPrompt() {
+    var ta = document.getElementById('ai-prompt');
+    ta.select();
+    ta.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(ta.value).then(function () {
+      var c = document.getElementById('copied');
+      c.style.display = 'inline';
+      setTimeout(function () { c.style.display = 'none'; }, 2000);
+    });
+  }
+</script>
+{% endblock %}

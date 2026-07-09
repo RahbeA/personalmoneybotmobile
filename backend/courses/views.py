@@ -2,6 +2,7 @@ from datetime import date, timedelta
 import copy
 
 from django.db.models import F, Prefetch, Q, Window
+from django.utils.dateparse import parse_date
 from django.db.models.functions import RowNumber
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -39,12 +40,35 @@ XP_BONUS_PERFECT = 10  # bonus for 0 mistakes
 BOT_BUCKS_PER_LESSON = 10
 BOT_BUCKS_PERFECT_BONUS = 5  # bonus Bot Bucks for 0 mistakes
 
+# One-time welcome grant for finishing the onboarding assessment.
+ONBOARDING_XP_BONUS = 10
+ONBOARDING_BOT_BUCKS_BONUS = 25
+
 
 def get_or_create_stats(user):
     stats, created = UserStats.objects.get_or_create(user=user)
     if created or stats.equipped_character_id:
         return UserStats.objects.select_related('equipped_character').get(pk=stats.pk)
     return stats
+
+
+def resolve_client_today(raw):
+    """Resolve the device-local calendar date used for daily-streak boundaries.
+
+    Daily streaks reset at the user's local midnight, so the mobile app sends
+    its local date (YYYY-MM-DD). Fall back to the server date (UTC) when it is
+    missing or unparseable, preserving the previous behaviour.
+    """
+    if raw:
+        parsed = raw if isinstance(raw, date) else parse_date(raw)
+        if parsed:
+            return parsed
+    return date.today()
+
+
+def client_today_from_request(request):
+    raw = request.query_params.get('client_date') or request.data.get('client_date')
+    return resolve_client_today(raw)
 
 
 def _module_list_context(request):
@@ -123,6 +147,7 @@ def complete_lesson(request, lesson_id):
     serializer = LessonCompleteSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     mistakes = serializer.validated_data['mistakes']
+    today = resolve_client_today(serializer.validated_data.get('client_date'))
 
     already_completed = UserProgress.objects.filter(user=request.user, lesson=lesson).exists()
 
@@ -154,7 +179,6 @@ def complete_lesson(request, lesson_id):
         stats.xp += xp_earned
         stats.bot_bucks += bot_bucks_earned
 
-        today = date.today()
         if stats.last_active == today - timedelta(days=1):
             stats.streak_days += 1
         elif stats.last_active != today:
@@ -356,7 +380,7 @@ def _build_leaderboard_payload(request, search, page, page_size):
     }
 
 
-def _build_user_stats(request):
+def _build_user_stats(request, today=None):
     stats = get_or_create_stats(request.user)
     completed_lesson_ids = list(
         UserProgress.objects.filter(user=request.user).values_list('lesson_id', flat=True)
@@ -369,15 +393,24 @@ def _build_user_stats(request):
         'completed_lesson_ids': completed_lesson_ids,
         'lessons_completed': len(completed_lesson_ids),
         'badge_catalog': badge_catalog_for_request(request),
-        'daily_reward': daily_reward_status(stats),
+        'daily_reward': daily_reward_status(stats, today),
     }
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_stats(request):
+    today = client_today_from_request(request)
     key = f'user:{request.user.id}:stats:v1'
-    data, hit = cache_get_or_set(key, lambda: _build_user_stats(request), TTL_USER_STATS)
+    data, hit = cache_get_or_set(key, lambda: _build_user_stats(request, today), TTL_USER_STATS)
+    # daily_reward is date-sensitive (can_claim / claimed_today / current_day are
+    # relative to the client's local "today"). The cache key has no date, so a
+    # blob cached just before local midnight would otherwise serve a stale reward
+    # for up to the TTL. Recompute it every request so the card reflects the
+    # correct claimable state (DEV-459).
+    from .daily_rewards import daily_reward_status
+    stats = get_or_create_stats(request.user)
+    data = {**data, 'daily_reward': daily_reward_status(stats, today)}
     return attach_cache_header(Response(data), hit)
 
 
@@ -387,9 +420,10 @@ def claim_daily_reward(request):
     """Claim today's daily login Bot Bucks reward."""
     from .daily_rewards import claim_daily_reward as do_claim
 
+    today = client_today_from_request(request)
     stats = get_or_create_stats(request.user)
     try:
-        amount, reward_status = do_claim(request.user, stats)
+        amount, reward_status = do_claim(request.user, stats, today)
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -416,8 +450,31 @@ def onboarding_questions(request):
             'total': onboarding.total_questions(),
         }
 
-    data, hit = cache_get_or_set('course:onboarding:questions:v1', factory, TTL_ONBOARDING)
+    data, hit = cache_get_or_set('course:onboarding:questions:v2', factory, TTL_ONBOARDING)
     return attach_cache_header(Response(data), hit)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_goals(request):
+    """Update just the user's selected goals (editable from Settings)."""
+    goals = request.data.get('goals')
+    if not isinstance(goals, list):
+        return Response(
+            {'detail': 'goals must be a list of goal keys.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    goals = [str(g)[:50] for g in goals][:12]
+
+    stats = get_or_create_stats(request.user)
+    stats.onboarding_goals = goals
+    stats.save(update_fields=['onboarding_goals'])
+    invalidate_user_cache(request.user.id)
+
+    return Response({
+        'onboarding_goals': goals,
+        'stats': UserStatsSerializer(stats, context={'request': request}).data,
+    })
 
 
 @api_view(['POST'])
@@ -433,11 +490,34 @@ def onboarding_submit(request):
 
     num_correct, results = onboarding.score_answers(answers)
 
+    goals = request.data.get('goals') or []
+    if not isinstance(goals, list):
+        goals = []
+    # Keep only simple string keys, capped, to avoid storing arbitrary payloads.
+    goals = [str(g)[:50] for g in goals][:12]
+
     stats = get_or_create_stats(request.user)
+    # Only grant the welcome bonus the first time onboarding is completed so
+    # re-submitting the assessment can't farm Bot Bucks/XP.
+    first_completion = not stats.onboarding_completed
     stats.onboarding_completed = True
     stats.onboarding_score = num_correct
     stats.onboarding_answers = answers
-    stats.save(update_fields=['onboarding_completed', 'onboarding_score', 'onboarding_answers'])
+    stats.onboarding_goals = goals
+    update_fields = [
+        'onboarding_completed', 'onboarding_score', 'onboarding_answers', 'onboarding_goals',
+    ]
+
+    bonus_xp = 0
+    bonus_bot_bucks = 0
+    if first_completion:
+        bonus_xp = ONBOARDING_XP_BONUS
+        bonus_bot_bucks = ONBOARDING_BOT_BUCKS_BONUS
+        stats.xp += bonus_xp
+        stats.bot_bucks += bonus_bot_bucks
+        update_fields += ['xp', 'bot_bucks']
+
+    stats.save(update_fields=update_fields)
 
     from .badges import evaluate_and_award
     evaluate_and_award(request.user, stats)
@@ -452,5 +532,6 @@ def onboarding_submit(request):
         'total': onboarding.total_questions(),
         'results': results,
         'rank': rank,
+        'onboarding_bonus': {'xp': bonus_xp, 'bot_bucks': bonus_bot_bucks},
         'stats': UserStatsSerializer(stats, context={'request': request}).data,
     })

@@ -1,16 +1,19 @@
 import React, { useEffect, useCallback, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, AppState } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { UserProgressProvider, useUserProgress } from './src/context/UserProgressContext';
+import { NotificationsProvider } from './src/context/NotificationsContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { BrandLoader, BrandEmptyState } from './src/components/brand';
 import { LOADER_MESSAGES } from './src/constants/brandCopy';
 import { API_BASE_URL } from './src/config/api';
-import { bootstrapNotifications } from './src/utils/notifications';
+import { bootstrapNotifications, syncStreakNotifications } from './src/utils/notifications';
+import { getFirstName } from './src/utils/displayName';
+import { localDate } from './src/utils/localDate';
 import { warmModelViewerOnBoot } from './src/utils/modelCache';
 import { ensureCacheScope } from './src/utils/apiCache';
 import LandingScreen from './src/screens/LandingScreen';
@@ -18,10 +21,38 @@ import AuthScreen from './src/screens/AuthScreen';
 import LegalDocumentScreen from './src/screens/LegalDocumentScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
+import NameCapturePrompt from './src/components/NameCapturePrompt';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const Stack = createNativeStackNavigator();
+
+function NotificationForegroundSync() {
+  const { user } = useAuth();
+  const { streakDays, lastActive } = useUserProgress();
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const syncOnActive = () => {
+      syncStreakNotifications({
+        firstName: getFirstName(user),
+        streakDays,
+        activeToday: lastActive === localDate(),
+      }).catch(() => {});
+    };
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncOnActive();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [user, streakDays, lastActive]);
+
+  return null;
+}
 
 function BootErrorScreen({ message, onRetry }) {
   const { colors } = useTheme();
@@ -160,7 +191,11 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <UserProgressProvider>
-            <RootNavigator />
+            <NotificationsProvider>
+              <NotificationForegroundSync />
+              <RootNavigator />
+              <NameCapturePrompt />
+            </NotificationsProvider>
           </UserProgressProvider>
         </AuthProvider>
       </ThemeProvider>
