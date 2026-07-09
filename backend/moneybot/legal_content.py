@@ -279,7 +279,58 @@ TERMS_OF_SERVICE = {
     ],
 }
 
+SUPPORT = {
+    'id': 'support',
+    'title': 'Support',
+    'sections': [
+        {
+            'heading': 'Get Help',
+            'paragraphs': [
+                'Need a hand with MoneyBot? We\'re happy to help with account '
+                'issues, bug reports, feature requests, or any questions about how '
+                'the app works.',
+                'The fastest way to reach us is by email at kahlil@getmoneybot.com. '
+                'We aim to respond within 2 business days.',
+            ],
+        },
+        {
+            'heading': 'Common Questions',
+            'intro': 'Here are answers to the things people ask most often:',
+            'bullets': [
+                'Reset your password: On the sign-in screen, use "Continue with '
+                'Google" or "Continue with Apple", or contact us to reset an '
+                'email/password account.',
+                'Delete your account: Go to Settings > Delete Account. This '
+                'permanently removes your account and all associated data, '
+                'including progress, XP, Bot Bucks, and chat history.',
+                'Restore progress: Your progress is tied to your account, so sign '
+                'in with the same method you used to register and it will sync.',
+                'AI answers look wrong: MoneyBot Tutor and Money Chat are '
+                'educational tools and can occasionally be inaccurate. They are not '
+                'a substitute for professional financial advice.',
+            ],
+        },
+        {
+            'heading': 'Report a Bug or Request a Feature',
+            'paragraphs': [
+                'Found something broken or have an idea to make MoneyBot better? '
+                'Email kahlil@getmoneybot.com with a short description and, if '
+                'possible, your device model, app version, and a screenshot. The '
+                'app version is shown at the bottom of the Settings screen.',
+            ],
+        },
+        {
+            'heading': 'Contact Us',
+            'paragraphs': [
+                'Email: kahlil@getmoneybot.com',
+                'Website: getmoneybot.com',
+            ],
+        },
+    ],
+}
+
 LEGAL_DOCUMENTS = {
     'privacy': PRIVACY_POLICY,
     'terms': TERMS_OF_SERVICE,
+    'support': SUPPORT,
 }

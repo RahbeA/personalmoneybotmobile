@@ -18,6 +18,7 @@ urlpatterns = [
     # Public legal pages (URLs submitted to Apple App Store Connect).
     path('legal/privacy/', legal_document, {'doc_id': 'privacy'}, name='privacy-policy'),
     path('legal/terms/', legal_document, {'doc_id': 'terms'}, name='terms-of-service'),
+    path('legal/support/', legal_document, {'doc_id': 'support'}, name='support'),
     re_path(r'^media/(?P<path>.*)$', serve_media, {'document_root': settings.MEDIA_ROOT}),
     # Web control panel SPA (client-side routing handled by React Router).
     re_path(r'^panel/.*$', panel_index, name='panel'),
