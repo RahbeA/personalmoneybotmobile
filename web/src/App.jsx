@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import CoursesPage from './pages/CoursesPage';
 import OnboardingPage from './pages/OnboardingPage';
 import UsersPage from './pages/UsersPage';
+import NotificationsPage from './pages/NotificationsPage';
 import AdminAccessPage from './pages/AdminAccessPage';
 import AIInspectorPage from './pages/AIInspectorPage';
 import BadgesPage from './pages/BadgesPage';
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="badges" element={<BadgesPage />} />
           <Route path="daily-rewards" element={<DailyRewardsPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
           <Route path="admin-access" element={<AdminAccessPage />} />
           <Route path="ai" element={<AIInspectorPage />} />
         </Route>

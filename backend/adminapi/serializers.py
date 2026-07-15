@@ -6,6 +6,7 @@ from courses.models import (
     OnboardingQuestion, OnboardingOption, Badge, DailyRewardTier,
 )
 from moneyverse.models import Character
+from social.models import NotificationCampaign
 from ai.models import (
     TutorConversation,
     TutorMessage,
@@ -223,6 +224,51 @@ class ChangePasswordSerializer(serializers.Serializer):
         from django.contrib.auth.password_validation import validate_password
         validate_password(value, self.context['request'].user)
         return value
+
+
+# --- Notification campaigns --------------------------------------------------
+
+class NotificationCampaignSerializer(serializers.ModelSerializer):
+    recipients = serializers.PrimaryKeyRelatedField(
+        many=True,
+        required=False,
+        queryset=User.objects.filter(is_active=True),
+    )
+    recipient_emails = serializers.SerializerMethodField()
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+
+    class Meta:
+        model = NotificationCampaign
+        fields = (
+            'id', 'title', 'body', 'audience', 'recipients', 'recipient_emails',
+            'include_staff', 'send_push', 'data', 'status', 'target_count',
+            'push_count', 'error_message', 'created_by_email', 'created_at', 'sent_at',
+        )
+        read_only_fields = (
+            'id', 'status', 'target_count', 'push_count', 'error_message',
+            'created_by_email', 'created_at', 'sent_at',
+        )
+
+    def get_recipient_emails(self, obj):
+        return list(obj.recipients.values_list('email', flat=True))
+
+    def validate_data(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Routing data must be a JSON object.')
+        return value
+
+    def validate(self, attrs):
+        audience = attrs.get('audience', getattr(self.instance, 'audience', None))
+        recipients = attrs.get('recipients')
+        if recipients is None and self.instance is not None:
+            recipients = list(self.instance.recipients.all())
+        if audience == NotificationCampaign.AUDIENCE_SELECTED and not recipients:
+            raise serializers.ValidationError(
+                {'recipients': 'Choose at least one user for the selected-users audience.'}
+            )
+        return attrs
 
 
 # --- AI inspector (read-only) ----------------------------------------------

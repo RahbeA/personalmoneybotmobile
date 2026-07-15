@@ -15,6 +15,8 @@ from courses.models import (
     Badge, DailyRewardTier,
 )
 from moneyverse.models import Character, UserCharacter
+from social.campaigns import campaign_audience, send_campaign
+from social.models import NotificationCampaign
 from ai.models import TutorConversation, MoneyChatSession
 from .pagination import AdminPagination
 from .permissions import IsAdminUserOrReadOnly
@@ -35,6 +37,7 @@ from .serializers import (
     TutorConversationDetailSerializer,
     MoneyChatSessionSerializer,
     MoneyChatSessionDetailSerializer,
+    NotificationCampaignSerializer,
 )
 
 User = get_user_model()
@@ -338,6 +341,81 @@ class StaffViewSet(viewsets.ModelViewSet):
         # Invalidate any active admin tokens for this user.
         Token.objects.filter(user=user).delete()
         return Response({'detail': 'Control panel access revoked.'})
+
+
+# --- Notification campaigns ---------------------------------------------------
+
+class NotificationCampaignViewSet(viewsets.ModelViewSet):
+    """Compose and send notification campaigns from the control panel."""
+    serializer_class = NotificationCampaignSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = AdminPagination
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        qs = (
+            NotificationCampaign.objects.all()
+            .select_related('created_by')
+            .prefetch_related('recipients')
+        )
+        search = (self.request.query_params.get('search') or '').strip()
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(body__icontains=search))
+        status_param = (self.request.query_params.get('status') or '').strip()
+        if status_param:
+            qs = qs.filter(status=status_param)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def _guard_editable(self, campaign):
+        if campaign.status not in (
+            NotificationCampaign.STATUS_DRAFT,
+            NotificationCampaign.STATUS_FAILED,
+        ):
+            return Response(
+                {'detail': 'Sent campaigns cannot be modified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return None
+
+    def partial_update(self, request, *args, **kwargs):
+        blocked = self._guard_editable(self.get_object())
+        if blocked:
+            return blocked
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        blocked = self._guard_editable(self.get_object())
+        if blocked:
+            return blocked
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['get'])
+    def preview(self, request, pk=None):
+        """Return the audience size and a sample of targeted users."""
+        campaign = self.get_object()
+        audience = campaign_audience(campaign)
+        return Response({
+            'count': audience.count(),
+            'sample': list(audience.values('id', 'email', 'name')[:10]),
+        })
+
+    @action(detail=True, methods=['post'])
+    def send(self, request, pk=None):
+        """Deliver the campaign (in-app rows + optional Expo push)."""
+        campaign = self.get_object()
+        try:
+            sent = send_campaign(campaign)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Delivery failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(NotificationCampaignSerializer(sent).data)
 
 
 # --- Analytics --------------------------------------------------------------
