@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 _REQUEST_TIMEOUT = 8
+_EXPO_BATCH_SIZE = 100
 
 
 def _looks_like_expo_token(token):
@@ -24,7 +25,7 @@ def _looks_like_expo_token(token):
 
 
 def send_expo_push(tokens, title, body, data=None):
-    """Send a push to a list of Expo tokens. Returns the number attempted."""
+    """Send pushes in Expo-supported batches. Returns the number attempted."""
     messages = [
         {
             'to': token,
@@ -40,21 +41,25 @@ def send_expo_push(tokens, title, body, data=None):
     if not messages:
         return 0
 
-    try:
-        resp = requests.post(
-            EXPO_PUSH_URL,
-            json=messages,
-            headers={
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-            },
-            timeout=_REQUEST_TIMEOUT,
-        )
-        _handle_receipts(resp, messages)
-    except requests.RequestException as exc:
-        logger.warning('Expo push request failed: %s', exc)
-        return 0
-    return len(messages)
+    attempted = 0
+    for offset in range(0, len(messages), _EXPO_BATCH_SIZE):
+        batch = messages[offset:offset + _EXPO_BATCH_SIZE]
+        try:
+            resp = requests.post(
+                EXPO_PUSH_URL,
+                json=batch,
+                headers={
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                timeout=_REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            _handle_receipts(resp, batch)
+            attempted += len(batch)
+        except requests.RequestException as exc:
+            logger.warning('Expo push batch failed: %s', exc)
+    return attempted
 
 
 def _handle_receipts(resp, messages):

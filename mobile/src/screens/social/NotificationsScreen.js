@@ -16,6 +16,7 @@ const KIND_META = {
   friend_request: { icon: 'person-add', tint: '#3DDC5F' },
   friend_accepted: { icon: 'checkmark-circle', tint: '#3DDC5F' },
   friend_declined: { icon: 'close-circle', tint: '#FF8C42' },
+  announcement: { icon: 'megaphone', tint: '#56C8E8' },
 };
 
 function metaFor(kind) {

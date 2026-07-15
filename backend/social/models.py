@@ -2,6 +2,78 @@ from django.conf import settings
 from django.db import models
 
 
+class NotificationCampaign(models.Model):
+    """An admin-authored notification delivered to a controlled audience."""
+
+    AUDIENCE_ALL = 'all'
+    AUDIENCE_SELECTED = 'selected'
+    AUDIENCE_IOS = 'ios'
+    AUDIENCE_ANDROID = 'android'
+    AUDIENCE_CHOICES = [
+        (AUDIENCE_ALL, 'All active users'),
+        (AUDIENCE_SELECTED, 'Selected users'),
+        (AUDIENCE_IOS, 'Active users with an iOS device'),
+        (AUDIENCE_ANDROID, 'Active users with an Android device'),
+    ]
+
+    STATUS_DRAFT = 'draft'
+    STATUS_SENDING = 'sending'
+    STATUS_SENT = 'sent'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Draft'),
+        (STATUS_SENDING, 'Sending'),
+        (STATUS_SENT, 'Sent'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    title = models.CharField(max_length=140)
+    body = models.CharField(max_length=280)
+    audience = models.CharField(
+        max_length=16,
+        choices=AUDIENCE_CHOICES,
+        default=AUDIENCE_SELECTED,
+    )
+    recipients = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name='admin_notification_campaigns',
+        help_text='Used only when the audience is “Selected users”.',
+    )
+    include_staff = models.BooleanField(
+        default=False,
+        help_text='Include staff/admin accounts in this campaign.',
+    )
+    send_push = models.BooleanField(
+        default=True,
+        help_text='Also send an OS push to registered devices. An in-app notification is always created.',
+    )
+    data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Optional routing data for the mobile app, as a JSON object.',
+    )
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    target_count = models.PositiveIntegerField(default=0)
+    push_count = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_notification_campaigns',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
 class Friendship(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_ACCEPTED = 'accepted'
@@ -45,10 +117,12 @@ class Notification(models.Model):
     TYPE_FRIEND_REQUEST = 'friend_request'
     TYPE_FRIEND_ACCEPTED = 'friend_accepted'
     TYPE_FRIEND_DECLINED = 'friend_declined'
+    TYPE_ANNOUNCEMENT = 'announcement'
     TYPE_CHOICES = [
         (TYPE_FRIEND_REQUEST, 'Friend request received'),
         (TYPE_FRIEND_ACCEPTED, 'Friend request accepted'),
         (TYPE_FRIEND_DECLINED, 'Friend request declined'),
+        (TYPE_ANNOUNCEMENT, 'Admin announcement'),
     ]
 
     recipient = models.ForeignKey(
@@ -70,12 +144,26 @@ class Notification(models.Model):
     data = models.JSONField(default=dict, blank=True)
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    campaign = models.ForeignKey(
+        NotificationCampaign,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['recipient', 'is_read']),
             models.Index(fields=['recipient', '-created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['campaign', 'recipient'],
+                condition=models.Q(campaign__isnull=False),
+                name='unique_campaign_notification_recipient',
+            ),
         ]
 
     def __str__(self):
