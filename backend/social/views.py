@@ -25,6 +25,26 @@ from .models import (
 
 NOTIFICATIONS_PAGE_SIZE = 50
 
+GUEST_ACCOUNT_REQUIRED = (
+    'Create a free account to use friends and groups. '
+    'Learning content is available without signing up.'
+)
+
+
+def _reject_guest(request):
+    """Block account-based social actions for anonymous guest sessions.
+
+    Apple Guideline 5.1.1(v) allows requiring registration for features that are
+    genuinely account-based (friends, groups, invites). Guests can still use
+    lessons and other non-account content.
+    """
+    if getattr(request.user, 'is_guest', False):
+        return Response(
+            {'error': GUEST_ACCOUNT_REQUIRED, 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
 
 def _enroll_in_active_challenges(group, user):
     """Add a newly joined member to every ongoing challenge in the group."""
@@ -174,8 +194,10 @@ def search_users(request):
     friend_ids = service.friend_user_ids(request.user)
     excluded = friend_ids | {request.user.id}
 
+    # Guests have no real identity — don't surface them in people search.
     users = User.objects.filter(
         Q(name__icontains=q) | Q(email__icontains=q),
+        is_guest=False,
     ).exclude(id__in=excluded).order_by('name', 'email')[:20]
 
     results = []
@@ -235,12 +257,16 @@ def friend_requests(request):
 
         return Response({'incoming': incoming, 'outgoing': outgoing})
 
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     user_id = request.data.get('user_id')
     if not user_id:
         return Response({'error': 'user_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        target = User.objects.get(pk=user_id)
+        target = User.objects.get(pk=user_id, is_guest=False)
     except User.DoesNotExist:
         return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -291,6 +317,10 @@ def friend_requests(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def accept_friend_request(request, request_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     try:
         friendship = Friendship.objects.select_related('requester', 'addressee').get(pk=request_id)
     except Friendship.DoesNotExist:
@@ -316,6 +346,10 @@ def accept_friend_request(request, request_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def decline_friend_request(request, request_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     try:
         friendship = Friendship.objects.get(pk=request_id)
     except Friendship.DoesNotExist:
@@ -338,6 +372,10 @@ def decline_friend_request(request, request_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def remove_friend(request, user_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     friendship = Friendship.objects.filter(
         Q(requester=request.user, addressee_id=user_id) | Q(requester_id=user_id, addressee=request.user),
         status=Friendship.STATUS_ACCEPTED,
@@ -358,6 +396,10 @@ def groups_list_create(request):
         return Response({
             'groups': [_serialize_group_summary(g, request) for g in groups],
         })
+
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
 
     name = (request.data.get('name') or '').strip()
     emoji = (request.data.get('emoji') or 'people').strip() or 'people'
@@ -399,6 +441,10 @@ def group_detail(request, group_id):
 @permission_classes([IsAuthenticated])
 def group_add_members(request, group_id):
     """Invite friends to a group. Invitees must accept before joining."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     group, membership = service.get_group_for_member(group_id, request.user)
     if not group:
         return Response({'error': 'Group not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -446,6 +492,10 @@ def group_invites(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def accept_group_invite(request, invite_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     try:
         invite = GroupInvite.objects.select_related('group').get(pk=invite_id)
     except GroupInvite.DoesNotExist:
@@ -473,6 +523,10 @@ def accept_group_invite(request, invite_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def decline_group_invite(request, invite_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     try:
         invite = GroupInvite.objects.get(pk=invite_id)
     except GroupInvite.DoesNotExist:
@@ -549,6 +603,10 @@ def group_challenges(request, group_id):
         return Response({
             'challenges': [_serialize_challenge(c) for c in challenges],
         })
+
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
 
     title = (request.data.get('title') or '').strip()
     metric = request.data.get('metric')

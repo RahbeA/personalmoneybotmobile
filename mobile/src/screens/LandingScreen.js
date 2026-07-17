@@ -1,22 +1,42 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Animated,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { BrandLogo } from '../components/brand';
 import LegalFooter from '../components/LegalFooter';
 import { BRAND_URL, LANDING } from '../constants/brandCopy';
 
 export default function LandingScreen({ navigation }) {
   const { colors, isDark } = useTheme();
+  const { guestSignIn } = useAuth();
+  const [guestLoading, setGuestLoading] = useState(false);
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  async function handleGuest() {
+    if (guestLoading) return;
+    setGuestLoading(true);
+    try {
+      await guestSignIn();
+      // Root navigator swaps to onboarding/main once the session is set.
+    } catch (err) {
+      setGuestLoading(false);
+      Alert.alert(
+        'Couldn\u2019t continue',
+        err?.message || 'Please check your connection and try again.',
+      );
+    }
+  }
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
   const logoScale = useRef(new Animated.Value(0.7)).current;
@@ -107,6 +127,19 @@ export default function LandingScreen({ navigation }) {
             >
               <Text style={styles.primaryButtonText}>Get Started</Text>
             </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.guestButton}
+            onPress={handleGuest}
+            activeOpacity={0.85}
+            disabled={guestLoading}
+          >
+            {guestLoading ? (
+              <ActivityIndicator color={colors.white} />
+            ) : (
+              <Text style={styles.guestButtonText}>Explore first — no account needed</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -206,6 +239,22 @@ const makeStyles = (colors) => StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.4,
+  },
+  guestButton: {
+    width: '100%',
+    paddingVertical: 15,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  guestButtonText: {
+    color: colors.white,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   secondaryButton: {
     paddingVertical: 12,

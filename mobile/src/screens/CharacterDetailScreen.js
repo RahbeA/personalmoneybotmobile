@@ -6,8 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
+import { requireAccount } from '../utils/requireAccount';
 import CharacterViewer from '../components/CharacterViewer';
 
 const RARITY_COLORS = {
@@ -19,6 +21,7 @@ const RARITY_COLORS = {
 
 export default function CharacterDetailScreen({ navigation, route }) {
   const { character } = route.params;
+  const { isGuest } = useAuth();
   const { botBucks, equippedCharacter, purchaseCharacter, equipCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -32,6 +35,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
 
   async function handleBuy() {
     if (busy) return;
+    if (!requireAccount({ isGuest, navigation, feature: 'buy characters with Bot Bucks' })) return;
     if (!canAfford) {
       Alert.alert('Not enough Bot Bucks', `You need ${character.price - botBucks} more Bot Bucks. Complete more lessons to earn them!`);
       return;
@@ -50,6 +54,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
 
   async function handleEquip() {
     if (busy) return;
+    if (!requireAccount({ isGuest, navigation, feature: 'equip characters' })) return;
     setBusy(true);
     try {
       await equipCharacter(character.id);
@@ -128,13 +133,18 @@ export default function CharacterDetailScreen({ navigation, route }) {
             )
           ) : (
             <TouchableOpacity
-              style={[styles.cta, !canAfford && styles.ctaDisabled]}
+              style={[styles.cta, isGuest ? null : (!canAfford && styles.ctaDisabled)]}
               onPress={handleBuy}
               activeOpacity={0.85}
               disabled={busy}
             >
               {busy ? (
                 <ActivityIndicator color={colors.background} />
+              ) : isGuest ? (
+                <>
+                  <Ionicons name="lock-closed" size={18} color={colors.background} />
+                  <Text style={styles.ctaText}>Create account to buy</Text>
+                </>
               ) : (
                 <>
                   <Ionicons name="logo-bitcoin" size={20} color={canAfford ? colors.background : colors.textMuted} />

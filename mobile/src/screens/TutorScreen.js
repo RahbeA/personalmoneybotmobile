@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, ScrollView, Image,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,10 +12,12 @@ import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { tutorApi } from '../api/tutor';
 import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
+import { requireAccount } from '../utils/requireAccount';
 import ChatThread from '../components/chat/ChatThread';
-import { BrandAvatar } from '../components/brand';
 import { EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
+
+const TUTOR_HERO = require('../../assets/tutor-hero.png');
 
 const CARD_SHADOW = {
   shadowColor: '#000',
@@ -37,7 +39,7 @@ function hairlineBorder(isDark) {
   return isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
 }
 
-function TutorEmptyHero({ styles, colors, character, onPrompt }) {
+function TutorEmptyHero({ styles, colors, onPrompt }) {
   return (
     <ScrollView
       contentContainerStyle={styles.emptyScroll}
@@ -52,7 +54,7 @@ function TutorEmptyHero({ styles, colors, character, onPrompt }) {
           end={{ x: 0.5, y: 1 }}
         />
         <View style={styles.emptyAvatarRing}>
-          <BrandAvatar character={character} size={72} autoRotate={!!character} />
+          <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
         </View>
         <Text style={styles.emptyTitle}>{EMPTY_STATES.tutor.title}</Text>
         <Text style={styles.emptyBody}>{EMPTY_STATES.tutor.body}</Text>
@@ -76,8 +78,8 @@ function TutorEmptyHero({ styles, colors, character, onPrompt }) {
   );
 }
 
-export default function TutorScreen() {
-  const { token, user } = useAuth();
+export default function TutorScreen({ navigation }) {
+  const { token, user, isGuest } = useAuth();
   const { equippedCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset();
@@ -89,8 +91,12 @@ export default function TutorScreen() {
   const [conversations, setConversations] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  const goCreateAccount = useCallback(() => {
+    requireAccount({ isGuest: true, navigation, feature: 'chat with the AI Tutor' });
+  }, [navigation]);
+
   const loadConversations = useCallback(async () => {
-    if (!token || !user?.id) return;
+    if (!token || !user?.id || isGuest) return;
     try {
       const { data } = await fetchWithCache(
         cacheKeys.tutorConversations(user.id),
@@ -101,7 +107,7 @@ export default function TutorScreen() {
     } catch (e) {
       // ignore
     }
-  }, [token, user?.id]);
+  }, [token, user?.id, isGuest]);
 
   useFocusEffect(
     useCallback(() => {
@@ -110,6 +116,7 @@ export default function TutorScreen() {
   );
 
   async function openConversation(id) {
+    if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
     setHistoryOpen(false);
     setConversationId(id);
     try {
@@ -121,12 +128,14 @@ export default function TutorScreen() {
   }
 
   function startNewChat() {
+    if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
     setConversationId(null);
     setMessages([]);
     setHistoryOpen(false);
   }
 
   async function handleSend(text) {
+    if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
     const optimistic = { id: `local-${Date.now()}`, role: 'user', content: text };
     setMessages((prev) => [...prev, optimistic]);
     setSending(true);
@@ -147,11 +156,53 @@ export default function TutorScreen() {
     }
   }
 
+  // Guests can open the Tutor tab, but chatting is account-based.
+  if (isGuest) {
+    return (
+      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.heroEyebrow}>AI TUTOR</Text>
+              <Text style={styles.title}>Tutor</Text>
+              <Text style={styles.heroSub}>Your personal finance coach</Text>
+            </View>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={[styles.emptyScroll, { paddingBottom: tabBarInset }]}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.emptyHero}>
+              <LinearGradient
+                colors={['rgba(61,220,95,0.18)', 'rgba(61,220,95,0.02)', 'transparent']}
+                style={styles.emptyHeroGlow}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+              />
+              <View style={styles.emptyAvatarRing}>
+                <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
+              </View>
+              <Text style={styles.emptyTitle}>Create an account to chat</Text>
+              <Text style={styles.emptyBody}>
+                The AI Tutor keeps a personalized chat history and learning profile.
+                Create a free account to start asking questions — lessons stay available without signing up.
+              </Text>
+              <TouchableOpacity style={styles.guestCtaBtn} activeOpacity={0.9} onPress={goCreateAccount}>
+                <Text style={styles.guestCtaBtnText}>Create free account</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
   const emptyState = (
     <TutorEmptyHero
       styles={styles}
       colors={colors}
-      character={equippedCharacter}
       onPrompt={handleSend}
     />
   );
@@ -290,7 +341,7 @@ const makeStyles = (colors, isDark) => {
       justifyContent: 'space-between',
       paddingHorizontal: 20,
       paddingTop: 8,
-      paddingBottom: 12,
+      paddingBottom: 24,
     },
     headerLeft: { flex: 1, marginRight: 12 },
     heroEyebrow: {
@@ -380,11 +431,17 @@ const makeStyles = (colors, isDark) => {
       borderRadius: 24,
     },
     emptyAvatarRing: {
-      borderRadius: 40,
+      borderRadius: 70,
       borderWidth: 2,
       borderColor: colors.primaryTintStrong,
       padding: 3,
       marginBottom: 16,
+      overflow: 'hidden',
+    },
+    emptyHeroImage: {
+      width: 120,
+      height: 120,
+      borderRadius: 60,
     },
     emptyTitle: {
       fontSize: 20,
@@ -421,6 +478,16 @@ const makeStyles = (colors, isDark) => {
       borderColor: hairline,
     },
     promptChipText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.white },
+
+    guestCtaBtn: {
+      marginTop: 18,
+      backgroundColor: colors.primary,
+      paddingHorizontal: 22,
+      paddingVertical: 14,
+      borderRadius: 14,
+      ...CARD_SHADOW,
+    },
+    guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: colors.background },
 
     modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
     modalSheet: {

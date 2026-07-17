@@ -21,6 +21,20 @@ PROFILE_UPDATE_EVERY = 4
 MONEY_CHAT_BONUS_XP = 25
 MONEY_CHAT_BONUS_BOT_BUCKS = 15
 
+GUEST_ACCOUNT_REQUIRED = (
+    'Create a free account to use the AI Tutor. '
+    'Learning content is available without signing up.'
+)
+
+
+def _reject_guest(request):
+    if getattr(request.user, 'is_guest', False):
+        return Response(
+            {'detail': GUEST_ACCOUNT_REQUIRED, 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
 
 def get_profile(user):
     profile, _ = UserAIProfile.objects.get_or_create(user=user)
@@ -47,6 +61,9 @@ def llm_error_response(exc):
 @permission_classes([IsAuthenticated])
 def conversations(request):
     if request.method == 'POST':
+        blocked = _reject_guest(request)
+        if blocked:
+            return blocked
         convo = TutorConversation.objects.create(user=request.user)
         return Response(TutorConversationSerializer(convo).data, status=status.HTTP_201_CREATED)
 
@@ -67,6 +84,10 @@ def conversation_messages(request, conversation_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def tutor_chat(request):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     message = (request.data.get('message') or '').strip()
     if not message:
         return Response({'detail': 'Message is required.'}, status=status.HTTP_400_BAD_REQUEST)

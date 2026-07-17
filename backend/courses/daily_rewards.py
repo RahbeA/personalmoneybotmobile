@@ -78,8 +78,24 @@ def claim_daily_reward(user, stats, today=None):
     else:
         stats.daily_claim_streak = 1
     stats.daily_reward_day = day + 1 if day < 7 else 1
+
+    # Claiming the daily reward is a daily-engagement action, so it should keep
+    # the flame streak (streak_days) shown on Home alive just like completing a
+    # lesson does. Without this, users who log in and claim every day still saw
+    # their streak stuck at 1 because streak_days only advanced on lessons.
+    if stats.last_active == yesterday:
+        stats.streak_days = (stats.streak_days or 0) + 1
+    elif stats.last_active != today:
+        stats.streak_days = 1
+    stats.last_active = today
+    # The consecutive daily-claim streak is, by definition, a run of engaged
+    # days, so the flame should never lag behind it (also reconciles existing
+    # users whose streak_days was stuck before this change).
+    stats.streak_days = max(stats.streak_days or 0, stats.daily_claim_streak or 0)
+
     stats.save(update_fields=[
         'bot_bucks', 'last_daily_claim', 'daily_reward_day', 'daily_claim_streak',
+        'streak_days', 'last_active',
     ])
 
     from .badges import evaluate_and_award

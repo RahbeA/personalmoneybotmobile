@@ -538,7 +538,7 @@ const makeStyles = (colors, tabBarInset, isDark) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 28,
   },
   headerLeft: { flex: 1, marginRight: 14 },
   greetingEyebrow: {

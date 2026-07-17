@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { socialApi } from '../../api/social';
 import { BrandAvatar, BrandLoader, BrandEmptyState } from '../../components/brand';
+import { requireAccount } from '../../utils/requireAccount';
 
 function formatName(name) {
   if (!name) return 'Learner';
@@ -19,7 +20,7 @@ function formatName(name) {
 
 export default function InviteFriendsScreen({ navigation, route }) {
   const { groupId, groupName, excludeIds = [] } = route.params;
-  const { token } = useAuth();
+  const { token, isGuest } = useAuth();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -32,7 +33,10 @@ export default function InviteFriendsScreen({ navigation, route }) {
   const excluded = useMemo(() => new Set(excludeIds), [excludeIds]);
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!token || isGuest) {
+      setLoading(false);
+      return;
+    }
     try {
       const res = await socialApi.getFriends(token);
       setFriends((res.friends || []).filter((f) => !excluded.has(f.user_id)));
@@ -41,12 +45,17 @@ export default function InviteFriendsScreen({ navigation, route }) {
     } finally {
       setLoading(false);
     }
-  }, [token, excluded]);
+  }, [token, excluded, isGuest]);
 
   useFocusEffect(useCallback(() => {
+    if (isGuest) {
+      requireAccount({ isGuest: true, navigation, feature: 'invite friends' });
+      navigation.goBack();
+      return;
+    }
     setLoading(true);
     load();
-  }, [load]));
+  }, [load, isGuest, navigation]));
 
   const toggle = (userId) => {
     setSelected((prev) => {
@@ -58,6 +67,7 @@ export default function InviteFriendsScreen({ navigation, route }) {
   };
 
   const handleSend = async () => {
+    if (!requireAccount({ isGuest, navigation, feature: 'invite friends' })) return;
     if (selected.size === 0) return;
     setSubmitting(true);
     try {

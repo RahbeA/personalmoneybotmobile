@@ -122,11 +122,21 @@ function RootNavigator() {
       <NavigationContainer>
         <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
           {user ? (
-            onboardingCompleted ? (
-              <Stack.Screen name="Main" component={MainTabNavigator} />
-            ) : (
-              <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-            )
+            <>
+              {onboardingCompleted ? (
+                <Stack.Screen name="Main" component={MainTabNavigator} />
+              ) : (
+                <Stack.Screen name="Onboarding" component={OnboardingScreen} />
+              )}
+              {/* Lets a signed-in guest open the auth screen to upgrade their
+                  account. Uses a distinct name so a fresh login (which swaps
+                  the whole logged-out stack) never gets stuck on this route. */}
+              <Stack.Screen
+                name="AuthUpgrade"
+                component={AuthScreen}
+                options={{ animation: 'slide_from_bottom' }}
+              />
+            </>
           ) : (
             <>
               <Stack.Screen name="Landing" component={LandingScreen} />

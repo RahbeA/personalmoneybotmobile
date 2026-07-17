@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, FlatList, KeyboardAvoidingView, Platform, StyleSheet,
+  View, FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet,
 } from 'react-native';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
@@ -24,6 +24,21 @@ export default function ChatThread({
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  // When the keyboard is open the tab bar (and its inset) sits behind it, so
+  // keeping the inset would leave a dead gap between the composer and the
+  // keyboard. Drop it while typing.
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const data = useMemo(() => {
     const newestFirst = [...messages].reverse();
@@ -69,7 +84,7 @@ export default function ChatThread({
         {footer}
       </View>
       {onSend && (
-        <View style={[{ paddingBottom: bottomInset }, composerStyle]}>
+        <View style={[{ paddingBottom: keyboardVisible ? 0 : bottomInset }, composerStyle]}>
           <ChatComposer
             onSend={onSend}
             disabled={composerDisabled}

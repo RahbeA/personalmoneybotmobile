@@ -4,13 +4,23 @@ export const authApi = {
   login: (email, password) =>
     apiRequest('/auth/login/', { method: 'POST', body: { email, password } }),
 
-  register: (email, password, name) =>
-    apiRequest('/auth/register/', { method: 'POST', body: { email, password, name } }),
+  register: (email, password, name, upgradeToken) =>
+    apiRequest('/auth/register/', {
+      method: 'POST',
+      body: { email, password, name },
+      token: upgradeToken,
+    }),
 
-  google: (idToken) =>
-    apiRequest('/auth/google/', { method: 'POST', body: { id_token: idToken } }),
+  guest: () => apiRequest('/auth/guest/', { method: 'POST' }),
 
-  apple: ({ identityToken, email, fullName }) =>
+  google: (idToken, upgradeToken) =>
+    apiRequest('/auth/google/', {
+      method: 'POST',
+      body: { id_token: idToken },
+      token: upgradeToken,
+    }),
+
+  apple: ({ identityToken, email, fullName }, upgradeToken) =>
     apiRequest('/auth/apple/', {
       method: 'POST',
       body: {
@@ -18,6 +28,7 @@ export const authApi = {
         email: email || undefined,
         full_name: fullName || undefined,
       },
+      token: upgradeToken,
     }),
 
   logout: (token) =>

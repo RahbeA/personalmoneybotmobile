@@ -500,6 +500,7 @@ export function UserProgressProvider({ children }) {
       if (typeof result.bot_bucks === 'number') setBotBucks(result.bot_bucks);
       if (result.daily_reward) setDailyReward(result.daily_reward);
       if (result.badges) setBadges(result.badges);
+      if (typeof result.stats?.streak_days === 'number') setStreakDays(result.stats.streak_days);
       await invalidateCache(cacheKeys.progress(user.id));
       return result;
     } catch (e) {

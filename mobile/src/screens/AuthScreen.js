@@ -11,6 +11,9 @@ import {
   Animated,
   ActivityIndicator,
   Image,
+  Keyboard,
+  TouchableWithoutFeedback,
+  findNodeHandle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -47,7 +50,16 @@ export default function AuthScreen({ route, navigation }) {
   const [appleAvailable, setAppleAvailable] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
 
-  const { login, register, googleSignIn, appleSignIn } = useAuth();
+  const { login, register, googleSignIn, appleSignIn, isGuest } = useAuth();
+  // If we opened this screen from an active guest session, upgrading keeps the
+  // user signed in (so the root navigator won't swap stacks) — dismiss manually.
+  const startedAsGuest = useRef(isGuest).current;
+
+  const dismissIfUpgrade = () => {
+    if (startedAsGuest && navigation.canGoBack()) {
+      navigation.goBack();
+    }
+  };
 
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
     buildGoogleAuthConfig(),
@@ -56,6 +68,26 @@ export default function AuthScreen({ route, navigation }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const emailInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const confirmPasswordInputRef = useRef(null);
+
+  function keepInputAboveKeyboard(inputRef) {
+    // Wait for the keyboard animation to begin, then move the focused field
+    // (plus a comfortable margin) into the visible part of the form.
+    setTimeout(() => {
+      const inputHandle = findNodeHandle(inputRef.current);
+      if (inputHandle) {
+        scrollRef.current?.scrollResponderScrollNativeHandleToKeyboard?.(
+          inputHandle,
+          110,
+          true,
+        );
+      }
+    }, Platform.OS === 'ios' ? 120 : 220);
+  }
 
   useEffect(() => {
     Animated.parallel([
@@ -100,7 +132,9 @@ export default function AuthScreen({ route, navigation }) {
         email: email || undefined,
         fullName: nameStr || undefined,
       });
-      // Navigation handled by root navigator watching auth state
+      // For a fresh sign-in the root navigator swaps stacks; for a guest
+      // upgrade the user stays signed in, so dismiss this screen ourselves.
+      dismissIfUpgrade();
     } catch (err) {
       // User tapping "Cancel" on the Apple sheet is not an error.
       if (err?.code !== 'ERR_REQUEST_CANCELED') {
@@ -127,7 +161,7 @@ export default function AuthScreen({ route, navigation }) {
       (async () => {
         try {
           await googleSignIn(idToken);
-          // Navigation handled by root navigator watching auth state
+          dismissIfUpgrade();
         } catch (err) {
           setError(err.message || 'Google sign-in failed. Try again.');
           shake();
@@ -232,7 +266,7 @@ export default function AuthScreen({ route, navigation }) {
       } else {
         await register(email.trim().toLowerCase(), password, name.trim());
       }
-      // Navigation handled by root navigator watching auth state
+      dismissIfUpgrade();
     } catch (err) {
       setError(err.message || 'Something went wrong. Try again.');
       shake();
@@ -247,15 +281,18 @@ export default function AuthScreen({ route, navigation }) {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.keyboardView}
           >
+            <ScrollView
+              ref={scrollRef}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+            >
             {/* Back + Logo */}
             <Animated.View
               style={[styles.header, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
@@ -313,15 +350,20 @@ export default function AuthScreen({ route, navigation }) {
                   <Text style={styles.label}>Full Name</Text>
                   <View style={styles.inputWrapper}>
                     <TextInput
+                      ref={nameInputRef}
                       style={styles.input}
                       value={name}
                       onChangeText={setName}
+                      onFocus={() => keepInputAboveKeyboard(nameInputRef)}
                       placeholder="Jordan Rivera"
                       placeholderTextColor={colors.textMuted}
                       autoCapitalize="words"
                       autoCorrect={false}
                       autoComplete="name"
                       textContentType="name"
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => emailInputRef.current?.focus()}
                     />
                   </View>
                 </View>
@@ -332,15 +374,20 @@ export default function AuthScreen({ route, navigation }) {
                 <Text style={styles.label}>Email</Text>
                 <View style={styles.inputWrapper}>
                   <TextInput
+                    ref={emailInputRef}
                     style={styles.input}
                     value={email}
                     onChangeText={setEmail}
+                    onFocus={() => keepInputAboveKeyboard(emailInputRef)}
                     placeholder="you@example.com"
                     placeholderTextColor={colors.textMuted}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     autoComplete="email"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => passwordInputRef.current?.focus()}
                   />
                 </View>
               </View>
@@ -350,14 +397,26 @@ export default function AuthScreen({ route, navigation }) {
                 <Text style={styles.label}>Password</Text>
                 <View style={styles.inputWrapper}>
                   <TextInput
+                    ref={passwordInputRef}
                     style={[styles.input, styles.inputWithIcon]}
                     value={password}
                     onChangeText={setPassword}
+                    onFocus={() => keepInputAboveKeyboard(passwordInputRef)}
                     placeholder="••••••••"
                     placeholderTextColor={colors.textMuted}
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
                     autoCorrect={false}
+                    returnKeyType={isLogin ? 'done' : 'next'}
+                    blurOnSubmit={isLogin}
+                    onSubmitEditing={() => {
+                      if (isLogin) {
+                        Keyboard.dismiss();
+                        handleSubmit();
+                      } else {
+                        confirmPasswordInputRef.current?.focus();
+                      }
+                    }}
                   />
                   <TouchableOpacity
                     onPress={() => setShowPassword(!showPassword)}
@@ -374,14 +433,21 @@ export default function AuthScreen({ route, navigation }) {
                   <Text style={styles.label}>Confirm Password</Text>
                   <View style={styles.inputWrapper}>
                     <TextInput
+                      ref={confirmPasswordInputRef}
                       style={styles.input}
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
+                      onFocus={() => keepInputAboveKeyboard(confirmPasswordInputRef)}
                       placeholder="••••••••"
                       placeholderTextColor={colors.textMuted}
                       secureTextEntry={!showPassword}
                       autoCapitalize="none"
                       autoCorrect={false}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        Keyboard.dismiss();
+                        handleSubmit();
+                      }}
                     />
                   </View>
                 </View>
@@ -497,8 +563,9 @@ export default function AuthScreen({ route, navigation }) {
 
               <LegalFooter style={styles.legalFooter} />
             </Animated.View>
-          </ScrollView>
-        </KeyboardAvoidingView>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
       </SafeAreaView>
     </LinearGradient>
   );

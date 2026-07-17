@@ -54,7 +54,7 @@ const makeStyles = (colors) => StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 4,
-    paddingBottom: 16,
+    paddingBottom: 28,
     gap: 12,
   },
   main: {

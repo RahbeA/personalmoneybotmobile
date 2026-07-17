@@ -13,21 +13,66 @@ from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
 User = get_user_model()
 
 
+def _current_guest(request):
+    """Return the authenticated user only if it's an anonymous guest.
+
+    Auth endpoints are AllowAny, but DRF still resolves a bearer token if one is
+    sent. When a guest hits register/google/apple we upgrade that same account in
+    place so their progress carries over.
+    """
+    user = getattr(request, 'user', None)
+    if user is not None and user.is_authenticated and getattr(user, 'is_guest', False):
+        return user
+    return None
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def guest_auth(request):
+    """Create an anonymous guest session so users can explore without signing up."""
+    user = User.objects.create_guest_user()
+    token, _ = Token.objects.get_or_create(user=user)
+    return Response(
+        {
+            'token': token.key,
+            'user': UserSerializer(user).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register(request):
     serializer = RegisterSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.save()
-        token, _ = Token.objects.get_or_create(user=user)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    guest = _current_guest(request)
+    if guest is not None:
+        # Upgrade the existing guest account in place, keeping all their progress.
+        data = serializer.validated_data
+        guest.email = User.objects.normalize_email(data['email'])
+        guest.set_password(data['password'])
+        if data.get('name'):
+            guest.name = data['name']
+        guest.is_guest = False
+        guest.save()
+        token, _ = Token.objects.get_or_create(user=guest)
         return Response(
-            {
-                'token': token.key,
-                'user': UserSerializer(user).data,
-            },
-            status=status.HTTP_201_CREATED,
+            {'token': token.key, 'user': UserSerializer(guest).data},
+            status=status.HTTP_200_OK,
         )
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user = serializer.save()
+    token, _ = Token.objects.get_or_create(user=user)
+    return Response(
+        {
+            'token': token.key,
+            'user': UserSerializer(user).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(['POST'])
@@ -107,13 +152,20 @@ def google_auth(request):
     name = claims.get('name', '')
     avatar_url = claims.get('picture', '')
 
+    guest = _current_guest(request)
+
     user = User.objects.filter(google_id=google_sub).first()
     if user is None:
         # Link to an existing email/password account if one exists, otherwise
-        # create a brand new OAuth-only user (no usable password).
+        # upgrade the current guest (preserving progress), or create a new user.
         user = User.objects.filter(email=email).first()
         if user is None:
-            user = User.objects.create_user(email=email, password=None)
+            if guest is not None:
+                user = guest
+                user.email = email
+                user.is_guest = False
+            else:
+                user = User.objects.create_user(email=email, password=None)
         user.google_id = google_sub
 
     # Keep profile details fresh from Google.
@@ -150,12 +202,22 @@ def apple_auth(request):
     email = (request.data.get('email') or claims.get('email') or '').lower()
     name = (request.data.get('full_name') or request.data.get('fullName') or '').strip()
 
+    guest = _current_guest(request)
+
     user = User.objects.filter(apple_id=apple_sub).first()
     if user is None and email:
         user = User.objects.filter(email=email).first()
 
     if user is None:
-        if not email:
+        if guest is not None:
+            # Upgrade the current guest, preserving progress. Apple's private-relay
+            # flow may omit the email on repeat sign-ins, which is fine here since
+            # the Apple identifier is what anchors the account.
+            user = guest
+            if email:
+                user.email = email
+            user.is_guest = False
+        elif not email:
             return Response(
                 {
                     'detail': (
@@ -166,7 +228,8 @@ def apple_auth(request):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        user = User.objects.create_user(email=email, password=None)
+        else:
+            user = User.objects.create_user(email=email, password=None)
 
     user.apple_id = apple_sub
     if name and not user.name:

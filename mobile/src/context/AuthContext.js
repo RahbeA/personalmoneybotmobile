@@ -89,20 +89,30 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  async function guestSignIn() {
+    const data = await authApi.guest();
+    await persistSession(data);
+    return data;
+  }
+
+  // When the current session is an anonymous guest, pass its token so the
+  // backend upgrades that same account in place (keeping the guest's progress).
+  const upgradeToken = () => (user?.is_guest ? token : undefined);
+
   async function register(email, password, name) {
-    const data = await authApi.register(email, password, name);
+    const data = await authApi.register(email, password, name, upgradeToken());
     await persistSession(data);
     return data;
   }
 
   async function googleSignIn(idToken) {
-    const data = await authApi.google(idToken);
+    const data = await authApi.google(idToken, upgradeToken());
     await persistSession(data);
     return data;
   }
 
   async function appleSignIn({ identityToken, email, fullName }) {
-    const data = await authApi.apple({ identityToken, email, fullName });
+    const data = await authApi.apple({ identityToken, email, fullName }, upgradeToken());
     await persistSession(data);
     return data;
   }
@@ -137,7 +147,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, login, register, googleSignIn, appleSignIn, updateProfile, logout, deleteAccount }}
+      value={{ user, token, loading, isGuest: !!user?.is_guest, login, register, guestSignIn, googleSignIn, appleSignIn, updateProfile, logout, deleteAccount }}
     >
       {children}
     </AuthContext.Provider>

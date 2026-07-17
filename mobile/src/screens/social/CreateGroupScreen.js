@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { socialApi } from '../../api/social';
 import { BrandAvatar, BrandLoader } from '../../components/brand';
+import { requireAccount } from '../../utils/requireAccount';
 import { GROUP_ICON_OPTIONS, GroupIcon } from './groupIcons';
 
 function formatName(name) {
@@ -19,7 +20,7 @@ function formatName(name) {
 }
 
 export default function CreateGroupScreen({ navigation }) {
-  const { token } = useAuth();
+  const { token, isGuest } = useAuth();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -31,12 +32,18 @@ export default function CreateGroupScreen({ navigation }) {
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(useCallback(() => {
+    if (isGuest) {
+      setLoading(false);
+      requireAccount({ isGuest: true, navigation, feature: 'create a group' });
+      navigation.goBack();
+      return;
+    }
     if (!token) return;
     socialApi.getFriends(token)
       .then((res) => setFriends(res.friends || []))
       .catch(() => setFriends([]))
       .finally(() => setLoading(false));
-  }, [token]));
+  }, [token, isGuest, navigation]));
 
   const toggleFriend = (userId) => {
     setSelected((prev) => {
@@ -48,6 +55,7 @@ export default function CreateGroupScreen({ navigation }) {
   };
 
   const handleCreate = async () => {
+    if (!requireAccount({ isGuest, navigation, feature: 'create a group' })) return;
     if (!name.trim()) {
       Alert.alert('Name required', 'Give your group a name.');
       return;

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 
@@ -6,6 +7,12 @@ User = get_user_model()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    # Email is nullable on the model (for guest accounts) but always required
+    # and unique when creating/upgrading a real account.
+    email = serializers.EmailField(
+        required=True,
+        validators=[UniqueValidator(queryset=User.objects.all())],
+    )
     password = serializers.CharField(write_only=True, validators=[validate_password])
     name = serializers.CharField(max_length=255, allow_blank=True, required=False)
 
@@ -28,5 +35,5 @@ class LoginSerializer(serializers.Serializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'email', 'name', 'avatar_url', 'date_joined')
-        read_only_fields = ('id', 'date_joined')
+        fields = ('id', 'email', 'name', 'avatar_url', 'date_joined', 'is_guest')
+        read_only_fields = ('id', 'date_joined', 'is_guest')

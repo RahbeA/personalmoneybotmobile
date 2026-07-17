@@ -264,8 +264,23 @@ function getNextLesson(modules) {
   return null;
 }
 
+function HeaderStats({ styles, colors, streakDays, botBucks }) {
+  return (
+    <View style={styles.statsRow}>
+      <View style={styles.statPill}>
+        <Ionicons name="flame" size={15} color={colors.streak} />
+        <Text style={styles.statPillVal}>{streakDays}</Text>
+      </View>
+      <View style={styles.statPill}>
+        <Ionicons name="logo-bitcoin" size={15} color={colors.botBucks} />
+        <Text style={styles.statPillVal}>{botBucks}</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function CoursesScreen({ navigation }) {
-  const { modules, loading, loadError, refresh, pendingFirstLesson, clearPendingFirstLesson } = useUserProgress();
+  const { modules, loading, loadError, refresh, pendingFirstLesson, clearPendingFirstLesson, streakDays, botBucks } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(24);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
@@ -344,7 +359,11 @@ export default function CoursesScreen({ navigation }) {
           <BrandLoader message={LOADER_MESSAGES.roadmap} />
         ) : (
           <>
-            <BrandHeader title="Courses" subtitle="Your learning roadmap" />
+            <BrandHeader
+              title="Lessons"
+              subtitle="Your learning roadmap"
+              right={<HeaderStats styles={styles} colors={colors} streakDays={streakDays} botBucks={botBucks} />}
+            />
 
             {loadError ? (
               <BrandEmptyState
@@ -454,6 +473,18 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   safe: { flex: 1 },
   loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: tabBarInset },
+
+  // Header currency/streak pills
+  statsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  statPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 999, paddingHorizontal: 11, paddingVertical: 6,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  statPillVal: { fontSize: 14, fontWeight: '800', color: colors.white },
 
   // MoneyBot Daily
   dailyCard: { borderRadius: 20, overflow: 'hidden', marginBottom: 16 },

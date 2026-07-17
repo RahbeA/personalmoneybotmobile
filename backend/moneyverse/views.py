@@ -13,6 +13,20 @@ from moneybot.cache_utils import (
 from .models import Character, UserCharacter
 from .serializers import CharacterSerializer
 
+GUEST_ACCOUNT_REQUIRED = (
+    'Create a free account to buy and equip characters. '
+    'Learning content is available without signing up.'
+)
+
+
+def _reject_guest(request):
+    if getattr(request.user, 'is_guest', False):
+        return Response(
+            {'detail': GUEST_ACCOUNT_REQUIRED, 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
 
 def get_or_create_stats(user):
     stats, created = UserStats.objects.get_or_create(user=user)
@@ -53,6 +67,10 @@ def character_list(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def purchase_character(request, character_id):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     try:
         character = Character.objects.get(id=character_id, is_active=True)
     except Character.DoesNotExist:
@@ -87,6 +105,10 @@ def purchase_character(request, character_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def equip_character(request):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
     character_id = request.data.get('character_id')
     stats = get_or_create_stats(request.user)
 

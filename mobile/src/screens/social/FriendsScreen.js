@@ -13,6 +13,7 @@ import { useNotifications } from '../../context/NotificationsContext';
 import { socialApi } from '../../api/social';
 import { BrandAvatar, BrandLoader } from '../../components/brand';
 import { useTabBarInset } from '../../navigation/tabBarLayout';
+import { requireAccount } from '../../utils/requireAccount';
 import { GroupIcon } from './groupIcons';
 
 const CARD_SHADOW = {
@@ -85,7 +86,7 @@ function FriendsEmptyHero({ styles, colors }) {
 }
 
 export default function FriendsScreen({ navigation }) {
-  const { token } = useAuth();
+  const { token, isGuest } = useAuth();
   const { colors, isDark } = useTheme();
   const { unreadCount } = useNotifications();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
@@ -102,8 +103,15 @@ export default function FriendsScreen({ navigation }) {
   const [searching, setSearching] = useState(false);
   const [actionId, setActionId] = useState(null);
 
+  const goCreateAccount = useCallback(() => {
+    requireAccount({ isGuest: true, navigation, feature: 'add friends and join groups' });
+  }, [navigation]);
+
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!token || isGuest) {
+      setLoading(false);
+      return;
+    }
     try {
       const [friendsRes, requestsRes, groupsRes, invitesRes] = await Promise.all([
         socialApi.getFriends(token),
@@ -120,7 +128,7 @@ export default function FriendsScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, isGuest]);
 
   useFocusEffect(useCallback(() => {
     setLoading(true);
@@ -128,6 +136,10 @@ export default function FriendsScreen({ navigation }) {
   }, [load]));
 
   const runSearch = useCallback(async (q) => {
+    if (isGuest) {
+      setSearchResults([]);
+      return;
+    }
     if (!token || q.trim().length < 2) {
       setSearchResults([]);
       return;
@@ -141,9 +153,10 @@ export default function FriendsScreen({ navigation }) {
     } finally {
       setSearching(false);
     }
-  }, [token]);
+  }, [token, isGuest]);
 
   const handleSendRequest = async (userId) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'send friend requests' })) return;
     setActionId(userId);
     try {
       await socialApi.sendRequest(token, userId);
@@ -159,6 +172,7 @@ export default function FriendsScreen({ navigation }) {
   };
 
   const handleAcceptInvite = async (inviteId) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'join groups' })) return;
     setActionId(inviteId);
     try {
       await socialApi.acceptGroupInvite(token, inviteId);
@@ -171,6 +185,7 @@ export default function FriendsScreen({ navigation }) {
   };
 
   const handleDeclineInvite = async (inviteId) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'manage group invites' })) return;
     setActionId(inviteId);
     try {
       await socialApi.declineGroupInvite(token, inviteId);
@@ -183,6 +198,7 @@ export default function FriendsScreen({ navigation }) {
   };
 
   const handleRemoveFriend = (userId, name) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'manage friends' })) return;
     Alert.alert('Remove friend', `Remove ${formatName(name)} from your friends?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -205,6 +221,54 @@ export default function FriendsScreen({ navigation }) {
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <BrandLoader message="Loading friends…" />
+      </LinearGradient>
+    );
+  }
+
+  // Guests can browse the Community tab, but social actions need a real account
+  // (Apple 5.1.1(v) allows gating account-based features).
+  if (isGuest) {
+    return (
+      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ScrollView
+            contentContainerStyle={[styles.guestScroll, { paddingBottom: tabInset }]}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.heroHeader}>
+              <View style={styles.heroHeaderLeft}>
+                <Text style={styles.heroEyebrow}>COMMUNITY</Text>
+                <Text style={styles.title}>Friends</Text>
+                <Text style={styles.heroSub}>Learn, compete, and grow together</Text>
+              </View>
+            </View>
+
+            <View style={styles.guestLockCard}>
+              <LinearGradient
+                colors={['rgba(61,220,95,0.16)', 'rgba(61,220,95,0.02)', 'transparent']}
+                style={styles.emptyHeroGlow}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              />
+              <View style={styles.emptyHeroIcon}>
+                <Ionicons name="lock-closed" size={28} color={colors.primary} />
+              </View>
+              <Text style={styles.emptyHeroTitle}>Create an account to connect</Text>
+              <Text style={styles.emptyHeroBody}>
+                Friends, groups, and challenges need a free account so your connections stay with you.
+                Lessons and learning stay available without signing up.
+              </Text>
+              <TouchableOpacity
+                style={styles.guestCtaBtn}
+                activeOpacity={0.9}
+                onPress={goCreateAccount}
+              >
+                <Text style={styles.guestCtaBtnText}>Create free account</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </LinearGradient>
     );
   }
@@ -350,7 +414,10 @@ export default function FriendsScreen({ navigation }) {
         <TouchableOpacity
           style={styles.createGroupHero}
           activeOpacity={0.9}
-          onPress={() => navigation.navigate('CreateGroup')}
+          onPress={() => {
+            if (!requireAccount({ isGuest, navigation, feature: 'create a group' })) return;
+            navigation.navigate('CreateGroup');
+          }}
         >
           <LinearGradient
             colors={['rgba(61,220,95,0.2)', 'rgba(61,220,95,0.04)', 'transparent']}
@@ -559,7 +626,7 @@ const makeStyles = (colors, isDark) => {
       alignItems: 'flex-start',
       justifyContent: 'space-between',
       paddingTop: 8,
-      marginBottom: 18,
+      marginBottom: 28,
     },
     heroHeaderLeft: { flex: 1, marginRight: 12 },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -901,5 +968,24 @@ const makeStyles = (colors, isDark) => {
     groupsEmpty: { alignItems: 'center', paddingVertical: 40, gap: 8 },
     groupsEmptyTitle: { fontSize: 17, fontWeight: '800', color: colors.white },
     groupsEmptyBody: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+
+    guestScroll: { paddingHorizontal: 20, paddingTop: 8 },
+    guestLockCard: {
+      ...cardBase,
+      alignItems: 'center',
+      padding: 32,
+      marginTop: 8,
+      position: 'relative',
+      borderColor: isDark ? 'rgba(61,220,95,0.15)' : 'rgba(22,163,74,0.15)',
+    },
+    guestCtaBtn: {
+      marginTop: 8,
+      backgroundColor: colors.primary,
+      paddingHorizontal: 22,
+      paddingVertical: 14,
+      borderRadius: 14,
+      ...CARD_SHADOW,
+    },
+    guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: colors.background },
   });
 };

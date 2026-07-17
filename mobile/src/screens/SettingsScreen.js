@@ -34,7 +34,7 @@ function LinkTile({ icon, label, onPress, colors, styles }) {
 }
 
 export default function SettingsScreen({ navigation }) {
-  const { user, updateProfile, logout, deleteAccount } = useAuth();
+  const { user, isGuest, updateProfile, logout, deleteAccount } = useAuth();
   const {
     xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
     onboardingGoals, updateGoals,
@@ -63,7 +63,12 @@ export default function SettingsScreen({ navigation }) {
   const notifSupported = areNotificationsSupported();
 
   const displayName = getFirstName(user);
-  const emailDisplay = user?.email || '';
+  const emailDisplay = isGuest ? 'Guest — progress saved on this device' : (user?.email || '');
+
+  function goToCreateAccount() {
+    const rootNav = navigation.getParent?.() ?? navigation;
+    rootNav.navigate('AuthUpgrade', { mode: 'register' });
+  }
 
   function openProfileEditor() {
     const parts = (user?.name || '').trim().split(/\s+/);
@@ -155,6 +160,18 @@ export default function SettingsScreen({ navigation }) {
   }, [notifPrefs, notifSupported, user, streakDays, lastActive]);
 
   function confirmLogout() {
+    if (isGuest) {
+      Alert.alert(
+        'Leave Guest Session?',
+        'You\u2019re using a guest account. Signing out will permanently erase your progress on this device. Create a free account to save it first.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Create Account', onPress: goToCreateAccount },
+          { text: 'Sign Out Anyway', style: 'destructive', onPress: logout },
+        ],
+      );
+      return;
+    }
     Alert.alert('Sign Out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: logout },
@@ -243,6 +260,26 @@ export default function SettingsScreen({ navigation }) {
               </View>
             </View>
           </LinearGradient>
+
+          {/* Guest upgrade CTA */}
+          {isGuest && (
+            <TouchableOpacity
+              style={styles.guestCta}
+              activeOpacity={0.9}
+              onPress={goToCreateAccount}
+            >
+              <View style={styles.guestCtaIcon}>
+                <Ionicons name="shield-checkmark" size={22} color={colors.primary} />
+              </View>
+              <View style={styles.guestCtaText}>
+                <Text style={styles.guestCtaTitle}>Save your progress</Text>
+                <Text style={styles.guestCtaBody}>
+                  Create a free account to keep your XP, streak and Bot Bucks across devices.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          )}
 
           {/* Notifications */}
           <Text style={styles.sectionTitle}>Notifications</Text>
@@ -346,24 +383,26 @@ export default function SettingsScreen({ navigation }) {
             <LinkTile icon="mail-outline" label="Contact" onPress={() => Linking.openURL(`mailto:${LEGAL.contactEmail}`)} colors={colors} styles={styles} />
             <LinkTile icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://getmoneybot.com')} colors={colors} styles={styles} />
           </View>
-          <Text style={styles.version}>MoneyBot v1.1.0</Text>
+          <Text style={styles.version}>MoneyBot v1.0.2</Text>
 
           {/* Account */}
           <View style={styles.accountSection}>
             <TouchableOpacity style={styles.signOutBtn} activeOpacity={0.85} onPress={confirmLogout}>
               <Ionicons name="log-out-outline" size={18} color={colors.error} />
-              <Text style={styles.signOutText}>Sign Out</Text>
+              <Text style={styles.signOutText}>{isGuest ? 'Exit Guest Session' : 'Sign Out'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.deleteBtn}
-              activeOpacity={0.7}
-              onPress={deletingAccount ? undefined : confirmDeleteAccount}
-              disabled={deletingAccount}
-            >
-              <Text style={styles.deleteText}>
-                {deletingAccount ? 'Deleting…' : 'Delete Account'}
-              </Text>
-            </TouchableOpacity>
+            {!isGuest && (
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                activeOpacity={0.7}
+                onPress={deletingAccount ? undefined : confirmDeleteAccount}
+                disabled={deletingAccount}
+              >
+                <Text style={styles.deleteText}>
+                  {deletingAccount ? 'Deleting…' : 'Delete Account'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
         </ScrollView>
@@ -507,6 +546,29 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     marginBottom: 12,
     letterSpacing: -0.2,
   },
+
+  guestCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(61,220,95,0.1)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(61,220,95,0.3)',
+    padding: 16,
+    marginBottom: 24,
+  },
+  guestCtaIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(61,220,95,0.14)',
+  },
+  guestCtaText: { flex: 1 },
+  guestCtaTitle: { fontSize: 15, fontWeight: '800', color: colors.white, marginBottom: 2 },
+  guestCtaBody: { fontSize: 12, lineHeight: 17, color: colors.textSecondary },
 
   notifGridDisabled: { opacity: 0.55 },
   notifBanner: {
