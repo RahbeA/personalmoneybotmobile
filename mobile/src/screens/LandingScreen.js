@@ -7,6 +7,8 @@ import {
   Animated,
   ActivityIndicator,
   Alert,
+  ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -17,9 +19,14 @@ import { BrandLogo } from '../components/brand';
 import LegalFooter from '../components/LegalFooter';
 import { BRAND_URL, LANDING } from '../constants/brandCopy';
 
+// Keep the hero column readable on iPad / large screens instead of stretching
+// edge-to-edge (which also made the absolute footer collide with Sign In).
+const CONTENT_MAX_WIDTH = 420;
+
 export default function LandingScreen({ navigation }) {
   const { colors, isDark } = useTheme();
   const { guestSignIn } = useAuth();
+  const { height: windowHeight } = useWindowDimensions();
   const [guestLoading, setGuestLoading] = useState(false);
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -78,87 +85,104 @@ export default function LandingScreen({ navigation }) {
       style={styles.gradient}
     >
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <SafeAreaView style={styles.container}>
-        {/* Logo */}
-        <Animated.View
-          style={[
-            styles.logoContainer,
-            { opacity: fadeAnim, transform: [{ scale: logoScale }] },
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+        {/*
+          Do NOT use position:absolute for the legal footer. On iPad (and tall
+          phones) a centered CTA stack collides with an absolute bottom footer,
+          which is exactly what App Review flagged: Sign In under Privacy Policy.
+          Footer lives in normal layout flow under the hero column instead.
+        */}
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { minHeight: Math.max(windowHeight - 80, 560) },
           ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
         >
-          <BrandLogo size="hero" />
-        </Animated.View>
+          <View style={styles.hero}>
+            <View style={styles.contentColumn}>
+              <Animated.View
+                style={[
+                  styles.logoContainer,
+                  { opacity: fadeAnim, transform: [{ scale: logoScale }] },
+                ]}
+              >
+                <BrandLogo size="hero" />
+              </Animated.View>
 
-        {/* Tagline */}
-        <Animated.View
-          style={[
-            styles.taglineContainer,
-            {
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }],
-            },
-          ]}
-        >
-          <Text style={styles.tagline}>{LANDING.tagline}</Text>
-          <Text style={styles.subTagline}>
-            {LANDING.subTagline}
-          </Text>
-        </Animated.View>
+              <Animated.View
+                style={[
+                  styles.taglineContainer,
+                  {
+                    opacity: fadeAnim,
+                    transform: [{ translateY: slideAnim }],
+                  },
+                ]}
+              >
+                <Text style={styles.tagline}>{LANDING.tagline}</Text>
+                <Text style={styles.subTagline}>
+                  {LANDING.subTagline}
+                </Text>
+              </Animated.View>
 
-        {/* Decorative green line */}
-        <Animated.View style={[styles.divider, { opacity: fadeAnim }]}>
-          <View style={styles.dividerLine} />
-          <View style={styles.dividerDot} />
-          <View style={styles.dividerLine} />
-        </Animated.View>
+              <Animated.View style={[styles.divider, { opacity: fadeAnim }]}>
+                <View style={styles.dividerLine} />
+                <View style={styles.dividerDot} />
+                <View style={styles.dividerLine} />
+              </Animated.View>
 
-        {/* CTA Buttons */}
-        <Animated.View style={[styles.buttonContainer, { opacity: buttonOpacity }]}>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => navigation.navigate('Auth', { mode: 'register' })}
-            activeOpacity={0.85}
-          >
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.buttonGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.primaryButtonText}>Get Started</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+              <Animated.View style={[styles.buttonContainer, { opacity: buttonOpacity }]}>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => navigation.navigate('Auth', { mode: 'register' })}
+                  activeOpacity={0.85}
+                >
+                  <LinearGradient
+                    colors={[colors.primary, colors.primaryDark]}
+                    style={styles.buttonGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
+                    <Text style={styles.primaryButtonText}>Get Started</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.guestButton}
-            onPress={handleGuest}
-            activeOpacity={0.85}
-            disabled={guestLoading}
-          >
-            {guestLoading ? (
-              <ActivityIndicator color={colors.white} />
-            ) : (
-              <Text style={styles.guestButtonText}>Explore first — no account needed</Text>
-            )}
-          </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.guestButton}
+                  onPress={handleGuest}
+                  activeOpacity={0.85}
+                  disabled={guestLoading}
+                >
+                  {guestLoading ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <Text style={styles.guestButtonText}>Explore first — no account needed</Text>
+                  )}
+                </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => navigation.navigate('Auth', { mode: 'login' })}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.secondaryButtonText}>
-              Already have an account?{' '}
-              <Text style={styles.secondaryButtonAccent}>Sign In</Text>
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => navigation.navigate('Auth', { mode: 'login' })}
+                  activeOpacity={0.8}
+                  hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    Already have an account?{' '}
+                    <Text style={styles.secondaryButtonAccent}>Sign In</Text>
+                  </Text>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          </View>
 
-        {/* Footer */}
-        <Animated.View style={[styles.footer, { opacity: buttonOpacity }]}>
-          <Text style={styles.footerText}>{BRAND_URL}</Text>
-          <LegalFooter style={styles.legalFooter} />
-        </Animated.View>
+          <Animated.View style={[styles.footer, { opacity: buttonOpacity }]}>
+            <Text style={styles.footerText}>{BRAND_URL}</Text>
+            <LegalFooter style={styles.legalFooter} />
+          </Animated.View>
+        </ScrollView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -168,19 +192,39 @@ const makeStyles = (colors) => StyleSheet.create({
   gradient: {
     flex: 1,
   },
-  container: {
+  safe: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 32,
+    paddingTop: 12,
+    paddingBottom: 20,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  hero: {
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  contentColumn: {
+    width: '100%',
+    alignItems: 'center',
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 28,
   },
   taglineContainer: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
   tagline: {
     fontSize: 26,
@@ -199,7 +243,7 @@ const makeStyles = (colors) => StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 36,
+    marginBottom: 28,
     width: '80%',
   },
   dividerLine: {
@@ -217,7 +261,7 @@ const makeStyles = (colors) => StyleSheet.create({
   buttonContainer: {
     width: '100%',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
   },
   primaryButton: {
     width: '100%',
@@ -257,28 +301,32 @@ const makeStyles = (colors) => StyleSheet.create({
     letterSpacing: 0.2,
   },
   secondaryButton: {
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   secondaryButtonText: {
     color: colors.textSecondary,
     fontSize: 15,
+    textAlign: 'center',
   },
   secondaryButtonAccent: {
     color: colors.primary,
     fontWeight: '600',
   },
   footer: {
-    position: 'absolute',
-    bottom: 24,
-    alignItems: 'center',
     width: '100%',
-    paddingHorizontal: 32,
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignItems: 'center',
+    paddingTop: 28,
+    gap: 4,
   },
   footerText: {
     color: colors.textMuted,
     fontSize: 12,
     letterSpacing: 0.5,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   legalFooter: {
     marginTop: 4,

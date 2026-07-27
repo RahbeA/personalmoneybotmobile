@@ -1128,7 +1128,12 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
   const bellRotate = bell.interpolate({ inputRange: [-1, 1], outputRange: ['-16deg', '16deg'] });
 
   return (
-    <View style={styles.notifWrap}>
+    <ScrollView
+      style={styles.notifWrap}
+      contentContainerStyle={styles.notifScroll}
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
       <Animated.View
         style={{
           alignItems: 'center',
@@ -1196,7 +1201,7 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
           <Text style={styles.notifSkipText}>Maybe later</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -1423,7 +1428,13 @@ const makeStyles = (colors) => StyleSheet.create({
   streakClaimedText: { fontSize: 17, fontWeight: '800', color: colors.white },
 
   // Notifications opt-in
-  notifWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center' },
+  notifWrap: { flex: 1 },
+  notifScroll: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingBottom: 16,
+    justifyContent: 'center',
+  },
   notifBadge: {
     width: 104, height: 104, borderRadius: 52, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 20,
@@ -1446,7 +1457,14 @@ const makeStyles = (colors) => StyleSheet.create({
   notifReassure: {
     fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: 14, lineHeight: 18,
   },
-  notifSkip: { alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 20, marginTop: 4 },
+  notifSkip: {
+    alignSelf: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginTop: 4,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
   notifSkipText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
 
   // Shared

@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,7 @@ export default function InviteFriendsScreen({ navigation, route }) {
   const { groupId, groupName, excludeIds = [] } = route.params;
   const { token, isGuest } = useAuth();
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [friends, setFriends] = useState([]);
@@ -99,7 +100,7 @@ export default function InviteFriendsScreen({ navigation, route }) {
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.85}>
             <Ionicons name="arrow-back" size={22} color={colors.white} />
@@ -162,7 +163,7 @@ export default function InviteFriendsScreen({ navigation, route }) {
         />
 
         {selected.size > 0 && (
-          <View style={styles.footer}>
+          <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <TouchableOpacity
               style={[styles.sendBtn, submitting && styles.sendBtnDisabled]}
               onPress={handleSend}
@@ -195,7 +196,7 @@ const makeStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 4, paddingBottom: 12,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surfaceElevated,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceElevated,
     alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border,
   },
   headerBody: { flex: 1 },
@@ -218,11 +219,11 @@ const makeStyles = (colors) => StyleSheet.create({
   rowSelected: { borderColor: colors.primary + '88', backgroundColor: colors.primaryTint },
   name: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.white },
   footer: {
-    paddingHorizontal: 20, paddingTop: 8, paddingBottom: 24,
+    paddingHorizontal: 20, paddingTop: 8,
     borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface,
   },
   sendBtn: { borderRadius: 14, overflow: 'hidden' },
   sendBtnDisabled: { opacity: 0.6 },
-  sendBtnInner: { paddingVertical: 16, alignItems: 'center' },
+  sendBtnInner: { paddingVertical: 16, alignItems: 'center', minHeight: 52, justifyContent: 'center' },
   sendBtnText: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
 });

@@ -779,6 +779,9 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
     marginTop: 4,
+    // ≥44pt tall so the terms checkbox is easy to tap on iPad (Guideline 4).
+    minHeight: 44,
+    paddingVertical: 4,
   },
   checkbox: {
     width: 22,
@@ -789,7 +792,8 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.inputBg,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
+    // Keep the visual box small but expand the row's hit area via termsRow padding.
+    marginTop: 11,
   },
   checkboxChecked: {
     backgroundColor: colors.primary,

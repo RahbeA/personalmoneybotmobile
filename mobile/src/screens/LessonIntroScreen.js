@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Alert, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Alert, BackHandler, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -83,66 +83,73 @@ export default function LessonIntroScreen({ navigation, route }) {
           <Text style={styles.backLabel}>Back</Text>
         </TouchableOpacity>
 
-        <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-          <View style={styles.mascotWrap}>
-            <BrandAvatar character={equippedCharacter} size={80} />
-            <Text style={styles.cheerText}>{CELEBRATIONS.lessonIntro}</Text>
-          </View>
-
-          <View style={styles.iconWrap}>
-            <LinearGradient colors={[colors.primary, colors.primaryDark]} style={styles.iconGrad}>
-              <Ionicons name={getModuleIonIcon(module)} size={48} color={colors.background} />
-            </LinearGradient>
-          </View>
-
-          <Text style={styles.moduleLabel}>{module.title}</Text>
-          <Text style={styles.lessonTitle}>{lesson.title}</Text>
-
-          <View style={styles.metaRow}>
-            <View style={styles.metaChip}>
-              <Ionicons name="help-circle-outline" size={16} color={colors.primary} />
-              <Text style={styles.metaText}>{lesson.question_count || 5} questions</Text>
-            </View>
-            <View style={styles.metaChip}>
-              <Ionicons name="time-outline" size={16} color={colors.primary} />
-              <Text style={styles.metaText}>~{estimatedMinutes} min</Text>
-            </View>
-            <View style={styles.metaChip}>
-              <Ionicons name="flash-outline" size={16} color={colors.primary} />
-              <Text style={styles.metaText}>+50 XP</Text>
-            </View>
-          </View>
-
-          <View style={styles.typesList}>
-            <Text style={styles.typesTitle}>What to expect</Text>
-            {[
-              { icon: 'checkmark-circle-outline', text: 'True / False questions' },
-              { icon: 'radio-button-on-outline', text: 'Multiple choice questions' },
-              { icon: 'list-outline', text: 'Select all that apply' },
-            ].map((item) => (
-              <View key={item.text} style={styles.typeRow}>
-                <Ionicons name={item.icon} size={18} color={colors.primary} />
-                <Text style={styles.typeText}>{item.text}</Text>
-              </View>
-            ))}
-          </View>
-        </Animated.View>
-
-        <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <TouchableOpacity
-            style={styles.startBtn}
-            activeOpacity={0.85}
-            onPress={startLesson}
+        <Animated.View style={[styles.body, { opacity: fadeAnim }]}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
           >
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.startGrad}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            <View style={styles.mascotWrap}>
+              <BrandAvatar character={equippedCharacter} size={80} />
+              <Text style={styles.cheerText}>{CELEBRATIONS.lessonIntro}</Text>
+            </View>
+
+            <View style={styles.iconWrap}>
+              <LinearGradient colors={[colors.primary, colors.primaryDark]} style={styles.iconGrad}>
+                <Ionicons name={getModuleIonIcon(module)} size={48} color={colors.background} />
+              </LinearGradient>
+            </View>
+
+            <Text style={styles.moduleLabel}>{module.title}</Text>
+            <Text style={styles.lessonTitle}>{lesson.title}</Text>
+
+            <View style={styles.metaRow}>
+              <View style={styles.metaChip}>
+                <Ionicons name="help-circle-outline" size={16} color={colors.primary} />
+                <Text style={styles.metaText}>{lesson.question_count || 5} questions</Text>
+              </View>
+              <View style={styles.metaChip}>
+                <Ionicons name="time-outline" size={16} color={colors.primary} />
+                <Text style={styles.metaText}>~{estimatedMinutes} min</Text>
+              </View>
+              <View style={styles.metaChip}>
+                <Ionicons name="flash-outline" size={16} color={colors.primary} />
+                <Text style={styles.metaText}>+50 XP</Text>
+              </View>
+            </View>
+
+            <View style={styles.typesList}>
+              <Text style={styles.typesTitle}>What to expect</Text>
+              {[
+                { icon: 'checkmark-circle-outline', text: 'True / False questions' },
+                { icon: 'radio-button-on-outline', text: 'Multiple choice questions' },
+                { icon: 'list-outline', text: 'Select all that apply' },
+              ].map((item) => (
+                <View key={item.text} style={styles.typeRow}>
+                  <Ionicons name={item.icon} size={18} color={colors.primary} />
+                  <Text style={styles.typeText}>{item.text}</Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={styles.startBtn}
+              activeOpacity={0.85}
+              onPress={startLesson}
             >
-              <Text style={styles.startText}>Start Lesson</Text>
-              <Ionicons name="arrow-forward" size={20} color={colors.background} />
-            </LinearGradient>
-          </TouchableOpacity>
+              <LinearGradient
+                colors={[colors.primary, colors.primaryDark]}
+                style={styles.startGrad}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+              >
+                <Text style={styles.startText}>Start Lesson</Text>
+                <Ionicons name="arrow-forward" size={20} color={colors.background} />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
       </SafeAreaView>
     </LinearGradient>
@@ -152,9 +159,24 @@ export default function LessonIntroScreen({ navigation, route }) {
 const makeStyles = (colors) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1, paddingHorizontal: 24 },
-  backBtn: { flexDirection: 'row', alignItems: 'center', paddingTop: 8, marginBottom: 8, gap: 4, alignSelf: 'flex-start' },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 8,
+    marginBottom: 8,
+    gap: 4,
+    alignSelf: 'flex-start',
+    minHeight: 44,
+  },
   backLabel: { fontSize: 16, color: colors.textSecondary },
-  content: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 0 },
+  body: { flex: 1 },
+  scroll: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 16,
+  },
   mascotWrap: { alignItems: 'center', marginBottom: 16 },
   cheerText: {
     marginTop: 10,
@@ -167,7 +189,7 @@ const makeStyles = (colors) => StyleSheet.create({
   icon: { fontSize: 48 },
   moduleLabel: { fontSize: 14, fontWeight: '600', color: colors.primary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
   lessonTitle: { fontSize: 28, fontWeight: '800', color: colors.white, textAlign: 'center', letterSpacing: -0.5, marginBottom: 24 },
-  metaRow: { flexDirection: 'row', gap: 10, marginBottom: 36 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginBottom: 36 },
   metaChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: 'rgba(61,220,95,0.1)', borderRadius: 20,
@@ -181,8 +203,8 @@ const makeStyles = (colors) => StyleSheet.create({
   typesTitle: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
   typeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
   typeText: { fontSize: 15, color: colors.white },
-  footer: { paddingBottom: 16 },
-  startBtn: { borderRadius: 18, overflow: 'hidden' },
+  footer: { paddingBottom: 16, paddingTop: 8 },
+  startBtn: { borderRadius: 18, overflow: 'hidden', minHeight: 52 },
   startGrad: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 10, paddingVertical: 18, paddingHorizontal: 32, borderRadius: 18,

@@ -10,7 +10,8 @@ const SIZES = {
   md: 40,
   lg: 64,
   xl: 96,
-  hero: SCREEN_WIDTH * 0.62,
+  // Cap so the logo stays inside Landing's content column on iPad.
+  hero: Math.min(SCREEN_WIDTH * 0.62, 260),
 };
 
 export default function BrandLogo({ size = 'md', style }) {

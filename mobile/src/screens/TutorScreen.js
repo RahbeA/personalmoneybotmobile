@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, ScrollView, Image,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -83,6 +83,7 @@ export default function TutorScreen({ navigation }) {
   const { equippedCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
 
   const [messages, setMessages] = useState([]);
@@ -271,7 +272,10 @@ export default function TutorScreen({ navigation }) {
 
       <Modal visible={historyOpen} animationType="slide" transparent onRequestClose={() => setHistoryOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setHistoryOpen(false)}>
-          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) + 12 }]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.modalHandle} />
             <Text style={styles.modalEyebrow}>HISTORY</Text>
             <Text style={styles.modalTitle}>Your chats</Text>
