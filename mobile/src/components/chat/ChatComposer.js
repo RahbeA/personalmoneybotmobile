@@ -8,6 +8,7 @@ export default function ChatComposer({
   disabled,
   placeholder = 'Message...',
   embedded = false,
+  leadingAccessory = null,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors, embedded), [colors, embedded]);
@@ -24,6 +25,7 @@ export default function ChatComposer({
 
   return (
     <View style={styles.container}>
+      {leadingAccessory}
       <TextInput
         style={styles.input}
         value={text}

@@ -137,9 +137,16 @@ export default function NotificationsPage() {
 
     // Preview the audience so the admin confirms the real reach before delivery.
     let previewText = '';
+    let previewStats = null;
     try {
-      const preview = await api.get(`/notifications/${campaign.id}/preview/`);
-      previewText = `This will notify ${preview.count.toLocaleString()} user${preview.count === 1 ? '' : 's'}.`;
+      previewStats = await api.get(`/notifications/${campaign.id}/preview/`);
+      const pushBit = campaign.send_push
+        ? ` ${previewStats.users_with_push.toLocaleString()} of them have a registered push device (${previewStats.device_tokens} token${previewStats.device_tokens === 1 ? '' : 's'}).`
+        : ' OS push is disabled for this campaign (in-app only).';
+      previewText = `This will create in-app notifications for ${previewStats.count.toLocaleString()} user${previewStats.count === 1 ? '' : 's'}.${pushBit}`;
+      if (campaign.send_push && previewStats.users_with_push === 0) {
+        previewText += ' Warning: nobody in this audience has a push token — the send will fail until devices register.';
+      }
     } catch {
       previewText = 'Audience preview unavailable — the campaign will still send to the selected audience.';
     }
@@ -149,13 +156,21 @@ export default function NotificationsPage() {
       title: `Send “${campaign.title}”?`,
       content: previewText,
       okText: 'Send now',
-      okButtonProps: { type: 'primary', icon: <SendOutlined /> },
+      okButtonProps: {
+        type: 'primary',
+        icon: <SendOutlined />,
+        danger: !!(campaign.send_push && previewStats && previewStats.users_with_push === 0),
+      },
       onOk: async () => {
         try {
           const sent = await api.post(`/notifications/${campaign.id}/send/`);
-          message.success(
-            `Sent to ${sent.target_count} users (${sent.push_count} push messages submitted).`,
-          );
+          if (sent.send_push) {
+            message.success(
+              `Delivered: ${sent.target_count} in-app · ${sent.push_count} Expo push accepted.`,
+            );
+          } else {
+            message.success(`Delivered ${sent.target_count} in-app notification(s) (push off).`);
+          }
           setComposerOpen(false);
           refresh();
         } catch (e) {
@@ -172,9 +187,16 @@ export default function NotificationsPage() {
 
   async function sendExisting(record) {
     let previewText = '';
+    let previewStats = null;
     try {
-      const preview = await api.get(`/notifications/${record.id}/preview/`);
-      previewText = `This will notify ${preview.count.toLocaleString()} user${preview.count === 1 ? '' : 's'}.`;
+      previewStats = await api.get(`/notifications/${record.id}/preview/`);
+      const pushBit = record.send_push
+        ? ` ${previewStats.users_with_push.toLocaleString()} have a registered push device.`
+        : ' OS push is off (in-app only).';
+      previewText = `This will notify ${previewStats.count.toLocaleString()} user${previewStats.count === 1 ? '' : 's'}.${pushBit}`;
+      if (record.send_push && previewStats.users_with_push === 0) {
+        previewText += ' Warning: no push tokens — send will fail.';
+      }
     } catch {
       previewText = 'Audience preview unavailable.';
     }
@@ -182,14 +204,22 @@ export default function NotificationsPage() {
       title: `Send “${record.title}”?`,
       content: previewText,
       okText: 'Send now',
-      okButtonProps: { type: 'primary', icon: <SendOutlined /> },
+      okButtonProps: {
+        type: 'primary',
+        icon: <SendOutlined />,
+        danger: !!(record.send_push && previewStats && previewStats.users_with_push === 0),
+      },
       onOk: async () => {
         setSendingId(record.id);
         try {
           const sent = await api.post(`/notifications/${record.id}/send/`);
-          message.success(
-            `Sent to ${sent.target_count} users (${sent.push_count} push messages submitted).`,
-          );
+          if (sent.send_push) {
+            message.success(
+              `Delivered: ${sent.target_count} in-app · ${sent.push_count} Expo push accepted.`,
+            );
+          } else {
+            message.success(`Delivered ${sent.target_count} in-app notification(s) (push off).`);
+          }
         } catch (e) {
           message.error(e.message);
         } finally {

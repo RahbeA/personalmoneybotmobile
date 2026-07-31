@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import CharacterViewer from '../components/CharacterViewer';
+import CharacterPoster from '../components/CharacterPoster';
 import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
@@ -85,6 +86,8 @@ export default function MoneyverseScreen({ navigation }) {
     characters,
     loading: progressLoading,
     refreshCharacterCache,
+    pendingMoneyverseIntro,
+    clearPendingMoneyverseIntro,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(24);
@@ -96,6 +99,11 @@ export default function MoneyverseScreen({ navigation }) {
   const loading = progressLoading && characters.length === 0;
   const equipped = equippedCharacter;
   const equippedRarityColor = RARITY_COLORS[equipped?.rarity] || colors.primary;
+
+  // Clear the post-onboarding landing flag once Moneyverse is visible.
+  useEffect(() => {
+    if (pendingMoneyverseIntro) clearPendingMoneyverseIntro();
+  }, [pendingMoneyverseIntro, clearPendingMoneyverseIntro]);
 
   // Gentle floating animation for the hero character.
   const floatAnim = useRef(new Animated.Value(0)).current;
@@ -301,10 +309,10 @@ export default function MoneyverseScreen({ navigation }) {
                         colors={[rgba(rarityColor, 0.18), 'rgba(127,127,127,0.04)']}
                         style={styles.cardViewer}
                       >
-                        <CharacterViewer
-                          modelUrl={c.model_url}
+                        {/* Cover PNG only — 3D loads on CharacterDetail after tap */}
+                        <CharacterPoster
                           previewUrl={c.preview_url}
-                          autoRotate
+                          style={styles.cardPoster}
                         />
                         {c.is_owned ? (
                           <View style={[styles.ownedTag, isEquipped && styles.equippedTag]}>
@@ -436,7 +444,16 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     width: CARD_W, borderRadius: 20, overflow: 'hidden',
     backgroundColor: colors.surfaceElevated, borderWidth: 1,
   },
-  cardViewer: { height: 152 },
+  cardViewer: {
+    height: 152,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  cardPoster: {
+    width: '100%',
+    height: '100%',
+  },
   ownedTag: {
     position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: 'rgba(96,96,96,0.9)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3,

@@ -383,7 +383,7 @@ export default function SettingsScreen({ navigation }) {
             <LinkTile icon="mail-outline" label="Contact" onPress={() => Linking.openURL(`mailto:${LEGAL.contactEmail}`)} colors={colors} styles={styles} />
             <LinkTile icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://getmoneybot.com')} colors={colors} styles={styles} />
           </View>
-          <Text style={styles.version}>MoneyBot v1.0.3</Text>
+          <Text style={styles.version}>MoneyBot v1.0.4</Text>
 
           {/* Account */}
           <View style={styles.accountSection}>

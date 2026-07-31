@@ -49,6 +49,6 @@ export const CELEBRATIONS = {
 };
 
 export const LANDING = {
-  tagline: 'Your money, automated.',
-  subTagline: 'Smart financial tracking powered by AI.',
+  tagline: 'Master your money.',
+  subTagline: 'Learn how money really works with quick, fun lessons.',
 };

@@ -4,6 +4,8 @@ from . import views
 
 urlpatterns = [
     path('users/search/', views.search_users, name='social-user-search'),
+    path('users/<int:user_id>/', views.user_profile, name='social-user-profile'),
+    path('users/<int:user_id>/nudge/', views.nudge_friend, name='social-friend-nudge'),
     path('friends/', views.list_friends, name='social-friends'),
     path('friends/requests/', views.friend_requests, name='social-friend-requests'),
     path('friends/requests/<int:request_id>/accept/', views.accept_friend_request, name='social-friend-accept'),

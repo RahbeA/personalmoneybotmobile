@@ -8,14 +8,23 @@ import {
   presentLocalNotification,
   registerForPushNotificationsAsync,
   addNotificationListeners,
+  getLastNotificationResponse,
 } from '../utils/notifications';
+import { handleNotificationNavigation } from '../navigation/rootNavigation';
 
 const NotificationsContext = createContext(null);
 
 const POLL_INTERVAL_MS = 30000;
 
+function extractNotificationData(responseOrNotification) {
+  const content = responseOrNotification?.notification?.request?.content
+    || responseOrNotification?.request?.content
+    || {};
+  return content.data || {};
+}
+
 export function NotificationsProvider({ children }) {
-  const { token, user } = useAuth();
+  const { token, user, isGuest } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -26,19 +35,35 @@ export function NotificationsProvider({ children }) {
   const seenMaxIdRef = useRef(null);
   const pollRef = useRef(null);
   const pushTokenRef = useRef(null);
+  const prevAuthTokenRef = useRef(token);
 
   const registerPush = useCallback(async () => {
-    if (!token || pushTokenRef.current) return;
+    // Guests have no durable identity — don't register push for them.
+    if (!token || isGuest || !user?.id) return;
     try {
       const pushToken = await registerForPushNotificationsAsync();
-      if (pushToken) {
-        pushTokenRef.current = pushToken;
-        await notificationsApi.registerPushToken(token, pushToken, Platform.OS);
-      }
+      if (!pushToken) return;
+
+      // Always (re)register with the backend so a user switch on the same
+      // device moves the token, and a failed first attempt can retry.
+      await notificationsApi.registerPushToken(token, pushToken, Platform.OS);
+      pushTokenRef.current = pushToken;
     } catch (e) {
       // Push is best-effort; in-app notifications still work without it.
+      pushTokenRef.current = null;
     }
-  }, [token]);
+  }, [token, isGuest, user?.id]);
+
+  const unregisterPush = useCallback(async (authToken) => {
+    const pushToken = pushTokenRef.current;
+    pushTokenRef.current = null;
+    if (!pushToken || !authToken) return;
+    try {
+      await notificationsApi.unregisterPushToken(authToken, pushToken);
+    } catch {
+      // best-effort
+    }
+  }, []);
 
   const alertForNewItems = useCallback((items) => {
     if (!items?.length) return;
@@ -54,9 +79,13 @@ export function NotificationsProvider({ children }) {
       .filter((n) => n.id > seenMaxIdRef.current && !n.is_read)
       .sort((a, b) => a.id - b.id);
 
-    fresh.forEach((n) => {
-      presentLocalNotification(n.title, n.body, { ...n.data, kind: n.kind }).catch(() => {});
-    });
+    // Prefer remote Expo push when registered. Local banners remain a fallback
+    // only when we somehow have no push token (simulator / permission denied).
+    if (!pushTokenRef.current) {
+      fresh.forEach((n) => {
+        presentLocalNotification(n.title, n.body, { ...n.data, kind: n.kind }).catch(() => {});
+      });
+    }
 
     if (maxId > seenMaxIdRef.current) {
       seenMaxIdRef.current = maxId;
@@ -64,7 +93,7 @@ export function NotificationsProvider({ children }) {
   }, []);
 
   const refresh = useCallback(async ({ silent = true } = {}) => {
-    if (!token) return null;
+    if (!token || isGuest) return null;
     if (!silent) setLoading(true);
     try {
       const data = await notificationsApi.list(token);
@@ -78,10 +107,10 @@ export function NotificationsProvider({ children }) {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [token, alertForNewItems]);
+  }, [token, isGuest, alertForNewItems]);
 
   const pollUnread = useCallback(async () => {
-    if (!token) return;
+    if (!token || isGuest) return;
     try {
       const data = await notificationsApi.unreadCount(token);
       const next = data.unread_count ?? 0;
@@ -95,7 +124,7 @@ export function NotificationsProvider({ children }) {
     } catch (e) {
       // ignore transient poll failures
     }
-  }, [token, unreadCount, refresh]);
+  }, [token, isGuest, unreadCount, refresh]);
 
   const markRead = useCallback(async (notificationId) => {
     if (!token) return;
@@ -123,7 +152,13 @@ export function NotificationsProvider({ children }) {
 
   // Reset state on sign-out / user switch.
   useEffect(() => {
-    if (!token || !user?.id) {
+    const previousToken = prevAuthTokenRef.current;
+    prevAuthTokenRef.current = token;
+
+    if (!token || !user?.id || isGuest) {
+      if (!token && previousToken) {
+        unregisterPush(previousToken);
+      }
       setNotifications([]);
       setUnreadCount(0);
       seenMaxIdRef.current = null;
@@ -139,15 +174,28 @@ export function NotificationsProvider({ children }) {
     }, POLL_INTERVAL_MS);
 
     const sub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') pollUnread();
+      if (nextState === 'active') {
+        pollUnread();
+        registerPush();
+      }
     });
 
-    // Keep the badge/list fresh when a remote push arrives or is tapped. The
-    // OS shows the banner itself; here we just reconcile in-app state.
+    // Keep the badge/list fresh when a remote push arrives or is tapped, and
+    // deep-link into the right Social screen on tap.
     const removePushListeners = addNotificationListeners({
       onReceive: () => pollUnread(),
-      onRespond: () => pollUnread(),
+      onRespond: (response) => {
+        pollUnread();
+        handleNotificationNavigation(extractNotificationData(response));
+      },
     });
+
+    // Cold-start: user tapped a notification that launched the app.
+    getLastNotificationResponse().then((response) => {
+      if (response) {
+        handleNotificationNavigation(extractNotificationData(response));
+      }
+    }).catch(() => {});
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -155,7 +203,7 @@ export function NotificationsProvider({ children }) {
       removePushListeners();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, user?.id]);
+  }, [token, user?.id, isGuest]);
 
   return (
     <NotificationsContext.Provider

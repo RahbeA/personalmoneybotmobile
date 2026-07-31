@@ -11,8 +11,8 @@ const MANIFEST_URI = `${MODELS_DIR}manifest.json`;
 
 const DOWNLOAD_CONCURRENCY = 2;
 const MIN_MODEL_BYTES = 100;
-/** Keep only a few models in RAM — disk cache handles the rest at scale. */
-const BASE64_CACHE_MAX = 4;
+/** Equipped hero + at most one open detail viewer. */
+const BASE64_CACHE_MAX = 2;
 const LOG_RING_MAX = 120;
 
 export const isModelCacheDebugEnabled =
@@ -27,6 +27,8 @@ const pendingBase64 = new Map();
 const viewerAssetsCache = new Map();
 /** Resolved script+base64 pairs — instant reuse without re-awaiting the promise. */
 const resolvedViewerAssets = new Map();
+/** Active CharacterViewer mounts per model URL — free RAM when the last one unmounts. */
+const viewerRetainCount = new Map();
 const memoryLogOnce = new Set();
 let scriptPromise = null;
 let scriptSource = null;
@@ -102,6 +104,35 @@ function invalidateViewerAssets(modelUrl) {
   }
 }
 
+function evictBase64FromMemory(modelUrl) {
+  if (!modelUrl) return;
+  base64Cache.delete(modelUrl);
+  const idx = base64CacheOrder.indexOf(modelUrl);
+  if (idx >= 0) base64CacheOrder.splice(idx, 1);
+}
+
+/**
+ * Track a mounted CharacterViewer. Paired with releaseViewerModel on unmount so
+ * unequipped detail models drop out of RAM the moment the user goes back.
+ */
+export function acquireViewerModel(modelUrl) {
+  if (!modelUrl) return;
+  viewerRetainCount.set(modelUrl, (viewerRetainCount.get(modelUrl) || 0) + 1);
+}
+
+export function releaseViewerModel(modelUrl) {
+  if (!modelUrl) return;
+  const next = (viewerRetainCount.get(modelUrl) || 0) - 1;
+  if (next > 0) {
+    viewerRetainCount.set(modelUrl, next);
+    return;
+  }
+  viewerRetainCount.delete(modelUrl);
+  invalidateViewerAssets(modelUrl);
+  evictBase64FromMemory(modelUrl);
+  logCache('VIEWER', 'release', shortUrl(modelUrl));
+}
+
 /** Synchronous peek when this model was loaded before in-session. */
 export function peekViewerAssets(modelUrl) {
   return resolvedViewerAssets.get(modelUrl) ?? null;
@@ -120,6 +151,12 @@ export function getViewerAssets(modelUrl) {
       modelUrl,
       Promise.all([getModelViewerScript(), getModelBase64(modelUrl)])
         .then(([script, base64]) => {
+          // Dropped while the download was in flight (user left detail quickly).
+          if ((viewerRetainCount.get(modelUrl) || 0) <= 0) {
+            viewerAssetsCache.delete(modelUrl);
+            evictBase64FromMemory(modelUrl);
+            throw new Error('Viewer released before load finished');
+          }
           const assets = { script, base64 };
           resolvedViewerAssets.set(modelUrl, assets);
           return assets;
@@ -165,6 +202,81 @@ function localModelPath(modelUrl) {
 function localPreviewPath(previewUrl) {
   const ext = previewUrl.match(/\.(png|jpe?g|webp|gif)(\?|$)/i)?.[1] || 'jpg';
   return `${PREVIEWS_DIR}pv_${Math.abs(hashString(previewUrl))}.${ext}`;
+}
+
+function localGeneratedPosterPath(modelUrl) {
+  return `${PREVIEWS_DIR}gen_${Math.abs(hashString(modelUrl))}.png`;
+}
+
+const generatedPosterCache = new Map();
+const pendingGeneratedPosters = new Map();
+
+/** Disk path for a still frame captured from the GLB (no server preview needed). */
+export function getGeneratedPosterPath(modelUrl) {
+  if (!modelUrl) return null;
+  return localGeneratedPosterPath(modelUrl);
+}
+
+export async function peekGeneratedPosterUri(modelUrl) {
+  if (!modelUrl) return null;
+  const cached = generatedPosterCache.get(modelUrl);
+  if (cached) return cached;
+  await ensureModelsDir();
+  const localUri = localGeneratedPosterPath(modelUrl);
+  const info = await FileSystem.getInfoAsync(localUri);
+  if (info.exists && info.size > 200) {
+    generatedPosterCache.set(modelUrl, localUri);
+    return localUri;
+  }
+  return null;
+}
+
+export async function saveGeneratedPoster(modelUrl, dataUrlOrBase64) {
+  if (!modelUrl) throw new Error('modelUrl required');
+  await ensureModelsDir();
+  const localUri = localGeneratedPosterPath(modelUrl);
+  const base64 = String(dataUrlOrBase64).replace(/^data:image\/\w+;base64,/, '');
+  if (!base64 || base64.length < 100) {
+    throw new Error('Poster capture returned empty image');
+  }
+  await FileSystem.writeAsStringAsync(localUri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  generatedPosterCache.set(modelUrl, localUri);
+  bumpStat('preview', 'disk');
+  logCache('POSTER', 'saved', shortUrl(modelUrl), { bytes: base64.length });
+  return localUri;
+}
+
+/**
+ * Resolve a static character image URI from the server cover PNG only.
+ * Grid cards must never pull a GLB just to paint a thumbnail.
+ */
+export async function resolveCharacterPosterUri({ previewUrl } = {}) {
+  if (!previewUrl) return null;
+  try {
+    const uri = await getPreviewFileUri(previewUrl);
+    if (uri) return uri;
+  } catch {
+    return previewUrl;
+  }
+  return previewUrl;
+}
+
+/** Deduped promise map so grid cards share one capture job per model. */
+export function getPendingPosterJob(modelUrl) {
+  return pendingGeneratedPosters.get(modelUrl) || null;
+}
+
+export function setPendingPosterJob(modelUrl, promise) {
+  if (!modelUrl || !promise) return;
+  pendingGeneratedPosters.set(modelUrl, promise);
+  const clear = () => {
+    if (pendingGeneratedPosters.get(modelUrl) === promise) {
+      pendingGeneratedPosters.delete(modelUrl);
+    }
+  };
+  promise.then(clear, clear);
 }
 
 async function ensureModelsDir() {
@@ -441,16 +553,14 @@ export function prefetchPreviewImages(characters = []) {
 }
 
 export async function syncCharacterModels(characters = [], { forceRefresh = false, priorityUrls = [] } = {}) {
-  const urls = [...new Set(characters.map((c) => c.model_url).filter(Boolean))];
-  if (!urls.length) {
-    logCache('SYNC', 'skip', 'no model URLs');
-    return { total: 0, ok: 0, failed: 0, errors: [] };
-  }
-
-  const priority = priorityUrls.filter((u) => urls.includes(u));
-  const rest = urls.filter((u) => !priority.includes(u));
-  const ordered = [...priority, ...rest];
-  const signature = `${ordered.join('\0')}${forceRefresh ? ':force' : ''}`;
+  // Moneyverse grid is PNG-only. Warm at most the equipped hero GLB; every other
+  // model downloads only when CharacterDetail mounts a CharacterViewer.
+  const allUrls = [...new Set(characters.map((c) => c.model_url).filter(Boolean))];
+  const priority = [...new Set(
+    (priorityUrls || []).filter((u) => u && (allUrls.length === 0 || allUrls.includes(u))),
+  )];
+  const previewCount = characters.filter((c) => c?.preview_url).length;
+  const signature = `previews:${previewCount}|glb:${priority.join('\0')}${forceRefresh ? ':force' : ''}`;
 
   if (!forceRefresh && syncInFlight) {
     logCache('SYNC', 'skip', 'sync already running');
@@ -458,29 +568,34 @@ export async function syncCharacterModels(characters = [], { forceRefresh = fals
   }
   if (!forceRefresh && signature === lastSyncSignature) {
     logCache('SYNC', 'skip', 'character set unchanged');
-    return { total: ordered.length, ok: ordered.length, failed: 0, errors: [], skipped: true };
+    return {
+      total: priority.length,
+      ok: priority.length,
+      failed: 0,
+      errors: [],
+      skipped: true,
+      deferredModels: Math.max(0, allUrls.length - priority.length),
+    };
   }
 
   const started = Date.now();
-  warmModelViewerOnBoot();
+  if (priority.length) warmModelViewerOnBoot();
   prefetchPreviewImages(characters);
 
   syncInFlight = (async () => {
-    logCache('SYNC', 'start', `${ordered.length} models`, {
+    logCache('SYNC', 'start', `${priority.length} equipped GLB + ${previewCount} PNGs`, {
       forceRefresh,
+      deferredModels: Math.max(0, allUrls.length - priority.length),
       priority: priority.map(shortUrl),
     });
 
     const errors = [];
     let ok = 0;
 
-    const loader = forceRefresh
-      ? (url) => refreshModel(url)
-      : (url) => getModelBase64(url);
-
-    await runPool(ordered, async (url) => {
+    await runPool(priority, async (url) => {
       try {
-        await loader(url);
+        if (forceRefresh) await refreshModel(url);
+        else await getModelBase64(url);
         ok += 1;
       } catch (e) {
         errors.push({ url: shortUrl(url), error: e.message });
@@ -490,15 +605,16 @@ export async function syncCharacterModels(characters = [], { forceRefresh = fals
     stats.sync = {
       lastRunAt: Date.now(),
       lastDurationMs: Date.now() - started,
-      total: ordered.length,
+      total: priority.length,
       ok,
       failed: errors.length,
       forceRefresh,
     };
 
-    logCache('SYNC', 'done', `${ok}/${ordered.length} ready`, {
+    logCache('SYNC', 'done', `${ok}/${priority.length} equipped ready`, {
       ms: Date.now() - started,
       failed: errors.length,
+      deferredModels: Math.max(0, allUrls.length - priority.length),
       errors: errors.slice(0, 5),
     });
 
@@ -507,7 +623,13 @@ export async function syncCharacterModels(characters = [], { forceRefresh = fals
     }
 
     lastSyncSignature = signature;
-    return { total: ordered.length, ok, failed: errors.length, errors };
+    return {
+      total: priority.length,
+      ok,
+      failed: errors.length,
+      errors,
+      deferredModels: Math.max(0, allUrls.length - priority.length),
+    };
   })();
 
   try {
@@ -580,6 +702,9 @@ export async function clearModelCache() {
   base64Cache.clear();
   base64CacheOrder.length = 0;
   previewUriCache.clear();
+  generatedPosterCache.clear();
+  pendingGeneratedPosters.clear();
+  viewerRetainCount.clear();
   invalidateViewerAssets();
   memoryLogOnce.clear();
   lastSyncSignature = '';

@@ -25,6 +25,31 @@ def campaign_audience(campaign):
     return users.distinct().order_by('pk')
 
 
+def audience_push_stats(campaign):
+    """Return audience size + how many of those users have a registered push token."""
+    audience = campaign_audience(campaign)
+    recipient_ids = list(audience.values_list('pk', flat=True))
+    token_users = (
+        DeviceToken.objects.filter(user_id__in=recipient_ids)
+        .values('user_id')
+        .distinct()
+        .count()
+        if recipient_ids else 0
+    )
+    token_count = (
+        DeviceToken.objects.filter(user_id__in=recipient_ids).count()
+        if recipient_ids else 0
+    )
+    return {
+        'count': len(recipient_ids),
+        'users_with_push': token_users,
+        'device_tokens': token_count,
+        'sample': list(
+            audience.values('id', 'email', 'name')[:10]
+        ),
+    }
+
+
 def send_campaign(campaign):
     """Persist the in-app feed and send push once for a campaign.
 
@@ -80,7 +105,14 @@ def send_campaign(campaign):
                 .values_list('token', flat=True)
                 .distinct()
             )
-            push_count = send_expo_push(
+            if not tokens:
+                raise RuntimeError(
+                    f'In-app notifications were created for {len(recipient_ids)} user(s), '
+                    'but none of them have a registered Expo push token. '
+                    'Ask users to open MoneyBot on a physical device and allow notifications, '
+                    'then try again (or turn off “Also send OS push”).'
+                )
+            result = send_expo_push(
                 tokens,
                 locked.title,
                 locked.body,
@@ -89,11 +121,14 @@ def send_campaign(campaign):
                     'kind': Notification.TYPE_ANNOUNCEMENT,
                     'campaign_id': locked.pk,
                 },
+                raise_on_failure=True,
             )
+            push_count = result.accepted
     except Exception as exc:
         NotificationCampaign.objects.filter(pk=locked.pk).update(
             status=NotificationCampaign.STATUS_FAILED,
             error_message=str(exc)[:2000],
+            push_count=push_count,
         )
         raise
 

@@ -91,6 +91,7 @@ export default function TutorScreen({ navigation }) {
   const [sending, setSending] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const goCreateAccount = useCallback(() => {
     requireAccount({ isGuest: true, navigation, feature: 'chat with the AI Tutor' });
@@ -118,6 +119,7 @@ export default function TutorScreen({ navigation }) {
 
   async function openConversation(id) {
     if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
+    setActionsOpen(false);
     setHistoryOpen(false);
     setConversationId(id);
     try {
@@ -130,6 +132,7 @@ export default function TutorScreen({ navigation }) {
 
   function startNewChat() {
     if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
+    setActionsOpen(false);
     setConversationId(null);
     setMessages([]);
     setHistoryOpen(false);
@@ -209,6 +212,61 @@ export default function TutorScreen({ navigation }) {
   );
 
   const hasMessages = messages.length > 0;
+  const composerLeading = (
+    <TouchableOpacity
+      style={[styles.addButton, actionsOpen && styles.addButtonOpen]}
+      onPress={() => setActionsOpen((open) => !open)}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={actionsOpen ? 'Close chat actions' : 'Open chat actions'}
+      accessibilityState={{ expanded: actionsOpen }}
+    >
+      <Ionicons
+        name={actionsOpen ? 'close' : 'add'}
+        size={28}
+        color={actionsOpen ? colors.background : colors.textSecondary}
+      />
+    </TouchableOpacity>
+  );
+
+  const composerMenu = actionsOpen ? (
+    <View style={styles.actionMenu}>
+      <TouchableOpacity
+        style={styles.actionMenuItem}
+        onPress={startNewChat}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="New chat"
+      >
+        <View style={styles.actionMenuIcon}>
+          <Ionicons name="create-outline" size={21} color={colors.primary} />
+        </View>
+        <Text style={styles.actionMenuLabel}>New chat</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.actionMenuItem}
+        onPress={() => {
+          setActionsOpen(false);
+          setHistoryOpen(true);
+        }}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Chat history"
+      >
+        <View style={styles.actionMenuIcon}>
+          <Ionicons name="time-outline" size={21} color={colors.primary} />
+          {conversations.length > 0 && (
+            <View style={styles.actionMenuBadge}>
+              <Text style={styles.actionMenuBadgeText}>
+                {conversations.length > 9 ? '9+' : conversations.length}
+              </Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.actionMenuLabel}>History</Text>
+      </TouchableOpacity>
+    </View>
+  ) : null;
 
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
@@ -219,31 +277,6 @@ export default function TutorScreen({ navigation }) {
             <Text style={styles.heroEyebrow}>AI TUTOR</Text>
             <Text style={styles.title}>Tutor</Text>
             <Text style={styles.heroSub}>Your personal finance coach</Text>
-          </View>
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.headerBtn}
-              onPress={() => setHistoryOpen(true)}
-              activeOpacity={0.85}
-              accessibilityLabel="Chat history"
-            >
-              <Ionicons name="time-outline" size={20} color={colors.white} />
-              {conversations.length > 0 && (
-                <View style={styles.headerBtnBadge}>
-                  <Text style={styles.headerBtnBadgeText}>
-                    {conversations.length > 9 ? '9+' : conversations.length}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerBtn}
-              onPress={startNewChat}
-              activeOpacity={0.85}
-              accessibilityLabel="New chat"
-            >
-              <Ionicons name="create-outline" size={20} color={colors.white} />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -267,6 +300,8 @@ export default function TutorScreen({ navigation }) {
           emptyComponent={emptyState}
           character={equippedCharacter}
           composerStyle={styles.composerWrap}
+          composerLeading={composerLeading}
+          composerMenu={composerMenu}
         />
       </SafeAreaView>
 
@@ -357,34 +392,6 @@ const makeStyles = (colors, isDark) => {
     },
     title: { fontSize: 30, fontWeight: '800', color: colors.white, letterSpacing: -0.8, marginBottom: 4 },
     heroSub: { fontSize: 14, color: colors.textSecondary, fontWeight: '500' },
-    headerActions: { flexDirection: 'row', gap: 8, paddingTop: 4 },
-    headerBtn: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
-      backgroundColor: colors.surfaceElevated,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: hairline,
-      ...CARD_SHADOW,
-    },
-    headerBtnBadge: {
-      position: 'absolute',
-      top: -2,
-      right: -2,
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
-      backgroundColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 4,
-      borderWidth: 2,
-      borderColor: colors.background,
-    },
-    headerBtnBadgeText: { fontSize: 10, fontWeight: '800', color: colors.background },
-
     activeChatBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -407,8 +414,76 @@ const makeStyles = (colors, isDark) => {
       borderWidth: 1,
       borderColor: hairline,
       backgroundColor: colors.surfaceElevated,
-      overflow: 'hidden',
       ...CARD_SHADOW,
+    },
+    addButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: colors.inputBg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addButtonOpen: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    actionMenu: {
+      position: 'absolute',
+      left: 0,
+      bottom: 60,
+      zIndex: 10,
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingTop: 12,
+      paddingBottom: 10,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: hairline,
+      ...CARD_SHADOW,
+    },
+    actionMenuItem: {
+      minWidth: 72,
+      alignItems: 'center',
+      gap: 6,
+    },
+    actionMenuIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: colors.primaryTint,
+      borderWidth: 1,
+      borderColor: colors.primaryTintStrong,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    actionMenuLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    actionMenuBadge: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      paddingHorizontal: 4,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+      borderWidth: 2,
+      borderColor: colors.surfaceElevated,
+    },
+    actionMenuBadgeText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: colors.background,
     },
 
     emptyScroll: {

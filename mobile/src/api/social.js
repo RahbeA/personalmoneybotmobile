@@ -4,8 +4,20 @@ export const socialApi = {
   searchUsers: (token, q) =>
     apiRequest(`/social/users/search/?q=${encodeURIComponent(q)}`, { token }),
 
-  getFriends: (token) =>
-    apiRequest('/social/friends/', { token }),
+  getUserProfile: (token, userId) =>
+    apiRequest(`/social/users/${userId}/`, { token }),
+
+  nudgeFriend: (token, userId, clientDate) =>
+    apiRequest(`/social/users/${userId}/nudge/`, {
+      method: 'POST',
+      token,
+      body: clientDate ? { client_date: clientDate } : {},
+    }),
+
+  getFriends: (token, clientDate) => {
+    const qs = clientDate ? `?client_date=${encodeURIComponent(clientDate)}` : '';
+    return apiRequest(`/social/friends/${qs}`, { token });
+  },
 
   getRequests: (token) =>
     apiRequest('/social/friends/requests/', { token }),

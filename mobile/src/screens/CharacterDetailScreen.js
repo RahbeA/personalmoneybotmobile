@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +12,7 @@ import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { requireAccount } from '../utils/requireAccount';
 import CharacterViewer from '../components/CharacterViewer';
+import CharacterPoster from '../components/CharacterPoster';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -25,6 +27,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
   const { botBucks, equippedCharacter, purchaseCharacter, equipCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const isFocused = useIsFocused();
 
   const [owned, setOwned] = useState(!!character.is_owned);
   const [busy, setBusy] = useState(false);
@@ -81,12 +84,17 @@ export default function CharacterDetailScreen({ navigation, route }) {
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.viewerWrap}>
-            <CharacterViewer
-              modelUrl={character.model_url}
-              previewUrl={character.preview_url}
-              autoRotate
-              allowDrag
-            />
+            {/* 3D only while this screen is focused — unmount frees WebView + RAM. */}
+            {isFocused ? (
+              <CharacterViewer
+                modelUrl={character.model_url}
+                previewUrl={character.preview_url}
+                autoRotate
+                allowDrag
+              />
+            ) : (
+              <CharacterPoster previewUrl={character.preview_url} />
+            )}
             <Text style={styles.dragHint}>Drag to rotate</Text>
           </View>
 

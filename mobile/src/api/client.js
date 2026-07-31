@@ -70,6 +70,7 @@ export async function apiRequest(endpoint, { method = 'GET', token, body, header
     const error = new Error(extractError(data, `Request failed (${response.status})`));
     error.status = response.status;
     error.data = data;
+    if (data?.code) error.code = data.code;
     throw error;
   }
 

@@ -12,4 +12,5 @@ urlpatterns = [
     path('onboarding/questions/', views.onboarding_questions, name='onboarding-questions'),
     path('onboarding/submit/', views.onboarding_submit, name='onboarding-submit'),
     path('goals/', views.update_goals, name='update-goals'),
+    path('streak-goal/', views.update_streak_goal, name='update-streak-goal'),
 ]

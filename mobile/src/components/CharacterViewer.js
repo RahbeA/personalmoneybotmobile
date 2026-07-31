@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { View, ActivityIndicator, Image, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '../context/ThemeContext';
-import { getViewerAssets, getPreviewFileUri, refreshModel, logCharacterViewerEvent, peekViewerAssets } from '../utils/modelCache';
+import { getViewerAssets, getPreviewFileUri, refreshModel, logCharacterViewerEvent, peekViewerAssets, acquireViewerModel, releaseViewerModel } from '../utils/modelCache';
 import BrandLogo from './brand/BrandLogo';
 
 // model-viewer renders .glb inside a WebView. iOS inline HTML cannot load file://
@@ -105,6 +105,13 @@ export default function CharacterViewer({
     return () => { cancelled = true; };
   }, [previewUrl]);
 
+  // Retain while mounted (Moneyverse hero + open detail). Last unmount frees RAM.
+  useEffect(() => {
+    if (!modelUrl) return undefined;
+    acquireViewerModel(modelUrl);
+    return () => releaseViewerModel(modelUrl);
+  }, [modelUrl]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -131,8 +138,11 @@ export default function CharacterViewer({
           setStatus((prev) => (prev === 'ready' ? 'ready' : 'webview'));
         }
       } catch (e) {
+        if (cancelled) return;
+        // User left before load finished — not a real viewer failure.
+        if (String(e?.message || '').includes('released before load')) return;
         logCharacterViewerEvent('assets-failed', { model: modelUrl, error: e.message });
-        if (!cancelled) setStatus('error');
+        setStatus('error');
       }
     })();
 
@@ -169,7 +179,9 @@ export default function CharacterViewer({
 
   return (
     <View style={[styles.fill, style]}>
-      {poster ? (
+      {/* Placeholder only. The webview renders on a transparent background, so
+          leaving this mounted would show the cover image behind the model. */}
+      {poster && status !== 'ready' ? (
         <Image
           source={{ uri: poster }}
           style={StyleSheet.absoluteFill}

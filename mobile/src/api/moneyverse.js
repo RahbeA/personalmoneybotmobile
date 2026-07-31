@@ -26,4 +26,11 @@ export const moneyverseApi = {
       token,
       body: { character_id: characterId },
     }),
+
+  claimStarter: (token) =>
+    apiRequest('/moneyverse/claim-starter/', {
+      method: 'POST',
+      token,
+      body: {},
+    }),
 };

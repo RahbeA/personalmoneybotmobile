@@ -22,12 +22,30 @@ class Character(models.Model):
     preview_image = models.ImageField(upload_to='character_previews/', null=True, blank=True)
     order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    is_starter = models.BooleanField(
+        default=False,
+        help_text='Gifted and equipped automatically when a new account is created. Only one character can be the starter.',
+    )
 
     class Meta:
         ordering = ['order', 'id']
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Enforce a single starter across the catalog.
+        if self.is_starter:
+            Character.objects.exclude(pk=self.pk).filter(is_starter=True).update(is_starter=False)
+
+    @classmethod
+    def get_starter(cls):
+        """The admin-chosen starter, falling back to the cheapest active character."""
+        return (
+            cls.objects.filter(is_active=True, is_starter=True).order_by('order', 'id').first()
+            or cls.objects.filter(is_active=True).order_by('price', 'order', 'id').first()
+        )
 
 
 class UserCharacter(models.Model):

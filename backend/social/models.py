@@ -117,11 +117,13 @@ class Notification(models.Model):
     TYPE_FRIEND_REQUEST = 'friend_request'
     TYPE_FRIEND_ACCEPTED = 'friend_accepted'
     TYPE_FRIEND_DECLINED = 'friend_declined'
+    TYPE_FRIEND_NUDGE = 'friend_nudge'
     TYPE_ANNOUNCEMENT = 'announcement'
     TYPE_CHOICES = [
         (TYPE_FRIEND_REQUEST, 'Friend request received'),
         (TYPE_FRIEND_ACCEPTED, 'Friend request accepted'),
         (TYPE_FRIEND_DECLINED, 'Friend request declined'),
+        (TYPE_FRIEND_NUDGE, 'Friend nudge'),
         (TYPE_ANNOUNCEMENT, 'Admin announcement'),
     ]
 
@@ -168,6 +170,38 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'{self.kind} -> {self.recipient_id}'
+
+
+class FriendNudge(models.Model):
+    """One nudge per friend pair per calendar day (client-local date)."""
+
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='nudges_sent',
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='nudges_received',
+    )
+    day = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sender', 'recipient', 'day'],
+                name='unique_friend_nudge_per_day',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['sender', 'day']),
+            models.Index(fields=['recipient', 'day']),
+        ]
+
+    def __str__(self):
+        return f'{self.sender_id} nudged {self.recipient_id} on {self.day}'
 
 
 class DeviceToken(models.Model):

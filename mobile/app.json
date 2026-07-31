@@ -2,7 +2,7 @@
   "expo": {
     "name": "MoneyBot",
     "slug": "moneybot",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "scheme": "moneybot",
     "icon": "./assets/logo.png",

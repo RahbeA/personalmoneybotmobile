@@ -25,5 +25,6 @@ urlpatterns = [
     path('change-password/', views.change_password, name='admin-change-password'),
     path('stats/summary/', views.stats_summary, name='admin-stats-summary'),
     path('cache/health/', views.cache_health, name='admin-cache-health'),
+    path('glb/optimize/', views.optimize_glb_upload, name='admin-glb-optimize'),
     path('', include(router.urls)),
 ]

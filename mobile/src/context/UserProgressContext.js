@@ -95,12 +95,14 @@ export function UserProgressProvider({ children }) {
   const [rank, setRank] = useState(null);
   const [badgeCatalog, setBadgeCatalog] = useState([]);
   const [dailyReward, setDailyReward] = useState(null);
+  const [streakGoal, setStreakGoal] = useState(7);
   const [claimingDaily, setClaimingDaily] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
-  // Set right after the user finishes onboarding so the app can drop them
-  // straight into their first lesson instead of the Home tab.
+  // Set right after the user finishes onboarding so the app can land them
+  // on the Moneyverse tab to meet their free starter character.
   const [pendingFirstLesson, setPendingFirstLesson] = useState(false);
+  const [pendingMoneyverseIntro, setPendingMoneyverseIntro] = useState(false);
 
   const refreshStreakNotifications = useCallback((statsData, { activeToday } = {}) => {
     if (!areNotificationsSupported() || !user) return;
@@ -135,6 +137,9 @@ export function UserProgressProvider({ children }) {
     if (statsData.badge_catalog) setBadgeCatalog(statsData.badge_catalog);
     // Always keep a daily_reward object so the card never disappears (DEV-459).
     setDailyReward(statsData.daily_reward || DEFAULT_DAILY_REWARD);
+    if (typeof statsData.streak_goal === 'number' && statsData.streak_goal > 0) {
+      setStreakGoal(statsData.streak_goal);
+    }
     // `syncGate` lets submitOnboarding record a completed baseline WITHOUT
     // flipping the navigation gate, so the rank reveal can play first.
     if (syncGate) {
@@ -416,6 +421,30 @@ export function UserProgressProvider({ children }) {
     return result;
   }
 
+  async function claimStarterCharacter() {
+    if (!token || !user?.id) return null;
+    try {
+      const result = await moneyverseApi.claimStarter(token);
+      if (typeof result.bot_bucks === 'number') {
+        setBotBucks(result.bot_bucks);
+      }
+      const next = result.character || null;
+      if (next) {
+        setEquippedCharacter(next);
+        if (next.model_url) {
+          ensureModelCached(next.model_url).catch(() => {});
+        }
+      }
+      await invalidateCache(cacheKeys.progress(user.id));
+      await invalidateCache(cacheKeys.characters(user.id));
+      charactersFetchRef.current = { at: 0, promise: null };
+      return result;
+    } catch (e) {
+      console.log('[claimStarterCharacter] failed:', e?.message || e);
+      return null;
+    }
+  }
+
   // Submit the assessment and store the result, but DON'T flip the navigation
   // gate yet so the onboarding screen can show the rank reveal first.
   async function submitOnboarding(answers, goals = []) {
@@ -475,9 +504,10 @@ export function UserProgressProvider({ children }) {
   }
 
   // Flip the gate so the root navigator swaps onboarding for the main app,
-  // and flag that the user should land in their first lesson immediately.
+  // and land the user on the Moneyverse tab to meet their free starter character.
   function finishOnboarding() {
-    setPendingFirstLesson(true);
+    setPendingMoneyverseIntro(true);
+    setPendingFirstLesson(false);
     setOnboardingCompleted(true);
     if (user?.id) {
       persistOnboardingCompleted(user.id, true);
@@ -488,19 +518,25 @@ export function UserProgressProvider({ children }) {
     setPendingFirstLesson(false);
   }
 
+  function clearPendingMoneyverseIntro() {
+    setPendingMoneyverseIntro(false);
+  }
+
   function isLessonCompleted(lessonId) {
     return completedLessonIds.has(lessonId);
   }
 
-  async function claimDailyReward() {
+  async function claimDailyReward({ streakGoal: nextGoal } = {}) {
     if (!token || !user?.id || claimingDaily) return null;
     setClaimingDaily(true);
     try {
-      const result = await coursesApi.claimDailyReward(token);
+      const result = await coursesApi.claimDailyReward(token, { streakGoal: nextGoal });
       if (typeof result.bot_bucks === 'number') setBotBucks(result.bot_bucks);
       if (result.daily_reward) setDailyReward(result.daily_reward);
       if (result.badges) setBadges(result.badges);
       if (typeof result.stats?.streak_days === 'number') setStreakDays(result.stats.streak_days);
+      const goal = result.streak_goal ?? result.stats?.streak_goal;
+      if (typeof goal === 'number') setStreakGoal(goal);
       await invalidateCache(cacheKeys.progress(user.id));
       return result;
     } catch (e) {
@@ -567,9 +603,12 @@ export function UserProgressProvider({ children }) {
         updateGoals,
         pendingFirstLesson,
         clearPendingFirstLesson,
+        pendingMoneyverseIntro,
+        clearPendingMoneyverseIntro,
         rank,
         badgeCatalog,
         dailyReward,
+        streakGoal,
         claimingDaily,
         getBadgeMeta,
         loading,
@@ -583,6 +622,7 @@ export function UserProgressProvider({ children }) {
         finishOnboarding,
         purchaseCharacter,
         equipCharacter,
+        claimStarterCharacter,
         claimDailyReward,
         startArcadeGame,
         finishArcadeGame,

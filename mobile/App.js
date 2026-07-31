@@ -16,6 +16,7 @@ import { getFirstName } from './src/utils/displayName';
 import { localDate } from './src/utils/localDate';
 import { warmModelViewerOnBoot } from './src/utils/modelCache';
 import { ensureCacheScope } from './src/utils/apiCache';
+import { navigationRef } from './src/navigation/rootNavigation';
 import LandingScreen from './src/screens/LandingScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import LegalDocumentScreen from './src/screens/LegalDocumentScreen';
@@ -119,7 +120,7 @@ function RootNavigator() {
 
   return (
     <View style={{ flex: 1 }} onLayout={onLayout}>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
           {user ? (
             <>

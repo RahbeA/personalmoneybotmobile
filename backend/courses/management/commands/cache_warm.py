@@ -17,7 +17,7 @@ class Command(BaseCommand):
             strip_leaderboard_user_flags,
         )
         from ai.knowledge import _build_course_outline
-        from courses.views import LEADERBOARD_DEFAULT_PAGE_SIZE, _build_leaderboard_payload
+        from courses.views import LEADERBOARD_TOP_N, _build_leaderboard_payload
         from django.test import RequestFactory
         from accounts.models import User
 
@@ -43,16 +43,16 @@ class Command(BaseCommand):
             factory = RequestFactory()
             req = factory.get('/api/courses/leaderboard/')
             req.user = staff
-            key = leaderboard_cache_key(1, LEADERBOARD_DEFAULT_PAGE_SIZE, '')
+            key = leaderboard_cache_key(1, LEADERBOARD_TOP_N, '')
             payload, hit = cache_get_or_set(
                 key,
                 lambda: strip_leaderboard_user_flags(
-                    _build_leaderboard_payload(req, '', 1, LEADERBOARD_DEFAULT_PAGE_SIZE),
+                    _build_leaderboard_payload(req),
                 ),
                 TTL_LEADERBOARD,
             )
             self.stdout.write(
-                f'leaderboard page1: top={len(payload.get("top", []))} hit={hit}',
+                f'leaderboard top{LEADERBOARD_TOP_N}: top={len(payload.get("top", []))} hit={hit}',
             )
         else:
             self.stdout.write('leaderboard: skipped (no users)')

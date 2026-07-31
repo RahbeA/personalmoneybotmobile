@@ -1,0 +1,16 @@
+{
+  "name": "moneybot-glb-optimize",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Strip unused skinning and simplify GLBs for MoneyBot character cards",
+  "scripts": {
+    "optimize": "node optimize.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "meshoptimizer": "^1.2.0"
+  }
+}

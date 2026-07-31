@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Animated, Easing, ScrollView, PanResponder, Pressable, Alert, Linking,
+  Animated, Easing, ScrollView, PanResponder, Pressable, Alert, Linking, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +15,9 @@ import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { getFirstName } from '../utils/displayName';
 import { localDate } from '../utils/localDate';
 import { GOALS } from '../constants/goals';
+import MoneyBotGuide from '../components/MoneyBotGuide';
+import TypewriterText from '../components/TypewriterText';
+import BrandAvatar from '../components/brand/BrandAvatar';
 import {
   areNotificationsSupported,
   getNotificationPermissionInfo,
@@ -22,6 +25,33 @@ import {
   saveNotificationPrefs,
   syncNotificationSchedule,
 } from '../utils/notifications';
+
+const GUIDE_IMAGE = require('../../assets/moneybot-guide.png');
+
+// Bond-prices "up / down" question uses a vertical slider instead of cards.
+const VERTICAL_SCALE_IDS = new Set(['bonds']);
+
+const GREET_MESSAGE =
+  "Hey, I'm MoneyBot. Think of me as a chill finance friend. We'll chat about what matters to you, I'll ask a few easy questions, and then I'll set you up with a free character. Sound good?";
+
+const GOALS_GUIDE_MESSAGE =
+  "First up, what are you hoping to get better at? Pick anything. Totally optional.";
+
+const QUESTION_GUIDE_LINES = [
+  "Cool. Mind if I ask a few easy money questions? No grades, just curious where you're at.",
+  "Nice. Here's another one.",
+  "You're doing great. Almost done with these.",
+  "This one's about rates and prices. Just slide up or down.",
+  "Last one, then I'll share where you're starting from.",
+];
+
+// Short MoneyBot beats between questions (after answering Q0..Q3).
+const BETWEEN_LINES = [
+  "Got it, thanks.",
+  "Cool. Next one when you're ready.",
+  "Nice work.",
+  "Almost there. One more after this.",
+];
 
 // Map each onboarding question to a reliable Ionicon. Raw emoji glyphs (e.g. 💸,
 // 🧺) render as empty "?" boxes on some iOS versions, so we key off the question
@@ -56,9 +86,9 @@ const confettiLayerStyle = {
 };
 
 const CALC_LINES = [
-  'Reading your money mind...',
-  'Crunching the numbers...',
-  'Calibrating your rank...',
+  'Taking a look at your answers',
+  'Crunching a few numbers',
+  'Figuring out your starting rank',
 ];
 
 function ConfettiBurst({ colors }) {
@@ -118,18 +148,55 @@ function ConfettiBurst({ colors }) {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
+function usePressScale(pressedScale = 0.94) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const onPressIn = useCallback(() => {
+    Animated.spring(scale, {
+      toValue: pressedScale,
+      speed: 60,
+      bounciness: 0,
+      useNativeDriver: true,
+    }).start();
+  }, [pressedScale, scale]);
+  const onPressOut = useCallback(() => {
+    Animated.spring(scale, {
+      toValue: 1,
+      speed: 18,
+      bounciness: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [scale]);
+  return { scale, onPressIn, onPressOut };
+}
+
 // Springy press feedback wrapper — makes every tappable feel tactile. Layout
 // styles (flex, width, padding) apply directly to the pressable so it lays out
 // exactly like a plain view.
 function Bouncy({ children, style, onPress, disabled }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const { scale, onPressIn, onPressOut } = usePressScale(0.95);
   return (
     <AnimatedPressable
       onPress={onPress}
       disabled={disabled}
-      onPressIn={() => Animated.spring(scale, { toValue: 0.96, speed: 50, bounciness: 0, useNativeDriver: true }).start()}
-      onPressOut={() => Animated.spring(scale, { toValue: 1, speed: 20, bounciness: 8, useNativeDriver: true }).start()}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       style={[style, { transform: [{ scale }] }]}
+    >
+      {children}
+    </AnimatedPressable>
+  );
+}
+
+/** Full-width CTA with squash/bounce press micro-animation. */
+function PressScaleButton({ style, disabled, onPress, children }) {
+  const { scale, onPressIn, onPressOut } = usePressScale(0.96);
+  return (
+    <AnimatedPressable
+      onPress={onPress}
+      disabled={disabled}
+      onPressIn={disabled ? undefined : onPressIn}
+      onPressOut={disabled ? undefined : onPressOut}
+      style={[style, { transform: [{ scale }] }, disabled && { opacity: 0.7 }]}
     >
       {children}
     </AnimatedPressable>
@@ -175,6 +242,7 @@ export default function OnboardingScreen() {
   const {
     submitOnboarding,
     finishOnboarding,
+    claimStarterCharacter,
     rank: ctxRank,
     dailyReward,
     claimDailyReward,
@@ -185,7 +253,7 @@ export default function OnboardingScreen() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  // loading | goals | question | calculating | reveal | reward | streak | notifications | error
+  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | character | error
   const [phase, setPhase] = useState('loading');
   const [questions, setQuestions] = useState([]);
   const [qIndex, setQIndex] = useState(0);
@@ -193,6 +261,7 @@ export default function OnboardingScreen() {
   const [goals, setGoals] = useState([]);
   const [result, setResult] = useState(null);
   const [calcLine, setCalcLine] = useState(CALC_LINES[0]);
+  const [greetDone, setGreetDone] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,7 +274,7 @@ export default function OnboardingScreen() {
         );
         if (cancelled) return;
         setQuestions(data.questions || []);
-        setPhase('goals');
+        setPhase('greet');
       } catch (e) {
         if (!cancelled) setPhase('error');
       }
@@ -237,9 +306,14 @@ export default function OnboardingScreen() {
     if (qIndex + 1 >= questions.length) {
       runSubmit(nextAnswers, goals);
     } else {
-      setQIndex((prev) => prev + 1);
+      setPhase('between');
     }
   }, [answers, qIndex, questions.length, goals, runSubmit]);
+
+  const continueFromBetween = useCallback(() => {
+    setQIndex((prev) => prev + 1);
+    setPhase('question');
+  }, []);
 
   function toggleGoal(key) {
     setGoals((prev) => (prev.includes(key) ? prev.filter((g) => g !== key) : [...prev, key]));
@@ -265,8 +339,27 @@ export default function OnboardingScreen() {
         <SafeAreaView style={[styles.safe, styles.center]}>
           <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
           <Text style={styles.errTitle}>Couldn{"'"}t load your money quiz</Text>
-          <Text style={styles.errText}>No worries — you can jump straight in and take it later.</Text>
+          <Text style={styles.errText}>No worries. You can jump straight in and take it later.</Text>
           <PrimaryButton styles={styles} colors={colors} label="Continue" onPress={finishOnboarding} />
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
+  // ---- Greet (MoneyBot intro) ----
+  if (phase === 'greet') {
+    return (
+      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <SafeAreaView style={styles.safe}>
+          <GreetView
+            styles={styles}
+            colors={colors}
+            firstName={getFirstName(user)}
+            typingDone={greetDone}
+            onTypingDone={() => setGreetDone(true)}
+            onContinue={() => setPhase('goals')}
+          />
         </SafeAreaView>
       </LinearGradient>
     );
@@ -284,6 +377,25 @@ export default function OnboardingScreen() {
             selected={goals}
             onToggle={toggleGoal}
             onContinue={() => setPhase('question')}
+          />
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
+  // ---- Between questions (conversational beat) ----
+  if (phase === 'between') {
+    const betweenMessage = BETWEEN_LINES[qIndex] || BETWEEN_LINES[BETWEEN_LINES.length - 1];
+    return (
+      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <SafeAreaView style={styles.safe}>
+          <BetweenView
+            key={betweenMessage}
+            styles={styles}
+            colors={colors}
+            message={betweenMessage}
+            onContinue={continueFromBetween}
           />
         </SafeAreaView>
       </LinearGradient>
@@ -365,7 +477,7 @@ export default function OnboardingScreen() {
     );
   }
 
-  // ---- Notifications opt-in (last step before entering the app) ----
+  // ---- Notifications opt-in ----
   if (phase === 'notifications') {
     return (
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
@@ -377,6 +489,24 @@ export default function OnboardingScreen() {
             firstName={getFirstName(user)}
             streakDays={streakDays}
             lastActive={lastActive}
+            onDone={() => setPhase('character')}
+          />
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
+  // ---- Free starter character (final step) ----
+  if (phase === 'character') {
+    return (
+      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <ConfettiBurst colors={colors} />
+        <SafeAreaView style={styles.safe}>
+          <CharacterRewardView
+            styles={styles}
+            colors={colors}
+            claimStarterCharacter={claimStarterCharacter}
             onDone={finishOnboarding}
           />
         </SafeAreaView>
@@ -391,18 +521,12 @@ export default function OnboardingScreen() {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe}>
-        <View style={styles.progressHeader}>
-          <SegmentedProgress colors={colors} styles={styles} total={questions.length} current={qIndex} />
-          <Text style={styles.progressCount}>
-            {qIndex + 1} of {questions.length} · no wrong answers, just your gut
-          </Text>
-        </View>
-
         <QuestionCard
           key={question.id}
           styles={styles}
           colors={colors}
           question={question}
+          guideMessage={QUESTION_GUIDE_LINES[qIndex] || QUESTION_GUIDE_LINES[QUESTION_GUIDE_LINES.length - 1]}
           onAnswer={handleAnswer}
         />
       </SafeAreaView>
@@ -411,10 +535,17 @@ export default function OnboardingScreen() {
 }
 
 // Routes each question to its interactive input medium based on input_type.
-function QuestionCard({ styles, colors, question, onAnswer }) {
+function QuestionCard({ styles, colors, question, guideMessage, onAnswer }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const [guideDone, setGuideDone] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [confirmOptionId, setConfirmOptionId] = useState(null);
+
   useEffect(() => {
     anim.setValue(0);
+    setGuideDone(false);
+    setDragging(false);
+    setConfirmOptionId(null);
     Animated.timing(anim, {
       toValue: 1,
       duration: 380,
@@ -424,6 +555,8 @@ function QuestionCard({ styles, colors, question, onAnswer }) {
   }, [question.id]);
 
   const inputType = question.input_type || 'choice';
+  const useVertical = VERTICAL_SCALE_IDS.has(question.id);
+  const needsConfirmFooter = useVertical || inputType === 'scale';
   const submit = (optionId) => onAnswer(question, optionId);
 
   return (
@@ -436,26 +569,69 @@ function QuestionCard({ styles, colors, question, onAnswer }) {
         },
       ]}
     >
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.qScroll}>
-        <View style={styles.qIconWrap}>
-          <Ionicons name={questionIcon(question)} size={44} color={colors.primary} />
-        </View>
-        <View style={styles.topicChip}>
-          <Text style={styles.topicChipText}>{question.topic}</Text>
-        </View>
-        <Text style={styles.qVibe}>{question.vibe}</Text>
-        <Text style={styles.qPrompt}>{question.prompt}</Text>
+      <MoneyBotGuide
+        message={guideMessage}
+        onDone={() => setGuideDone(true)}
+        avatarSize={56}
+        style={styles.qGuide}
+      />
 
-        {inputType === 'truefalse' && (
-          <TrueFalseInput styles={styles} colors={colors} question={question} onSubmit={submit} />
-        )}
-        {inputType === 'scale' && (
-          <ScaleInput styles={styles} colors={colors} question={question} onSubmit={submit} />
-        )}
-        {(inputType === 'choice' || !['truefalse', 'scale'].includes(inputType)) && (
-          <ChoiceInput styles={styles} colors={colors} question={question} onSubmit={submit} />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        // Disable page scroll while dragging a slider so the finger stays on the track.
+        scrollEnabled={!dragging}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.qScroll}
+      >
+        {guideDone && (
+          <>
+            <Text style={styles.qPrompt}>{question.prompt}</Text>
+
+            {useVertical && (
+              <VerticalScaleInput
+                styles={styles}
+                colors={colors}
+                question={question}
+                onSubmit={submit}
+                onDragChange={setDragging}
+                showSubmit={false}
+                onSelectionChange={setConfirmOptionId}
+              />
+            )}
+            {!useVertical && inputType === 'truefalse' && (
+              <TrueFalseInput styles={styles} colors={colors} question={question} onSubmit={submit} />
+            )}
+            {!useVertical && inputType === 'scale' && (
+              <ScaleInput
+                styles={styles}
+                colors={colors}
+                question={question}
+                onSubmit={submit}
+                onDragChange={setDragging}
+                showSubmit={false}
+                onSelectionChange={setConfirmOptionId}
+              />
+            )}
+            {!useVertical && (inputType === 'choice' || !['truefalse', 'scale'].includes(inputType)) && (
+              <ChoiceInput styles={styles} colors={colors} question={question} onSubmit={submit} />
+            )}
+          </>
         )}
       </ScrollView>
+
+      {guideDone && needsConfirmFooter && (
+        <View style={styles.qFooter}>
+          <PrimaryButton
+            styles={styles}
+            colors={colors}
+            label="Sounds good"
+            icon="checkmark"
+            disabled={!confirmOptionId}
+            onPress={() => confirmOptionId && submit(confirmOptionId)}
+          />
+        </View>
+      )}
     </Animated.View>
   );
 }
@@ -548,24 +724,38 @@ function TrueFalseInput({ styles, colors, question, onSubmit }) {
   );
 }
 
-// --- Medium 3: draggable slider scale ---
-function ScaleInput({ styles, colors, question, onSubmit }) {
+// --- Medium 3: forgiving horizontal slider ---
+function ScaleInput({
+  styles, colors, question, onSubmit, onDragChange,
+  showSubmit = true, onSelectionChange,
+}) {
   const options = question.options;
   const n = options.length;
   const maxIndex = Math.max(1, n - 1);
   const [index, setIndex] = useState(Math.floor((n - 1) / 2));
   const [dragging, setDragging] = useState(false);
-  const trackWidth = useRef(0);
+  const trackRef = useRef(null);
+  const trackLayout = useRef({ x: 0, width: 0 });
   const lastIndex = useRef(index);
+  const onDragChangeRef = useRef(onDragChange);
+  onDragChangeRef.current = onDragChange;
 
   const readoutAnim = useRef(new Animated.Value(1)).current;
   const knobScale = useRef(new Animated.Value(1)).current;
 
+  const setDrag = (next) => {
+    setDragging(next);
+    onDragChangeRef.current?.(next);
+  };
+
   useEffect(() => {
-    Animated.spring(knobScale, { toValue: dragging ? 1.3 : 1, speed: 30, bounciness: 10, useNativeDriver: true }).start();
+    onSelectionChange?.(options[index]?.id ?? null);
+  }, [index, options, onSelectionChange]);
+
+  useEffect(() => {
+    Animated.spring(knobScale, { toValue: dragging ? 1.25 : 1, speed: 30, bounciness: 10, useNativeDriver: true }).start();
   }, [dragging]);
 
-  // Small pop on the readout whenever the selected option changes.
   const bumpReadout = () => {
     readoutAnim.setValue(0.85);
     Animated.spring(readoutAnim, { toValue: 1, speed: 40, bounciness: 12, useNativeDriver: true }).start();
@@ -579,21 +769,36 @@ function ScaleInput({ styles, colors, question, onSubmit }) {
     }
   };
 
-  const setFromX = (x) => {
-    const w = trackWidth.current;
-    if (!w) return;
-    const ratio = Math.min(1, Math.max(0, x / w));
+  const setFromPageX = (pageX) => {
+    const { x, width } = trackLayout.current;
+    if (!width) return;
+    const ratio = Math.min(1, Math.max(0, (pageX - x) / width));
     applyIndex(Math.round(ratio * maxIndex));
+  };
+
+  const measureTrack = () => {
+    trackRef.current?.measureInWindow?.((x, _y, width) => {
+      trackLayout.current = { x, width };
+    });
   };
 
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => { setDragging(true); setFromX(evt.nativeEvent.locationX); },
-      onPanResponderMove: (evt) => setFromX(evt.nativeEvent.locationX),
-      onPanResponderRelease: () => setDragging(false),
-      onPanResponderTerminate: () => setDragging(false),
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (evt) => {
+        setDrag(true);
+        measureTrack();
+        setFromPageX(evt.nativeEvent.pageX);
+      },
+      onPanResponderMove: (evt, gesture) => {
+        setFromPageX(gesture.moveX || evt.nativeEvent.pageX);
+      },
+      onPanResponderRelease: () => setDrag(false),
+      onPanResponderTerminate: () => setDrag(false),
     }),
   ).current;
 
@@ -606,8 +811,10 @@ function ScaleInput({ styles, colors, question, onSubmit }) {
       </Animated.View>
 
       <View
+        ref={trackRef}
         style={styles.scaleTrack}
-        onLayout={(e) => { trackWidth.current = e.nativeEvent.layout.width; }}
+        onLayout={measureTrack}
+        hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
         {...pan.panHandlers}
       >
         <View style={styles.scaleBase} pointerEvents="none" />
@@ -649,13 +856,182 @@ function ScaleInput({ styles, colors, question, onSubmit }) {
         ))}
       </View>
 
-      <PrimaryButton
-        styles={styles}
-        colors={colors}
-        label="Lock it in"
-        icon="lock-closed"
-        onPress={() => onSubmit(options[index].id)}
-      />
+      {showSubmit && (
+        <PrimaryButton
+          styles={styles}
+          colors={colors}
+          label="Sounds good"
+          icon="checkmark"
+          onPress={() => onSubmit(options[index].id)}
+        />
+      )}
+    </View>
+  );
+}
+
+function classifyScaleOption(opt) {
+  const t = (opt.text || '').toLowerCase();
+  if (t.includes('not sure') || t.includes("don't know") || t.includes('unsure')) return 'unsure';
+  if (t.includes('down') || t.includes('less') || t.includes('lower')) return 'down';
+  if (t.includes('up') || t.includes('more') || t.includes('higher')) return 'up';
+  if (t.includes('same') || t.includes('stay') || t.includes('exact')) return 'same';
+  return 'other';
+}
+
+// --- Medium 4: vertical "up / same / down" slider (bond prices) ---
+function VerticalScaleInput({
+  styles, colors, question, onSubmit, onDragChange,
+  showSubmit = true, onSelectionChange,
+}) {
+  const options = question.options || [];
+  const byKind = useMemo(() => {
+    const map = { up: null, same: null, down: null, unsure: null, other: [] };
+    options.forEach((opt) => {
+      const kind = classifyScaleOption(opt);
+      if (kind === 'other') map.other.push(opt);
+      else if (!map[kind]) map[kind] = opt;
+      else map.other.push(opt);
+    });
+    return map;
+  }, [options]);
+
+  const axis = [byKind.up, byKind.same, byKind.down].filter(Boolean);
+  const extras = [byKind.unsure, ...byKind.other].filter(Boolean);
+  const n = axis.length;
+  const maxIndex = Math.max(1, n - 1);
+  const defaultIdx = Math.min(1, maxIndex);
+  const [index, setIndex] = useState(defaultIdx);
+  const [dragging, setDragging] = useState(false);
+  const trackRef = useRef(null);
+  const trackLayout = useRef({ y: 0, height: 0 });
+  const lastIndex = useRef(index);
+  const knobScale = useRef(new Animated.Value(1)).current;
+  const onDragChangeRef = useRef(onDragChange);
+  onDragChangeRef.current = onDragChange;
+
+  const setDrag = (next) => {
+    setDragging(next);
+    onDragChangeRef.current?.(next);
+  };
+
+  const selected = axis[index];
+
+  useEffect(() => {
+    onSelectionChange?.(selected?.id ?? null);
+  }, [selected?.id, onSelectionChange]);
+
+  useEffect(() => {
+    Animated.spring(knobScale, { toValue: dragging ? 1.2 : 1, speed: 30, bounciness: 10, useNativeDriver: true }).start();
+  }, [dragging]);
+
+  const applyIndex = (next) => {
+    if (next !== lastIndex.current) {
+      lastIndex.current = next;
+      setIndex(next);
+    }
+  };
+
+  const setFromPageY = (pageY) => {
+    const { y, height } = trackLayout.current;
+    if (!height) return;
+    const ratio = Math.min(1, Math.max(0, (pageY - y) / height));
+    applyIndex(Math.round(ratio * maxIndex));
+  };
+
+  const measureTrack = () => {
+    trackRef.current?.measureInWindow?.((_x, y, _w, height) => {
+      trackLayout.current = { y, height };
+    });
+  };
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (evt) => {
+        setDrag(true);
+        measureTrack();
+        setFromPageY(evt.nativeEvent.pageY);
+      },
+      onPanResponderMove: (evt, gesture) => {
+        setFromPageY(gesture.moveY || evt.nativeEvent.pageY);
+      },
+      onPanResponderRelease: () => setDrag(false),
+      onPanResponderTerminate: () => setDrag(false),
+    }),
+  ).current;
+
+  const pct = `${(index / maxIndex) * 100}%`;
+
+  return (
+    <View style={styles.vScaleWrap}>
+      <View style={styles.vScaleReadout}>
+        <Text style={styles.scaleReadoutText}>{selected?.text || '—'}</Text>
+      </View>
+
+      <View style={styles.vScaleRow}>
+        <View style={styles.vScaleLabelsCol}>
+          {axis.map((opt, i) => (
+            <TouchableOpacity key={opt.id} onPress={() => applyIndex(i)} activeOpacity={0.7} style={styles.vScaleLabelBtn}>
+              <Text style={[styles.vScaleLabelText, i === index && styles.scaleLabelTextActive]} numberOfLines={2}>
+                {opt.text}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View
+          ref={trackRef}
+          style={styles.vScaleTrack}
+          onLayout={measureTrack}
+          hitSlop={{ top: 20, bottom: 20, left: 36, right: 36 }}
+          {...pan.panHandlers}
+        >
+          <View style={styles.vScaleBase} pointerEvents="none" />
+          <View style={[styles.vScaleFill, { height: pct }]} pointerEvents="none" />
+          {axis.map((opt, i) => (
+            <View
+              key={opt.id}
+              style={[
+                styles.vScaleTick,
+                { top: `${(i / maxIndex) * 100}%` },
+                i === index && styles.scaleTickActive,
+              ]}
+              pointerEvents="none"
+            />
+          ))}
+          <Animated.View
+            style={[styles.vScaleKnob, { top: pct, transform: [{ scale: knobScale }] }]}
+            pointerEvents="none"
+          >
+            <View style={styles.scaleKnobInner} />
+          </Animated.View>
+        </View>
+      </View>
+
+      {extras.map((opt) => (
+        <TouchableOpacity
+          key={opt.id}
+          style={styles.tfExtra}
+          activeOpacity={0.8}
+          onPress={() => onSubmit(opt.id)}
+        >
+          <Text style={styles.tfExtraText}>{opt.text}</Text>
+        </TouchableOpacity>
+      ))}
+
+      {showSubmit && (
+        <PrimaryButton
+          styles={styles}
+          colors={colors}
+          label="Sounds good"
+          icon="checkmark"
+          onPress={() => selected && onSubmit(selected.id)}
+        />
+      )}
     </View>
   );
 }
@@ -704,6 +1080,8 @@ function GoalChip({ styles, colors, goal, index, selected, onToggle }) {
 
 function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const [guideDone, setGuideDone] = useState(false);
+
   useEffect(() => {
     Animated.timing(anim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
   }, []);
@@ -721,41 +1099,223 @@ function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
       ]}
     >
       <View style={styles.goalsHeader}>
-        <View style={styles.introIcon}>
-          <Ionicons name="rocket" size={36} color={colors.primary} />
-        </View>
-        <Text style={styles.introTitle}>What brings you to MoneyBot?</Text>
-        <Text style={styles.introSub}>
-          Pick what matters most — we{"'"}ll tailor your journey. Choose as many as you like.
-        </Text>
+        <MoneyBotGuide
+          message={GOALS_GUIDE_MESSAGE}
+          onDone={() => setGuideDone(true)}
+          avatarSize={64}
+        />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.goalsScroll}>
-        <View style={styles.goalsGrid}>
-          {GOALS.map((g, i) => (
-            <GoalChip
-              key={g.key}
+      {guideDone && (
+        <>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.goalsScroll}>
+            <View style={styles.goalsGrid}>
+              {GOALS.map((g, i) => (
+                <GoalChip
+                  key={g.key}
+                  styles={styles}
+                  colors={colors}
+                  goal={g}
+                  index={i}
+                  selected={selected.includes(g.key)}
+                  onToggle={onToggle}
+                />
+              ))}
+            </View>
+          </ScrollView>
+
+          <View style={styles.goalsFooter}>
+            <PrimaryButton
               styles={styles}
               colors={colors}
-              goal={g}
-              index={i}
-              selected={selected.includes(g.key)}
-              onToggle={onToggle}
+              label={count > 0 ? `Continue${count > 1 ? ` · ${count} goals` : ''}` : 'Skip for now'}
+              icon="arrow-forward"
+              onPress={onContinue}
             />
-          ))}
-        </View>
-      </ScrollView>
+          </View>
+        </>
+      )}
+    </Animated.View>
+  );
+}
 
-      <View style={styles.goalsFooter}>
+function GreetView({ styles, colors, firstName, typingDone, onTypingDone, onContinue }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(anim, { toValue: 1, friction: 7, tension: 55, useNativeDriver: true }).start();
+  }, []);
+
+  const message = firstName
+    ? `Hey ${firstName}, I'm MoneyBot. Think of me as a chill finance friend. We'll chat about what matters to you, I'll ask a few easy questions, and then I'll set you up with a free character. Sound good?`
+    : GREET_MESSAGE;
+
+  return (
+    <View style={styles.greetWrap}>
+      <Animated.View
+        style={{
+          alignItems: 'center',
+          opacity: anim,
+          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }],
+        }}
+      >
+        <View style={styles.greetAvatarRing}>
+          <Image source={GUIDE_IMAGE} style={styles.greetAvatar} resizeMode="contain" />
+        </View>
+        <Text style={styles.rewardKicker}>MEET YOUR COACH</Text>
+        <Text style={styles.greetTitle}>MoneyBot</Text>
+      </Animated.View>
+
+      <View style={styles.greetBubble}>
+        <TypewriterText
+          key={message}
+          text={message}
+          style={styles.greetMessage}
+          speed={24}
+          onDone={onTypingDone}
+        />
+      </View>
+
+      {typingDone && (
         <PrimaryButton
           styles={styles}
           colors={colors}
-          label={count > 0 ? `Continue${count > 1 ? ` · ${count} goals` : ''}` : 'Skip for now'}
+          label="Let's go"
           icon="arrow-forward"
           onPress={onContinue}
         />
+      )}
+    </View>
+  );
+}
+
+function BetweenView({ styles, message, onContinue }) {
+  const [typed, setTyped] = useState(false);
+  const advanced = useRef(false);
+
+  useEffect(() => {
+    advanced.current = false;
+    setTyped(false);
+  }, [message]);
+
+  useEffect(() => {
+    if (!typed || advanced.current) return undefined;
+    const timer = setTimeout(() => {
+      if (advanced.current) return;
+      advanced.current = true;
+      onContinue();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [typed, onContinue]);
+
+  return (
+    <View style={styles.betweenWrap}>
+      <MoneyBotGuide
+        key={message}
+        message={message}
+        onDone={() => setTyped(true)}
+        avatarSize={72}
+        style={styles.betweenGuide}
+      />
+    </View>
+  );
+}
+
+function CharacterRewardView({ styles, colors, claimStarterCharacter, onDone }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  const [status, setStatus] = useState('loading'); // loading | ready | error
+  const [character, setCharacter] = useState(null);
+  const [typed, setTyped] = useState(false);
+  const claimedRef = useRef(false);
+
+  const retryClaim = useCallback(async () => {
+    setStatus('loading');
+    try {
+      const result = await claimStarterCharacter();
+      if (result?.character) {
+        setCharacter(result.character);
+        setStatus('ready');
+        anim.setValue(0);
+        Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
+      } else {
+        setStatus('error');
+      }
+    } catch (e) {
+      setStatus('error');
+    }
+  }, [claimStarterCharacter, anim]);
+
+  useEffect(() => {
+    if (claimedRef.current) return;
+    claimedRef.current = true;
+    retryClaim();
+  }, [retryClaim]);
+
+  if (status === 'loading') {
+    return (
+      <View style={[styles.rewardWrap, styles.center]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={styles.calcText}>Picking your starter character</Text>
       </View>
-    </Animated.View>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <View style={styles.rewardWrap}>
+        <Text style={styles.rewardTitle}>One sec</Text>
+        <Text style={styles.rewardSub}>
+          Couldn{"'"}t grab your free character. Try again. It{"'"}s waiting for you.
+        </Text>
+        <PrimaryButton styles={styles} colors={colors} label="Try again" icon="refresh" onPress={retryClaim} />
+        <TouchableOpacity style={styles.notifSkip} activeOpacity={0.7} onPress={onDone}>
+          <Text style={styles.notifSkipText}>Skip for now</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const name = character?.name || 'your new friend';
+  const message = `Meet ${name}, your first MoneyBot friend. On the house. Head to the Moneyverse to hang out.`;
+
+  return (
+    <View style={styles.rewardWrap}>
+      <Animated.View
+        style={{
+          alignItems: 'center',
+          opacity: anim,
+          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
+        }}
+      >
+        <Text style={styles.rewardKicker}>FREE CHARACTER</Text>
+        <View style={styles.charRevealFrame}>
+          <BrandAvatar character={character} size={140} autoRotate logoSize={72} />
+        </View>
+        <Text style={styles.rewardTitle}>{name}</Text>
+      </Animated.View>
+
+      <View style={styles.greetBubble}>
+        <View style={styles.charGuideRow}>
+          <Image source={GUIDE_IMAGE} style={styles.charGuideThumb} resizeMode="contain" />
+          <TypewriterText
+            key={message}
+            text={message}
+            style={styles.greetMessage}
+            speed={22}
+            onDone={() => setTyped(true)}
+          />
+        </View>
+      </View>
+
+      {typed && (
+        <PrimaryButton
+          styles={styles}
+          colors={colors}
+          label="See them in the Moneyverse"
+          icon="planet"
+          onPress={onDone}
+        />
+      )}
+    </View>
   );
 }
 
@@ -792,13 +1352,13 @@ function RevealView({ styles, colors, rank, score, total, onDone }) {
           <Text style={styles.revealCardText}>
             {rank?.next_label
               ? `This is just the start. Earn ${rank.points_to_next} more points to reach ${rank.next_label}.`
-              : `You're already at the top tier — keep learning to stay sharp!`}
+              : `You're already at the top tier. Keep learning to stay sharp.`}
           </Text>
         </View>
         <View style={styles.revealCardRow}>
           <Ionicons name="gift" size={18} color={colors.primary} />
           <Text style={styles.revealCardText}>
-            We{"'"}ve stashed a welcome bonus for you — let{"'"}s grab it before your first lesson.
+            There{"'"}s a welcome bonus waiting for you. Let{"'"}s grab it next.
           </Text>
         </View>
       </View>
@@ -891,7 +1451,7 @@ function RewardView({ styles, colors, botBucks, xp, onNext }) {
           <Ionicons name="gift" size={48} color={colors.primary} />
         </View>
         <Text style={styles.rewardKicker}>WELCOME BONUS</Text>
-        <Text style={styles.rewardTitle}>You{"'"}re all set!</Text>
+        <Text style={styles.rewardTitle}>You{"'"}re all set</Text>
         <Text style={styles.rewardSub}>
           Here{"'"}s a head start for finishing your money check-in.
         </Text>
@@ -918,38 +1478,85 @@ function RewardView({ styles, colors, botBucks, xp, onNext }) {
         />
       </View>
 
-      <PrimaryButton styles={styles} colors={colors} label="Nice — keep going" icon="arrow-forward" onPress={onNext} />
+      <PrimaryButton styles={styles} colors={colors} label="Nice, keep going" icon="arrow-forward" onPress={onNext} />
     </View>
   );
 }
 
+const STREAK_GOAL_OPTIONS = [
+  { days: 7, label: 'Casual', blurb: 'Easy does it' },
+  { days: 14, label: 'Regular', blurb: 'Build the habit' },
+  { days: 30, label: 'Serious', blurb: 'Real momentum' },
+  { days: 60, label: 'Intense', blurb: 'All in' },
+];
+
 function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDone }) {
   const anim = useRef(new Animated.Value(0)).current;
   const flame = useRef(new Animated.Value(1)).current;
+  const claimBurst = useRef(new Animated.Value(0)).current;
+  const cardPop = useRef(new Animated.Value(1)).current;
   const [claimed, setClaimed] = useState(dailyReward?.claimed_today ?? false);
   const [earned, setEarned] = useState(0);
+  const [goalDays, setGoalDays] = useState(7);
+  const flameLoop = useRef(null);
 
   const amount = dailyReward?.claim_amount ?? dailyReward?.tiers?.[0]?.bot_bucks ?? 5;
+  const selectedGoal = STREAK_GOAL_OPTIONS.find((o) => o.days === goalDays) || STREAK_GOAL_OPTIONS[0];
 
   useEffect(() => {
     Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
-    Animated.loop(
+    flameLoop.current = Animated.loop(
       Animated.sequence([
         Animated.timing(flame, { toValue: 1.12, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
         Animated.timing(flame, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
-    ).start();
+    );
+    flameLoop.current.start();
+    return () => flameLoop.current?.stop();
   }, []);
 
   async function handleClaim() {
-    const result = await onClaim();
+    const result = await onClaim({ streakGoal: goalDays });
     const got = result?.bot_bucks_earned ?? amount;
     setEarned(got);
     setClaimed(true);
+
+    // Flame whoosh + reward card pop on successful claim.
+    flameLoop.current?.stop();
+    claimBurst.setValue(0);
+    Animated.parallel([
+      Animated.sequence([
+        Animated.spring(flame, { toValue: 1.45, friction: 4, tension: 120, useNativeDriver: true }),
+        Animated.spring(flame, { toValue: 1.08, friction: 5, tension: 80, useNativeDriver: true }),
+      ]),
+      Animated.timing(claimBurst, {
+        toValue: 1,
+        duration: 700,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.spring(cardPop, { toValue: 1.06, friction: 5, tension: 140, useNativeDriver: true }),
+        Animated.spring(cardPop, { toValue: 1, friction: 6, tension: 100, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }
+
+  function pickGoal(days) {
+    setGoalDays(days);
+    Animated.sequence([
+      Animated.spring(cardPop, { toValue: 0.97, friction: 8, tension: 200, useNativeDriver: true }),
+      Animated.spring(cardPop, { toValue: 1, friction: 5, tension: 160, useNativeDriver: true }),
+    ]).start();
   }
 
   return (
-    <View style={styles.streakWrap}>
+    <ScrollView
+      style={styles.streakWrap}
+      contentContainerStyle={styles.streakScroll}
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
       <Animated.View
         style={{
           alignItems: 'center',
@@ -957,41 +1564,88 @@ function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDon
           transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
         }}
       >
-        <Animated.View style={[styles.streakBadge, { transform: [{ scale: flame }] }]}>
-          <Ionicons name="flame" size={54} color="#fff" />
-        </Animated.View>
+        <View style={styles.streakBadgeWrap}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.streakBurstRing,
+              {
+                opacity: claimBurst.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0.55, 0] }),
+                transform: [{
+                  scale: claimBurst.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.8] }),
+                }],
+              },
+            ]}
+          />
+          <Animated.View style={[styles.streakBadge, { transform: [{ scale: flame }] }]}>
+            <Ionicons name="flame" size={54} color="#fff" />
+          </Animated.View>
+        </View>
         <Text style={styles.rewardKicker}>DAY 1 STREAK</Text>
-        <Text style={styles.rewardTitle}>{claimed ? 'Streak started!' : 'Start your streak'}</Text>
+        <Text style={styles.rewardTitle}>{claimed ? 'Streak started' : 'Commit to a streak'}</Text>
         <Text style={styles.rewardSub}>
           {claimed
-            ? 'Come back tomorrow to keep it alive and earn even more.'
-            : 'Claim your first daily reward, then come back every day to grow it.'}
+            ? `You're going for ${goalDays} days. Come back tomorrow to keep it alive.`
+            : 'How many days in a row can you show up? Pick a goal, then claim Day 1.'}
         </Text>
       </Animated.View>
 
-      <View style={styles.streakCard}>
+      {!claimed && (
+        <View style={styles.streakGoalList}>
+          {STREAK_GOAL_OPTIONS.map((opt) => {
+            const selected = opt.days === goalDays;
+            return (
+              <Bouncy
+                key={opt.days}
+                style={[styles.streakGoalRow, selected && styles.streakGoalRowSel]}
+                onPress={() => pickGoal(opt.days)}
+              >
+                <View style={styles.streakGoalTextWrap}>
+                  <Text style={[styles.streakGoalLabel, selected && styles.streakGoalLabelSel]}>
+                    {opt.label}
+                  </Text>
+                  <Text style={styles.streakGoalBlurb}>{opt.blurb}</Text>
+                </View>
+                <Text style={[styles.streakGoalDays, selected && styles.streakGoalDaysSel]}>
+                  {opt.days} days
+                </Text>
+                <View style={[styles.streakGoalRadio, selected && styles.streakGoalRadioSel]}>
+                  {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                </View>
+              </Bouncy>
+            );
+          })}
+        </View>
+      )}
+
+      <Animated.View style={[styles.streakCard, { transform: [{ scale: cardPop }] }]}>
         {claimed ? (
-          <View style={styles.streakClaimedRow}>
-            <View style={styles.streakCheck}>
-              <Ionicons name="checkmark" size={18} color={colors.background} />
+          <View style={styles.streakClaimedCol}>
+            <View style={styles.streakClaimedRow}>
+              <View style={styles.streakCheck}>
+                <Ionicons name="checkmark" size={18} color={colors.background} />
+              </View>
+              <Text style={styles.streakClaimedText}>
+                <CountUp value={earned} prefix="+" style={styles.streakClaimedText} /> Bot Bucks added
+              </Text>
             </View>
-            <Text style={styles.streakClaimedText}>
-              <CountUp value={earned} prefix="+" style={styles.streakClaimedText} /> Bot Bucks added
+            <Text style={styles.streakGoalCommitted}>
+              Goal: {selectedGoal.label} · {goalDays} days
             </Text>
           </View>
         ) : (
           <View style={styles.streakAmountRow}>
             <Ionicons name="logo-bitcoin" size={24} color={colors.botBucks || '#F5B72B'} />
             <Text style={styles.streakAmount}>+{amount}</Text>
-            <Text style={styles.streakAmountLabel}>Bot Bucks</Text>
+            <Text style={styles.streakAmountLabel}>Bot Bucks today</Text>
           </View>
         )}
-      </View>
+      </Animated.View>
 
       {claimed ? (
-        <PrimaryButton styles={styles} colors={colors} label="Start my first lesson" icon="arrow-forward" onPress={onDone} />
+        <PrimaryButton styles={styles} colors={colors} label="Keep going" icon="arrow-forward" onPress={onDone} />
       ) : (
-        <TouchableOpacity style={styles.primaryBtn} activeOpacity={0.85} onPress={handleClaim} disabled={claiming}>
+        <PressScaleButton style={styles.primaryBtn} onPress={handleClaim} disabled={claiming}>
           <LinearGradient
             colors={['#FF8C42', '#FF6B35']}
             style={styles.primaryBtnGrad}
@@ -1001,14 +1655,16 @@ function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDon
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Text style={[styles.primaryBtnText, { color: '#fff' }]}>Claim {amount} Bot Bucks</Text>
-                <Ionicons name="logo-bitcoin" size={19} color="#fff" />
+                <Text style={[styles.primaryBtnText, { color: '#fff' }]}>
+                  Claim Day 1 · {amount} Bot Bucks
+                </Text>
+                <Ionicons name="flame" size={19} color="#fff" />
               </>
             )}
           </LinearGradient>
-        </TouchableOpacity>
+        </PressScaleButton>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -1016,9 +1672,9 @@ function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDon
 // "Allow" (big animated bell, benefit bullets, glowing CTA) but always leave an
 // honest, low-friction escape hatch so the user can decline.
 const NOTIF_BENEFITS = [
-  { icon: 'flame', tint: '#FF6B35', text: 'Protect your streak — a nudge before it breaks at midnight.' },
-  { icon: 'logo-bitcoin', tint: '#F5B72B', text: 'Never miss free Bot Bucks and daily rewards.' },
-  { icon: 'trophy', tint: '#A66BFF', text: 'Get pinged the moment new lessons and challenges drop.' },
+  { icon: 'flame', tint: '#FF6B35', text: 'A nudge before your streak breaks at midnight.' },
+  { icon: 'logo-bitcoin', tint: '#F5B72B', text: "Reminders so you don't miss free Bot Bucks." },
+  { icon: 'trophy', tint: '#A66BFF', text: 'Heads up when new lessons and challenges drop.' },
 ];
 
 function NotificationBenefit({ styles, colors, icon, tint, text, delay }) {
@@ -1099,7 +1755,7 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
         setBusy(false);
         Alert.alert(
           'Turn on in Settings',
-          "Notifications are currently off for MoneyBot. iOS only asks once — open Settings to switch them on.",
+          "Notifications are currently off for MoneyBot. iOS only asks once, so open Settings to switch them on.",
           [
             { text: 'Not now', style: 'cancel', onPress: onDone },
             { text: 'Open Settings', onPress: () => { Linking.openSettings(); onDone(); } },
@@ -1180,7 +1836,7 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
             },
           ]}
         />
-        <TouchableOpacity style={styles.primaryBtn} activeOpacity={0.85} onPress={handleAllow} disabled={busy}>
+        <PressScaleButton style={styles.primaryBtn} onPress={handleAllow} disabled={busy}>
           <LinearGradient
             colors={[colors.primary, colors.primaryDark]}
             style={styles.primaryBtnGrad}
@@ -1195,8 +1851,8 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
               </>
             )}
           </LinearGradient>
-        </TouchableOpacity>
-        <Text style={styles.notifReassure}>Tap “Allow” when your phone asks — you can change this anytime.</Text>
+        </PressScaleButton>
+        <Text style={styles.notifReassure}>Tap Allow when your phone asks. You can change this anytime.</Text>
         <TouchableOpacity style={styles.notifSkip} activeOpacity={0.7} onPress={finish} disabled={busy}>
           <Text style={styles.notifSkipText}>Maybe later</Text>
         </TouchableOpacity>
@@ -1205,9 +1861,9 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
   );
 }
 
-function PrimaryButton({ styles, colors, label, icon, onPress }) {
+function PrimaryButton({ styles, colors, label, icon, onPress, disabled }) {
   return (
-    <TouchableOpacity style={styles.primaryBtn} activeOpacity={0.85} onPress={onPress}>
+    <PressScaleButton style={styles.primaryBtn} onPress={onPress} disabled={disabled}>
       <LinearGradient
         colors={[colors.primary, colors.primaryDark]}
         style={styles.primaryBtnGrad}
@@ -1216,7 +1872,7 @@ function PrimaryButton({ styles, colors, label, icon, onPress }) {
         <Text style={styles.primaryBtnText}>{label}</Text>
         {icon && <Ionicons name={icon} size={20} color={colors.background} />}
       </LinearGradient>
-    </TouchableOpacity>
+    </PressScaleButton>
   );
 }
 
@@ -1253,7 +1909,7 @@ const makeStyles = (colors) => StyleSheet.create({
 
   // Goals
   goalsWrap: { flex: 1, paddingTop: 12 },
-  goalsHeader: { alignItems: 'center', paddingHorizontal: 24, marginBottom: 20 },
+  goalsHeader: { paddingHorizontal: 20, marginBottom: 18 },
   introIcon: {
     width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 18,
@@ -1280,6 +1936,37 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   goalsFooter: { paddingHorizontal: 24, paddingTop: 10, paddingBottom: 16 },
 
+  // Greet
+  greetWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center', gap: 22 },
+  greetAvatarRing: {
+    width: 132, height: 132, borderRadius: 66, overflow: 'hidden', marginBottom: 16,
+    borderWidth: 2, borderColor: 'rgba(61,220,95,0.45)', backgroundColor: colors.surfaceElevated,
+  },
+  greetAvatar: { width: '100%', height: '100%' },
+  greetTitle: { fontSize: 32, fontWeight: '900', color: colors.white, letterSpacing: -0.6, marginBottom: 4 },
+  greetBubble: {
+    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 16,
+    borderWidth: 1, borderColor: colors.border, marginBottom: 8,
+  },
+  greetMessage: { fontSize: 16, fontWeight: '600', color: colors.white, lineHeight: 24 },
+  betweenWrap: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    justifyContent: 'center',
+    gap: 28,
+  },
+  betweenGuide: { marginBottom: 4 },
+  charGuideRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  charGuideThumb: {
+    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.primaryTintStrong,
+  },
+  charRevealFrame: {
+    width: 168, height: 168, borderRadius: 28, overflow: 'hidden', marginBottom: 14, marginTop: 8,
+    backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
   // Progress
   progressHeader: { paddingHorizontal: 24, paddingTop: 8, paddingBottom: 4, gap: 10 },
   progressCount: { fontSize: 13, fontWeight: '700', color: colors.textSecondary, textAlign: 'center' },
@@ -1288,26 +1975,20 @@ const makeStyles = (colors) => StyleSheet.create({
 
   // Question
   qWrap: { flex: 1 },
-  qScroll: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 32 },
-  qIconWrap: {
-    alignSelf: 'center',
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    alignItems: 'center',
+  qScroll: {
+    flexGrow: 1,
     justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.3)',
-    marginBottom: 14,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 16,
   },
-  topicChip: {
-    alignSelf: 'center', backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.3)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 5, marginBottom: 14,
+  qFooter: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
-  topicChipText: { fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 },
-  qVibe: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', marginBottom: 10 },
-  qPrompt: { fontSize: 20, fontWeight: '700', color: colors.white, textAlign: 'center', lineHeight: 28, marginBottom: 26 },
+  qGuide: { paddingHorizontal: 24, paddingTop: 12 },
+  qPrompt: { fontSize: 19, fontWeight: '700', color: colors.white, textAlign: 'center', lineHeight: 26, marginBottom: 16 },
   options: { gap: 12 },
   option: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
@@ -1337,34 +2018,65 @@ const makeStyles = (colors) => StyleSheet.create({
   tfExtraSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
   tfExtraText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
 
-  // Scale slider
+  // Scale slider (forgiving touch target)
   scaleWrap: { marginTop: 6 },
   scaleReadout: {
     backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 22, paddingHorizontal: 18,
     borderWidth: 1.5, borderColor: colors.primary, marginBottom: 30, minHeight: 72, justifyContent: 'center',
   },
   scaleReadoutText: { fontSize: 20, fontWeight: '800', color: colors.white, textAlign: 'center' },
-  scaleTrack: { height: 40, justifyContent: 'center', marginBottom: 6 },
+  scaleTrack: { height: 56, justifyContent: 'center', marginBottom: 6, paddingHorizontal: 4 },
   scaleBase: {
-    position: 'absolute', left: 0, right: 0, height: 8, borderRadius: 4, backgroundColor: colors.border,
+    position: 'absolute', left: 4, right: 4, height: 12, borderRadius: 6, backgroundColor: colors.border,
   },
-  scaleFill: { position: 'absolute', left: 0, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  scaleFill: { position: 'absolute', left: 4, height: 12, borderRadius: 6, backgroundColor: colors.primary },
   scaleTick: {
-    position: 'absolute', width: 12, height: 12, borderRadius: 6, marginLeft: -6,
+    position: 'absolute', width: 14, height: 14, borderRadius: 7, marginLeft: -7,
     backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border,
   },
   scaleTickActive: { borderColor: colors.primary, backgroundColor: colors.primary },
   scaleKnob: {
-    position: 'absolute', width: 30, height: 30, borderRadius: 15, marginLeft: -15,
-    backgroundColor: colors.white, borderWidth: 3, borderColor: colors.primary,
+    position: 'absolute', width: 40, height: 40, borderRadius: 20, marginLeft: -20,
+    backgroundColor: colors.white, borderWidth: 4, borderColor: colors.primary,
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4,
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 5,
   },
-  scaleKnobInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  scaleKnobInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
   scaleLabels: { flexDirection: 'row', marginTop: 4, marginBottom: 26 },
-  scaleLabelBtn: { flex: 1, paddingHorizontal: 2, paddingVertical: 6 },
+  scaleLabelBtn: { flex: 1, paddingHorizontal: 2, paddingVertical: 10 },
   scaleLabelText: { fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'center', lineHeight: 14 },
   scaleLabelTextActive: { color: colors.primary, fontWeight: '800' },
+
+  // Vertical scale
+  vScaleWrap: { marginTop: 6, gap: 14 },
+  vScaleReadout: {
+    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 18,
+    borderWidth: 1.5, borderColor: colors.primary, minHeight: 64, justifyContent: 'center',
+  },
+  vScaleRow: { flexDirection: 'row', alignItems: 'stretch', gap: 14, minHeight: 200, flexShrink: 1 },
+  vScaleLabelsCol: { flex: 1, justifyContent: 'space-between', paddingVertical: 4 },
+  vScaleLabelBtn: { paddingVertical: 8 },
+  vScaleLabelText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, lineHeight: 18 },
+  vScaleTrack: {
+    width: 72, borderRadius: 36, backgroundColor: colors.surfaceElevated,
+    borderWidth: 1, borderColor: colors.border, justifyContent: 'flex-start', overflow: 'visible',
+  },
+  vScaleBase: {
+    position: 'absolute', top: 16, bottom: 16, left: 28, width: 16, borderRadius: 8, backgroundColor: colors.border,
+  },
+  vScaleFill: {
+    position: 'absolute', top: 16, left: 28, width: 16, borderRadius: 8, backgroundColor: colors.primary,
+  },
+  vScaleTick: {
+    position: 'absolute', left: 22, width: 28, height: 28, borderRadius: 14, marginTop: -14,
+    backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border,
+  },
+  vScaleKnob: {
+    position: 'absolute', left: 12, width: 48, height: 48, borderRadius: 24, marginTop: -24,
+    backgroundColor: colors.white, borderWidth: 4, borderColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 5,
+  },
 
   // Calculating
   calcText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
@@ -1407,25 +2119,74 @@ const makeStyles = (colors) => StyleSheet.create({
   rewardPillLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
 
   // Streak claim
-  streakWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center' },
+  streakWrap: { flex: 1 },
+  streakScroll: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 24,
+    justifyContent: 'center',
+  },
+  streakBadgeWrap: {
+    width: 120, height: 120, alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+  },
+  streakBurstRing: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 3,
+    borderColor: '#FF8C42',
+    backgroundColor: 'rgba(255,107,53,0.25)',
+  },
   streakBadge: {
-    width: 118, height: 118, borderRadius: 59, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#FF6B35', marginBottom: 18,
+    width: 100, height: 100, borderRadius: 50, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FF6B35',
     shadowColor: '#FF6B35', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 10,
   },
+  streakGoalList: { marginTop: 22, gap: 10 },
+  streakGoalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+  },
+  streakGoalRowSel: {
+    borderColor: '#FF6B35',
+    backgroundColor: 'rgba(255,107,53,0.12)',
+  },
+  streakGoalTextWrap: { flex: 1, minWidth: 0 },
+  streakGoalLabel: { fontSize: 16, fontWeight: '800', color: colors.white, marginBottom: 2 },
+  streakGoalLabelSel: { color: '#FF8C42' },
+  streakGoalBlurb: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
+  streakGoalDays: { fontSize: 14, fontWeight: '800', color: colors.textMuted },
+  streakGoalDaysSel: { color: '#FF8C42' },
+  streakGoalRadio: {
+    width: 24, height: 24, borderRadius: 12,
+    borderWidth: 2, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  streakGoalRadioSel: { backgroundColor: '#FF6B35', borderColor: '#FF6B35' },
   streakCard: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 20, paddingHorizontal: 18,
-    borderWidth: 1, borderColor: colors.border, marginTop: 30, marginBottom: 24, alignItems: 'center',
+    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 18,
+    borderWidth: 1, borderColor: colors.border, marginTop: 18, marginBottom: 20, alignItems: 'center',
   },
   streakAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   streakAmount: { fontSize: 28, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
   streakAmountLabel: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
+  streakClaimedCol: { alignItems: 'center', gap: 10 },
   streakClaimedRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   streakCheck: {
     width: 30, height: 30, borderRadius: 15, backgroundColor: colors.primary,
     alignItems: 'center', justifyContent: 'center',
   },
   streakClaimedText: { fontSize: 17, fontWeight: '800', color: colors.white },
+  streakGoalCommitted: { fontSize: 13, fontWeight: '700', color: '#FF8C42' },
 
   // Notifications opt-in
   notifWrap: { flex: 1 },

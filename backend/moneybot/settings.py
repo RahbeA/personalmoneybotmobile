@@ -29,6 +29,8 @@ ALLOWED_HOSTS = _allowed_hosts if _allowed_hosts else (['*'] if DEBUG else [])
 WEB_DIST = BASE_DIR.parent / 'web' / 'dist'
 
 # OpenAI configuration for the Tutor and Money Chat AI features.
+EXPO_ACCESS_TOKEN = os.environ.get('EXPO_ACCESS_TOKEN', '').strip()
+
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
 

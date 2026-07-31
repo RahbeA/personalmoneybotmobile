@@ -16,6 +16,7 @@ import {
   findNodeHandle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
@@ -317,7 +318,7 @@ export default function AuthScreen({ route, navigation }) {
               <Text style={styles.subtitle}>
                 {isLogin
                   ? `Sign in to your ${BRAND_NAME} account`
-                  : 'Start automating your finances today'}
+                  : 'Start learning money skills today'}
               </Text>
             </Animated.View>
 
@@ -344,6 +345,57 @@ export default function AuthScreen({ route, navigation }) {
                 { opacity: fadeAnim, transform: [{ translateX: shakeAnim }] },
               ]}
             >
+              {/* Social first so Google / Apple stay above the fold */}
+              {isGoogleConfigured && (
+                <TouchableOpacity
+                  style={styles.googleButton}
+                  onPress={handleGoogle}
+                  disabled={googleLoading || loading || !request}
+                  activeOpacity={0.85}
+                >
+                  {googleLoading ? (
+                    <ActivityIndicator color="#1a1a1a" />
+                  ) : (
+                    <>
+                      <Image
+                        source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
+                        style={styles.googleIcon}
+                      />
+                      <Text style={styles.googleButtonText}>Continue with Google</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {appleAvailable && (
+                <View style={styles.appleWrap}>
+                  {appleLoading && (
+                    <View style={styles.appleLoadingOverlay} pointerEvents="none">
+                      <ActivityIndicator color={isDark ? '#000' : '#fff'} />
+                    </View>
+                  )}
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                    buttonStyle={
+                      isDark
+                        ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                        : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                    }
+                    cornerRadius={14}
+                    style={styles.appleButton}
+                    onPress={handleApple}
+                  />
+                </View>
+              )}
+
+              {(isGoogleConfigured || appleAvailable) && (
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or continue with email</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+              )}
+
               {/* Full name (register only) */}
               {!isLogin && (
                 <View style={styles.inputGroup}>
@@ -421,8 +473,15 @@ export default function AuthScreen({ route, navigation }) {
                   <TouchableOpacity
                     onPress={() => setShowPassword(!showPassword)}
                     style={styles.eyeButton}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁'}</Text>
+                    <Ionicons
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={colors.textMuted}
+                    />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -507,59 +566,6 @@ export default function AuthScreen({ route, navigation }) {
                   )}
                 </LinearGradient>
               </TouchableOpacity>
-
-              {/* Divider */}
-              {(isGoogleConfigured || appleAvailable) && (
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-              )}
-
-              {/* Continue with Google */}
-              {isGoogleConfigured && (
-                <TouchableOpacity
-                  style={styles.googleButton}
-                  onPress={handleGoogle}
-                  disabled={googleLoading || loading || !request}
-                  activeOpacity={0.85}
-                >
-                  {googleLoading ? (
-                    <ActivityIndicator color="#1a1a1a" />
-                  ) : (
-                    <>
-                      <Image
-                        source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
-                        style={styles.googleIcon}
-                      />
-                      <Text style={styles.googleButtonText}>Continue with Google</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-
-              {/* Sign in with Apple (iOS, required by Guideline 4.8) */}
-              {appleAvailable && (
-                <View style={styles.appleWrap}>
-                  {appleLoading && (
-                    <View style={styles.appleLoadingOverlay} pointerEvents="none">
-                      <ActivityIndicator color={isDark ? '#000' : '#fff'} />
-                    </View>
-                  )}
-                  <AppleAuthentication.AppleAuthenticationButton
-                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                    buttonStyle={
-                      isDark
-                        ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
-                        : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
-                    }
-                    cornerRadius={14}
-                    style={styles.appleButton}
-                    onPress={handleApple}
-                  />
-                </View>
-              )}
 
               <LegalFooter style={styles.legalFooter} />
             </Animated.View>
@@ -685,9 +691,6 @@ const makeStyles = (colors) => StyleSheet.create({
     right: 14,
     padding: 4,
   },
-  eyeIcon: {
-    fontSize: 18,
-  },
   errorBox: {
     backgroundColor: 'rgba(255, 77, 77, 0.12)',
     borderRadius: 10,
@@ -761,7 +764,6 @@ const makeStyles = (colors) => StyleSheet.create({
     letterSpacing: 0.2,
   },
   appleWrap: {
-    marginTop: 12,
     position: 'relative',
   },
   appleButton: {

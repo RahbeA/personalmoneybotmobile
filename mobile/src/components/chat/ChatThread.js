@@ -21,6 +21,8 @@ export default function ChatThread({
   emptyComponent = null,
   character = null,
   composerStyle = null,
+  composerLeading = null,
+  composerMenu = null,
 }) {
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
@@ -103,13 +105,17 @@ export default function ChatThread({
         {footer}
       </View>
       {onSend && (
-        <View style={[{ paddingBottom: composerBottomPad }, composerStyle]}>
-          <ChatComposer
-            onSend={onSend}
-            disabled={composerDisabled}
-            placeholder={placeholder}
-            embedded={!!composerStyle}
-          />
+        <View style={{ paddingBottom: composerBottomPad }}>
+          <View style={composerStyle}>
+            {composerMenu}
+            <ChatComposer
+              onSend={onSend}
+              disabled={composerDisabled}
+              placeholder={placeholder}
+              embedded={!!composerStyle}
+              leadingAccessory={composerLeading}
+            />
+          </View>
         </View>
       )}
     </KeyboardAvoidingView>

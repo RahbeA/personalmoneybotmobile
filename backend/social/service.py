@@ -168,7 +168,19 @@ def create_notification(recipient, kind, title, body='', actor=None, data=None):
 
     try:
         from .push import push_to_user
-        push_to_user(recipient, title, body or '', data={**(data or {}), 'kind': kind})
+        sent = push_to_user(
+            recipient,
+            title,
+            body or '',
+            data={**(data or {}), 'kind': kind},
+        )
+        if not sent:
+            import logging
+            logging.getLogger(__name__).info(
+                'No Expo push delivered for notification %s (user %s may lack a device token)',
+                notification.id,
+                getattr(recipient, 'id', '?'),
+            )
     except Exception:
         pass
 
@@ -212,6 +224,20 @@ def notify_friend_declined(actor, recipient):
         kind=Notification.TYPE_FRIEND_DECLINED,
         title='Friend request declined',
         body=f'{name} declined your friend request.',
+        actor=actor,
+        data={'user_id': actor.id},
+    )
+
+
+def notify_friend_nudge(actor, recipient):
+    from .models import Notification
+
+    name = display_name(actor)
+    return create_notification(
+        recipient=recipient,
+        kind=Notification.TYPE_FRIEND_NUDGE,
+        title=f'{name} nudged you!',
+        body=f'Your friend {name} nudged you to jump back on MoneyBot and keep learning.',
         actor=actor,
         data={'user_id': actor.id},
     )

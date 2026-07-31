@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Typography, Button, Modal, Form, Input, InputNumber,
-  Select, Switch, Upload, App, Drawer, Empty, Spin, Segmented, Row, Col,
+  Select, Switch, Upload, App, Drawer, Empty, Spin, Segmented, Row, Col, Alert, Space,
 } from 'antd';
-import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
-import { api } from '../api/client';
+import {
+  PlusOutlined, UploadOutlined, ThunderboltOutlined, DownloadOutlined,
+  StarFilled, StarOutlined,
+} from '@ant-design/icons';
+import { api, getToken } from '../api/client';
 import CharacterGridCard from '../components/CharacterGridCard';
 import CharacterModelViewer from '../components/CharacterModelViewer';
 import { brand } from '../theme/tokens';
@@ -18,8 +21,29 @@ const RARITY = [
   { value: 'legendary', label: 'Legendary', color: 'gold' },
 ];
 
+const API_BASE = import.meta.env.VITE_API_BASE || '/api/admin';
+
 function normFile(e) {
   return Array.isArray(e) ? e : e?.fileList;
+}
+
+function formatBytes(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatOptimizeSummary(stats) {
+  if (!stats) return '';
+  const before = formatBytes(stats.bytesBefore);
+  const after = formatBytes(stats.bytesAfter);
+  const pct = stats.savedPct != null ? `${stats.savedPct}%` : '';
+  const tris = (stats.trisBefore != null && stats.trisAfter != null)
+    ? ` · ${stats.trisBefore.toLocaleString()} → ${stats.trisAfter.toLocaleString()} tris`
+    : '';
+  const skin = stats.strippedSkin ? ' · stripped unused skin' : '';
+  return `${before} → ${after}${pct ? ` (−${pct})` : ''}${tris}${skin}`;
 }
 
 export default function CharactersPage() {
@@ -29,6 +53,10 @@ export default function CharactersPage() {
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [optimizingId, setOptimizingId] = useState(null);
+  const [toolBusy, setToolBusy] = useState(false);
+  const [toolStats, setToolStats] = useState(null);
+  const [slimAll, setSlimAll] = useState(null); // { done, total } while running
   const [search, setSearch] = useState('');
   const [rarityFilter, setRarityFilter] = useState('all');
   const [activeFilter, setActiveFilter] = useState('all');
@@ -47,6 +75,12 @@ export default function CharactersPage() {
   }, [message]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Backend flags slimmed models (filename carries _opt) — single source of truth.
+  const unslimmed = useMemo(
+    () => rows.filter((c) => c.model_file && !c.model_optimized),
+    [rows],
+  );
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -68,15 +102,22 @@ export default function CharactersPage() {
     setEditing(record || {});
     form.setFieldsValue(
       record
-        ? { ...record, model_file: [], preview_image: [] }
+        ? {
+            ...record,
+            model_file: [],
+            preview_image: [],
+            optimize: true,
+          }
         : {
             price: 100,
             rarity: 'common',
             accent_color: '#3DDC5F',
             order: rows.length,
             is_active: true,
+            is_starter: false,
             model_file: [],
             preview_image: [],
+            optimize: true,
           },
     );
   }
@@ -88,10 +129,14 @@ export default function CharactersPage() {
       if (values[k] !== undefined && values[k] !== null) fd.append(k, values[k]);
     });
     fd.append('is_active', values.is_active ? 'true' : 'false');
+    fd.append('is_starter', values.is_starter ? 'true' : 'false');
 
     const modelFile = values.model_file?.[0]?.originFileObj;
     const previewFile = values.preview_image?.[0]?.originFileObj;
-    if (modelFile) fd.append('model_file', modelFile);
+    if (modelFile) {
+      fd.append('model_file', modelFile);
+      fd.append('optimize', values.optimize ? 'true' : 'false');
+    }
     if (previewFile) fd.append('preview_image', previewFile);
 
     if (!editing.id && !modelFile) {
@@ -101,9 +146,14 @@ export default function CharactersPage() {
 
     setSaving(true);
     try {
-      if (editing.id) await api.patchForm(`/characters/${editing.id}/`, fd);
-      else await api.postForm('/characters/', fd);
-      message.success('Saved');
+      const result = editing.id
+        ? await api.patchForm(`/characters/${editing.id}/`, fd)
+        : await api.postForm('/characters/', fd);
+      if (result?.optimize) {
+        message.success(`Saved · ${formatOptimizeSummary(result.optimize)}`);
+      } else {
+        message.success('Saved');
+      }
       setEditing(null);
       load();
     } catch (e) {
@@ -130,6 +180,140 @@ export default function CharactersPage() {
     });
   }
 
+  function optimizeCharacter(record) {
+    modal.confirm({
+      title: `Slim "${record.name}" model?`,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            Strips unused skinning (if no animations) and simplifies the mesh for mobile.
+            The character&apos;s .glb is replaced in place — no re-upload needed.
+          </p>
+          <Text type="secondary">Typical cut: ~60–80% smaller file.</Text>
+        </div>
+      ),
+      okText: 'Slim model',
+      onOk: async () => {
+        setOptimizingId(record.id);
+        try {
+          const result = await api.post(`/characters/${record.id}/optimize/`, {});
+          const stats = result?.optimize;
+          message.success(stats ? `Slimmed · ${formatOptimizeSummary(stats)}` : 'Model slimmed');
+          if (viewing?.id === record.id && result?.character) {
+            setViewing(result.character);
+          }
+          load();
+        } catch (e) {
+          message.error(e.message);
+          throw e;
+        } finally {
+          setOptimizingId(null);
+        }
+      },
+    });
+  }
+
+  async function setStarter(record) {
+    if (record.is_starter) return;
+    try {
+      await api.patch(`/characters/${record.id}/`, { is_starter: true });
+      message.success(`"${record.name}" is now gifted to new accounts`);
+      if (viewing?.id === record.id) setViewing({ ...viewing, is_starter: true });
+      load();
+    } catch (e) {
+      message.error(e.message);
+    }
+  }
+
+  function slimAllModels() {
+    const targets = unslimmed;
+    if (!targets.length) return;
+    modal.confirm({
+      title: `Slim all ${targets.length} models?`,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            Runs the slimmer on every character that hasn&apos;t been optimized yet.
+            Each .glb is replaced in place — already-slimmed models are skipped.
+          </p>
+          <Text type="secondary">Runs one at a time so the server stays responsive.</Text>
+        </div>
+      ),
+      okText: `Slim ${targets.length}`,
+      onOk: async () => {
+        setSlimAll({ done: 0, total: targets.length });
+        let totalBefore = 0;
+        let totalAfter = 0;
+        let failed = 0;
+        for (let i = 0; i < targets.length; i += 1) {
+          const c = targets[i];
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const result = await api.post(`/characters/${c.id}/optimize/`, {});
+            if (result?.optimize) {
+              totalBefore += result.optimize.bytesBefore || 0;
+              totalAfter += result.optimize.bytesAfter || 0;
+            }
+          } catch {
+            failed += 1;
+          }
+          setSlimAll({ done: i + 1, total: targets.length });
+        }
+        setSlimAll(null);
+        const saved = Math.max(0, totalBefore - totalAfter);
+        const savedPct = totalBefore ? Math.round((saved / totalBefore) * 100) : 0;
+        if (failed) {
+          message.warning(`Slimmed ${targets.length - failed}/${targets.length} · ${failed} failed`);
+        } else {
+          message.success(
+            `Slimmed ${targets.length} models · saved ${formatBytes(saved)}${savedPct ? ` (−${savedPct}%)` : ''}`,
+          );
+        }
+        load();
+      },
+    });
+  }
+
+  async function downloadOptimizedGlb(file) {
+    if (!file) return;
+    setToolBusy(true);
+    setToolStats(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('download', 'true');
+      const response = await fetch(`${API_BASE}/glb/optimize/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${getToken()}`,
+        },
+        body: fd,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail || 'Optimize failed');
+      }
+      const blob = await response.blob();
+      const before = Number(response.headers.get('X-Optimize-Bytes-Before') || 0);
+      const after = Number(response.headers.get('X-Optimize-Bytes-After') || 0);
+      const savedPct = Number(response.headers.get('X-Optimize-Saved-Pct') || 0);
+      setToolStats({ bytesBefore: before, bytesAfter: after, savedPct });
+
+      const stem = (file.name || 'model').replace(/\.(glb|gltf)$/i, '');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${stem}_opt.glb`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success(`Downloaded ${stem}_opt.glb · ${formatBytes(before)} → ${formatBytes(after)}`);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setToolBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="mb-page-header">
@@ -139,10 +323,59 @@ export default function CharactersPage() {
             {filtered.length} of {rows.length} · drag to rotate in detail view
           </Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
-          Add Character
-        </Button>
+        <Space>
+          {(unslimmed.length > 0 || slimAll) && (
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={!!slimAll}
+              onClick={slimAllModels}
+            >
+              {slimAll
+                ? `Slimming ${slimAll.done}/${slimAll.total}…`
+                : `Slim all (${unslimmed.length})`}
+            </Button>
+          )}
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
+            Add Character
+          </Button>
+        </Space>
       </div>
+
+      <Alert
+        type="info"
+        showIcon
+        icon={<ThunderboltOutlined />}
+        style={{ marginBottom: 16 }}
+        message="GLB slimmer"
+        description={(
+          <div>
+            <Paragraph style={{ marginBottom: 10, color: brand.textSecondary }}>
+              Drop a heavy .glb to download a cleaned lightweight copy, or hit
+              {' '}
+              <Text strong>Slim</Text>
+              {' '}
+              on any character to replace its model in place.
+            </Paragraph>
+            <Upload
+              accept=".glb,.gltf"
+              showUploadList={false}
+              beforeUpload={(file) => {
+                downloadOptimizedGlb(file);
+                return false;
+              }}
+            >
+              <Button icon={<DownloadOutlined />} loading={toolBusy}>
+                Upload GLB → download slimmed
+              </Button>
+            </Upload>
+            {toolStats ? (
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary">{formatOptimizeSummary(toolStats)}</Text>
+              </div>
+            ) : null}
+          </div>
+        )}
+      />
 
       <div className="mb-character-toolbar">
         <Input
@@ -190,12 +423,14 @@ export default function CharactersPage() {
               onView={setViewing}
               onEdit={openModal}
               onDelete={remove}
+              onOptimize={optimizeCharacter}
+              onSetStarter={setStarter}
+              optimizing={optimizingId === character.id}
             />
           ))}
         </div>
       )}
 
-      {/* Full-size 3D preview drawer */}
       <Drawer
         open={!!viewing}
         onClose={() => setViewing(null)}
@@ -203,9 +438,29 @@ export default function CharactersPage() {
         title={viewing?.name}
         styles={{ body: { paddingTop: 0 } }}
         extra={(
-          <Button size="small" onClick={() => { openModal(viewing); setViewing(null); }}>
-            Edit
-          </Button>
+          <Space>
+            <Button
+              size="small"
+              type={viewing?.is_starter ? 'primary' : 'default'}
+              icon={viewing?.is_starter ? <StarFilled /> : <StarOutlined />}
+              disabled={!!viewing?.is_starter}
+              onClick={() => viewing && setStarter(viewing)}
+            >
+              Starter
+            </Button>
+            <Button
+              size="small"
+              icon={<ThunderboltOutlined />}
+              loading={optimizingId === viewing?.id}
+              disabled={!!viewing?.model_optimized}
+              onClick={() => viewing && optimizeCharacter(viewing)}
+            >
+              {viewing?.model_optimized ? 'Slimmed' : 'Slim'}
+            </Button>
+            <Button size="small" onClick={() => { openModal(viewing); setViewing(null); }}>
+              Edit
+            </Button>
+          </Space>
         )}
       >
         {viewing ? (
@@ -225,6 +480,7 @@ export default function CharactersPage() {
               <Col span={12}><Text type="secondary">Rarity</Text><br /><Text strong style={{ textTransform: 'capitalize' }}>{viewing.rarity}</Text></Col>
               <Col span={12}><Text type="secondary">Status</Text><br /><Text strong>{viewing.is_active ? 'Live in shop' : 'Hidden'}</Text></Col>
               <Col span={12}><Text type="secondary">Sort order</Text><br /><Text strong>#{viewing.order}</Text></Col>
+              <Col span={12}><Text type="secondary">Model size</Text><br /><Text strong>{formatBytes(viewing.model_file_size)}</Text></Col>
             </Row>
             {viewing.description ? (
               <Paragraph style={{ marginTop: 16, color: brand.textSecondary }}>{viewing.description}</Paragraph>
@@ -267,6 +523,14 @@ export default function CharactersPage() {
             <Form.Item name="is_active" label="Active" valuePropName="checked">
               <Switch />
             </Form.Item>
+            <Form.Item
+              name="is_starter"
+              label="Starter (gifted at signup)"
+              valuePropName="checked"
+              extra="New accounts receive & equip this character. Only one starter allowed."
+            >
+              <Switch />
+            </Form.Item>
           </div>
           <Form.Item
             name="model_file"
@@ -277,6 +541,14 @@ export default function CharactersPage() {
             <Upload beforeUpload={() => false} maxCount={1} accept=".glb,.gltf">
               <Button icon={<UploadOutlined />}>Select .glb</Button>
             </Upload>
+          </Form.Item>
+          <Form.Item
+            name="optimize"
+            label="Slim GLB on upload"
+            valuePropName="checked"
+            extra="Strips unused skinning + simplifies mesh before saving. Leave on for mobile."
+          >
+            <Switch />
           </Form.Item>
           <Form.Item
             name="preview_image"

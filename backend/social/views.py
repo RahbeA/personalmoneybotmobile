@@ -15,6 +15,7 @@ from . import service
 from .models import (
     ChallengeParticipant,
     Friendship,
+    FriendNudge,
     Group,
     GroupChallenge,
     GroupInvite,
@@ -220,11 +221,149 @@ def search_users(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def user_profile(request, user_id):
+    """Public-ish social profile for a learner (used from the leaderboard)."""
+    try:
+        target = User.objects.get(pk=user_id, is_guest=False)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    from courses.onboarding import literacy_points
+    from courses.views import get_or_create_stats
+
+    stats = get_or_create_stats(target)
+    brief = service.serialize_user_brief(target, request)
+    fs = None if target.id == request.user.id else _friendship_status(request.user, target.id)
+
+    friendship_status = None
+    friendship_direction = None
+    request_id = None
+    can_nudge = False
+    if fs:
+        friendship_status = fs.status
+        friendship_direction = (
+            'outgoing' if fs.requester_id == request.user.id else 'incoming'
+        )
+        if fs.status == Friendship.STATUS_PENDING:
+            request_id = fs.id
+        if fs.status == Friendship.STATUS_ACCEPTED:
+            today = timezone.now().date()
+            can_nudge = not FriendNudge.objects.filter(
+                sender=request.user,
+                recipient=target,
+                day=today,
+            ).exists()
+
+    return Response({
+        **brief,
+        'xp': stats.xp,
+        'streak_days': stats.streak_days,
+        'literacy_points': literacy_points(stats.onboarding_score, stats.xp),
+        'is_me': target.id == request.user.id,
+        'friendship_status': friendship_status,
+        'friendship_direction': friendship_direction,
+        'request_id': request_id,
+        'can_nudge': can_nudge,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def nudge_friend(request, user_id):
+    """Nudge a friend once per day — creates an in-app + Expo push notification."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+
+    if user_id == request.user.id:
+        return Response({'error': 'You cannot nudge yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        target = User.objects.get(pk=user_id, is_guest=False)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not service.are_friends(request.user, target):
+        return Response(
+            {'error': 'You can only nudge friends.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Prefer the client's local calendar day so "once a day" matches their timezone.
+    client_date = (request.data.get('client_date') or '').strip()
+    day = None
+    if client_date:
+        try:
+            day = datetime.strptime(client_date, '%Y-%m-%d').date()
+        except ValueError:
+            day = None
+    if day is None:
+        day = timezone.now().date()
+
+    # Reject wildly skewed client clocks (±2 days).
+    today_utc = timezone.now().date()
+    if abs((day - today_utc).days) > 2:
+        day = today_utc
+
+    nudge, created = FriendNudge.objects.get_or_create(
+        sender=request.user,
+        recipient=target,
+        day=day,
+    )
+    if not created:
+        return Response(
+            {
+                'error': 'You already nudged this friend today. Try again tomorrow!',
+                'code': 'nudge_limit',
+                'can_nudge': False,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    service.notify_friend_nudge(actor=request.user, recipient=target)
+
+    return Response({
+        'status': 'nudged',
+        'day': day.isoformat(),
+        'can_nudge': False,
+        'nudge_id': nudge.id,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def list_friends(request):
     friendships = Friendship.objects.filter(
         Q(requester=request.user) | Q(addressee=request.user),
         status=Friendship.STATUS_ACCEPTED,
     ).select_related('requester', 'addressee').order_by('-responded_at', '-created_at')
+
+    # Prefer client local date so "nudged today" matches the nudge endpoint.
+    client_date = (request.query_params.get('client_date') or '').strip()
+    day = None
+    if client_date:
+        try:
+            day = datetime.strptime(client_date, '%Y-%m-%d').date()
+        except ValueError:
+            day = None
+    if day is None:
+        day = timezone.now().date()
+    today_utc = timezone.now().date()
+    if abs((day - today_utc).days) > 2:
+        day = today_utc
+
+    friend_ids = []
+    for f in friendships:
+        other_id = f.addressee_id if f.requester_id == request.user.id else f.requester_id
+        friend_ids.append(other_id)
+
+    nudged_today = set(
+        FriendNudge.objects.filter(
+            sender=request.user,
+            recipient_id__in=friend_ids,
+            day=day,
+        ).values_list('recipient_id', flat=True)
+    ) if friend_ids else set()
 
     friends = []
     for f in friendships:
@@ -232,6 +371,7 @@ def list_friends(request):
         friends.append({
             **service.serialize_user_brief(other, request),
             'friends_since': (f.responded_at or f.created_at).isoformat(),
+            'can_nudge': other.id not in nudged_today,
         })
 
     return Response({'friends': friends})

@@ -20,11 +20,21 @@ export const coursesApi = {
   getStats: (token) =>
     apiRequest(`/courses/stats/?client_date=${localDate()}`, { token }),
 
-  claimDailyReward: (token) =>
+  claimDailyReward: (token, { streakGoal } = {}) =>
     apiRequest('/courses/daily-reward/claim/', {
       method: 'POST',
       token,
-      body: { client_date: localDate() },
+      body: {
+        client_date: localDate(),
+        ...(streakGoal != null ? { streak_goal: streakGoal } : {}),
+      },
+    }),
+
+  updateStreakGoal: (token, streakGoal) =>
+    apiRequest('/courses/streak-goal/', {
+      method: 'PATCH',
+      token,
+      body: { streak_goal: streakGoal },
     }),
 
   getLeaderboard: (token, { page = 1, pageSize = 20, search = '' } = {}) => {

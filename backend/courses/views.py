@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 import copy
 
-from django.db.models import F, Prefetch, Q, Window
+from django.db.models import F, Prefetch, Window
 from django.utils.dateparse import parse_date
 from django.db.models.functions import RowNumber
 from rest_framework import status
@@ -32,7 +32,7 @@ from . import onboarding
 from .onboarding import compute_rank, literacy_points
 
 LEADERBOARD_TOP_N = 10
-LEADERBOARD_DEFAULT_PAGE_SIZE = 20
+LEADERBOARD_SEARCH_LIMIT = 25
 LEADERBOARD_MAX_PAGE_SIZE = 50
 
 XP_PER_LESSON = 50
@@ -224,7 +224,10 @@ def complete_lesson(request, lesson_id):
 
 
 def _leaderboard_stats_qs():
-    return UserStats.objects.select_related('user', 'equipped_character').annotate(
+    # Guests have no durable identity (and no email), so they never rank.
+    return UserStats.objects.select_related('user', 'equipped_character').filter(
+        user__is_guest=False,
+    ).annotate(
         lp=F('onboarding_score') * 100 + F('xp'),
     )
 
@@ -239,9 +242,11 @@ def _leaderboard_ranked_qs(qs):
 
 
 def _serialize_leaderboard_entry(stats, rank, request):
+    from .daily_rewards import effective_streak
+
     user = stats.user
     name = (user.name or '').strip()
-    display_name = name if name else user.email.split('@')[0]
+    display_name = name or (user.email or '').split('@')[0] or 'Learner'
     equipped = None
     if stats.equipped_character_id:
         from moneyverse.serializers import CharacterSerializer
@@ -253,7 +258,7 @@ def _serialize_leaderboard_entry(stats, rank, request):
         'display_name': display_name,
         'avatar_url': user.avatar_url or '',
         'xp': stats.xp,
-        'streak_days': stats.streak_days,
+        'streak_days': effective_streak(stats),
         'literacy_points': literacy_points(stats.onboarding_score, stats.xp),
         'rank_tier': compute_rank(stats.onboarding_score, stats.xp),
         'equipped_character': equipped,
@@ -264,80 +269,60 @@ def _serialize_leaderboard_entry(stats, rank, request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def leaderboard(request):
-    """Global user leaderboard ordered by literacy points (onboarding + XP)."""
-    search = (request.query_params.get('search') or '').strip()
-    try:
-        page = max(int(request.query_params.get('page', 1)), 1)
-    except (TypeError, ValueError):
-        page = 1
-    try:
-        page_size = int(request.query_params.get('page_size', LEADERBOARD_DEFAULT_PAGE_SIZE))
-    except (TypeError, ValueError):
-        page_size = LEADERBOARD_DEFAULT_PAGE_SIZE
-    page_size = min(max(page_size, 1), LEADERBOARD_MAX_PAGE_SIZE)
+    """Top-N board + caller rank, or name/email search with global ranks."""
+    # Ranking is account-based (Apple 5.1.1(v)); guests browse lessons instead.
+    if getattr(request.user, 'is_guest', False):
+        return Response(
+            {
+                'error': 'Create a free account to see the leaderboard and compete with friends.',
+                'code': 'account_required',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
-    cache_key = leaderboard_cache_key(page, page_size, search)
+    search = (request.query_params.get('search') or '').strip()
+    if search:
+        data = _build_leaderboard_search_payload(request, search)
+        return Response(data)
+
+    # Shared snapshot is just the top board; each caller's "me" is applied after cache.
+    cache_key = leaderboard_cache_key(1, LEADERBOARD_TOP_N, '')
 
     def factory():
         return strip_leaderboard_user_flags(
-            _build_leaderboard_payload(request, search, page, page_size),
+            _build_leaderboard_payload(request),
         )
 
     cached, hit = cache_get_or_set(cache_key, factory, TTL_LEADERBOARD)
 
-    me_entry = None
-    if not search:
-        my_id = request.user.id
-        me_in_top = next(
-            (e for e in cached.get('top') or [] if e.get('user_id') == my_id),
-            None,
-        )
-        if me_in_top:
-            # Use the same rank as the visible top list (avoids stale-cache vs fresh-me mismatch).
-            me_entry = copy.deepcopy(me_in_top)
-            me_entry['is_me'] = True
-        else:
-            my_stats = get_or_create_stats(request.user)
-            ranked = _leaderboard_ranked_qs(_leaderboard_stats_qs())
-            try:
-                my_stats = ranked.get(pk=my_stats.pk)
-                me_entry = _serialize_leaderboard_entry(my_stats, my_stats.rank, request)
-            except UserStats.DoesNotExist:
-                me_entry = None
+    my_id = request.user.id
+    me_in_top = next(
+        (e for e in cached.get('top') or [] if e.get('user_id') == my_id),
+        None,
+    )
+    if me_in_top:
+        # Same rank as the visible top list (avoids stale-cache vs fresh-me mismatch).
+        me_entry = copy.deepcopy(me_in_top)
+        me_entry['is_me'] = True
+    else:
+        my_stats = get_or_create_stats(request.user)
+        ranked = _leaderboard_ranked_qs(_leaderboard_stats_qs())
+        total_count = cached.get('total_count')
+        try:
+            my_stats = ranked.get(pk=my_stats.pk)
+            me_entry = _serialize_leaderboard_entry(my_stats, my_stats.rank, request)
+        except UserStats.DoesNotExist:
+            rank = (total_count or ranked.count()) + 1
+            my_stats.rank = rank
+            me_entry = _serialize_leaderboard_entry(my_stats, rank, request)
 
     data = apply_leaderboard_user_flags(cached, request, me_entry)
     return attach_cache_header(Response(data), hit)
 
 
-def _build_leaderboard_payload(request, search, page, page_size):
-    base_qs = _leaderboard_stats_qs()
-
-    if search:
-        filtered = base_qs.filter(
-            Q(user__name__icontains=search) | Q(user__email__icontains=search),
-        )
-        ranked = _leaderboard_ranked_qs(filtered)
-        total_count = ranked.count()
-        offset = (page - 1) * page_size
-        page_stats = list(ranked.order_by('rank')[offset:offset + page_size])
-        entries = [
-            _serialize_leaderboard_entry(stats, stats.rank, request)
-            for stats in page_stats
-        ]
-        return {
-            'top': [],
-            'me': None,
-            'entries': entries,
-            'pagination': {
-                'page': page,
-                'page_size': page_size,
-                'total_count': total_count,
-                'has_next': offset + page_size < total_count,
-            },
-            'search': search,
-        }
-
-    ranked = _leaderboard_ranked_qs(base_qs)
+def _build_leaderboard_payload(request):
+    """Top N entries + total learner count. Caller-specific `me` is layered on after cache."""
+    ranked = _leaderboard_ranked_qs(_leaderboard_stats_qs())
     total_count = ranked.count()
 
     top_stats = list(ranked.filter(rank__lte=LEADERBOARD_TOP_N).order_by('rank'))
@@ -346,37 +331,70 @@ def _build_leaderboard_payload(request, search, page, page_size):
         for stats in top_stats
     ]
 
-    my_stats = get_or_create_stats(request.user)
-    try:
-        my_stats = ranked.get(pk=my_stats.pk)
-    except UserStats.DoesNotExist:
-        my_stats = _leaderboard_stats_qs().get(pk=my_stats.pk)
-        my_stats.rank = total_count + 1
-    me = _serialize_leaderboard_entry(my_stats, my_stats.rank, request)
-
-    offset = LEADERBOARD_TOP_N + (page - 1) * page_size
-    page_stats = list(
-        ranked.filter(rank__gt=LEADERBOARD_TOP_N).order_by('rank')[offset:offset + page_size]
-    )
-    entries = [
-        _serialize_leaderboard_entry(stats, stats.rank, request)
-        for stats in page_stats
-    ]
-
-    remaining = max(total_count - LEADERBOARD_TOP_N, 0)
-    has_next = page * page_size < remaining
-
     return {
         'top': top,
-        'me': me,
-        'entries': entries,
+        'me': None,
+        'entries': [],
+        'total_count': total_count,
         'pagination': {
-            'page': page,
-            'page_size': page_size,
+            'page': 1,
+            'page_size': LEADERBOARD_TOP_N,
             'total_count': total_count,
-            'has_next': has_next,
+            'has_next': False,
         },
         'search': '',
+    }
+
+
+def _build_leaderboard_search_payload(request, search):
+    """Match learners by name/email and return their global ranks (not search-local ranks)."""
+    # Rank everyone first, then filter — filtering before Window() recomputes ranks
+    # within the match set (e.g. friend at global #47 would wrongly show as #1).
+    ordered = list(
+        _leaderboard_stats_qs().order_by(F('lp').desc(), F('user__date_joined').asc())
+    )
+    total_count = len(ordered)
+    needle = search.lower()
+    entries = []
+    for index, stats in enumerate(ordered, start=1):
+        user = stats.user
+        name = (user.name or '').lower()
+        email = (user.email or '').lower()
+        if needle not in name and needle not in email:
+            continue
+        entry = _serialize_leaderboard_entry(stats, index, request)
+        entries.append(entry)
+        if len(entries) >= LEADERBOARD_SEARCH_LIMIT:
+            break
+
+    my_id = request.user.id
+    for entry in entries:
+        entry['is_me'] = entry.get('user_id') == my_id
+
+    me_entry = next((e for e in entries if e.get('is_me')), None)
+    if me_entry is None:
+        my_stats = get_or_create_stats(request.user)
+        me_rank = next(
+            (i for i, s in enumerate(ordered, start=1) if s.pk == my_stats.pk),
+            total_count + 1,
+        )
+        # Prefer already-loaded row when present so we don't re-fetch.
+        mine = next((s for s in ordered if s.pk == my_stats.pk), my_stats)
+        me_entry = _serialize_leaderboard_entry(mine, me_rank, request)
+        me_entry['is_me'] = True
+
+    return {
+        'top': [],
+        'me': me_entry,
+        'entries': entries,
+        'total_count': total_count,
+        'pagination': {
+            'page': 1,
+            'page_size': LEADERBOARD_SEARCH_LIMIT,
+            'total_count': len(entries),
+            'has_next': False,
+        },
+        'search': search,
     }
 
 
@@ -389,7 +407,7 @@ def _build_user_stats(request, today=None):
     from .daily_rewards import daily_reward_status
 
     return {
-        **UserStatsSerializer(stats, context={'request': request}).data,
+        **UserStatsSerializer(stats, context={'request': request, 'client_today': today}).data,
         'completed_lesson_ids': completed_lesson_ids,
         'lessons_completed': len(completed_lesson_ids),
         'badge_catalog': badge_catalog_for_request(request),
@@ -414,6 +432,19 @@ def user_stats(request):
     return attach_cache_header(Response(data), hit)
 
 
+ALLOWED_STREAK_GOALS = {7, 14, 30, 60}
+
+
+def _parse_streak_goal(raw):
+    try:
+        goal = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if goal not in ALLOWED_STREAK_GOALS:
+        return None
+    return goal
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def claim_daily_reward(request):
@@ -422,6 +453,13 @@ def claim_daily_reward(request):
 
     today = client_today_from_request(request)
     stats = get_or_create_stats(request.user)
+
+    # Optional: set streak commitment in the same request (onboarding).
+    streak_goal = _parse_streak_goal(request.data.get('streak_goal'))
+    if streak_goal is not None and stats.streak_goal != streak_goal:
+        stats.streak_goal = streak_goal
+        stats.save(update_fields=['streak_goal'])
+
     try:
         amount, reward_status = do_claim(request.user, stats, today)
     except ValueError as exc:
@@ -435,7 +473,10 @@ def claim_daily_reward(request):
         'bot_bucks': stats.bot_bucks,
         'daily_reward': reward_status,
         'badges': stats.badges,
-        'stats': UserStatsSerializer(stats, context={'request': request}).data,
+        'streak_goal': stats.streak_goal,
+        'stats': UserStatsSerializer(
+            stats, context={'request': request, 'client_today': today},
+        ).data,
     })
 
 
@@ -473,6 +514,28 @@ def update_goals(request):
 
     return Response({
         'onboarding_goals': goals,
+        'stats': UserStatsSerializer(stats, context={'request': request}).data,
+    })
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_streak_goal(request):
+    """Set the user's personal streak commitment (7 / 14 / 30 / 60 days)."""
+    streak_goal = _parse_streak_goal(request.data.get('streak_goal'))
+    if streak_goal is None:
+        return Response(
+            {'detail': f'streak_goal must be one of {sorted(ALLOWED_STREAK_GOALS)}.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    stats = get_or_create_stats(request.user)
+    stats.streak_goal = streak_goal
+    stats.save(update_fields=['streak_goal'])
+    invalidate_user_cache(request.user.id)
+
+    return Response({
+        'streak_goal': streak_goal,
         'stats': UserStatsSerializer(stats, context={'request': request}).data,
     })
 

@@ -4,9 +4,9 @@ from .models import Character, UserCharacter
 
 @admin.register(Character)
 class CharacterAdmin(admin.ModelAdmin):
-    list_display = ('order', 'name', 'rarity', 'price', 'is_active')
-    list_editable = ('price', 'is_active')
-    list_filter = ('rarity', 'is_active')
+    list_display = ('order', 'name', 'rarity', 'price', 'is_active', 'is_starter')
+    list_editable = ('price', 'is_active', 'is_starter')
+    list_filter = ('rarity', 'is_active', 'is_starter')
     search_fields = ('name',)
     ordering = ('order', 'id')
 

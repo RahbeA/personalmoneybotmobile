@@ -127,6 +127,12 @@ async function ensureAndroidChannel() {
     importance: mod.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
   });
+  await mod.setNotificationChannelAsync('social', {
+    name: 'Friends & social',
+    importance: mod.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    description: 'Friend requests, accepts, and social updates',
+  });
   androidChannelReady = true;
 }
 
@@ -432,6 +438,10 @@ export async function presentLocalNotification(title, body, data = {}) {
   const mod = getNotificationsModule();
   if (!mod) return false;
 
+  const channelId = data?.kind?.startsWith?.('friend') || data?.kind === 'announcement'
+    ? 'social'
+    : 'reminders';
+
   try {
     await mod.scheduleNotificationAsync({
       content: {
@@ -439,7 +449,7 @@ export async function presentLocalNotification(title, body, data = {}) {
         body,
         data,
         sound: true,
-        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+        ...(Platform.OS === 'android' ? { channelId } : {}),
       },
       trigger: {
         type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -465,6 +475,17 @@ export function addNotificationListeners({ onReceive, onRespond } = {}) {
   if (onReceive) subs.push(mod.addNotificationReceivedListener(onReceive));
   if (onRespond) subs.push(mod.addNotificationResponseReceivedListener(onRespond));
   return () => subs.forEach((s) => s?.remove?.());
+}
+
+/** Notification that launched / resumed the app via a tap, if any. */
+export async function getLastNotificationResponse() {
+  const mod = getNotificationsModule();
+  if (!mod?.getLastNotificationResponseAsync) return null;
+  try {
+    return await mod.getLastNotificationResponseAsync();
+  } catch {
+    return null;
+  }
 }
 
 function getExpoProjectId() {

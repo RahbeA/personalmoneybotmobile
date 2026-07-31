@@ -141,3 +141,64 @@ def equip_character(request):
             character, context={'request': request, 'owned_ids': {character.id}}
         ).data,
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def claim_starter_character(request):
+    """
+    Grant the cheapest active shop character for free and equip it.
+    Available to any authenticated user (including guests finishing onboarding).
+    Idempotent: if the user already owns/has an equipped character, return that.
+    """
+    stats = get_or_create_stats(request.user)
+
+    # Already equipped — return current character without changing ownership.
+    if stats.equipped_character_id:
+        character = stats.equipped_character
+        return Response({
+            'claimed': False,
+            'already_owned': True,
+            'bot_bucks': stats.bot_bucks,
+            'character': CharacterSerializer(
+                character, context={'request': request, 'owned_ids': {character.id}}
+            ).data,
+        })
+
+    owned_ids = set(
+        UserCharacter.objects.filter(user=request.user).values_list('character_id', flat=True)
+    )
+
+    # Admin-chosen starter (falls back to cheapest active if none flagged).
+    starter = Character.get_starter()
+
+    newly_granted = False
+    if starter is None:
+        return Response(
+            {'detail': 'No characters available to claim.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if starter.id not in owned_ids:
+        UserCharacter.objects.create(user=request.user, character=starter)
+        newly_granted = True
+        owned_ids.add(starter.id)
+
+    stats.equipped_character = starter
+    stats.save(update_fields=['equipped_character'])
+    invalidate_user_cache(request.user.id)
+
+    try:
+        from courses.badges import evaluate_and_award
+        evaluate_and_award(request.user, stats)
+    except Exception:
+        # Starter grant should still succeed even if badge eval fails.
+        pass
+
+    return Response({
+        'claimed': newly_granted,
+        'already_owned': not newly_granted,
+        'bot_bucks': stats.bot_bucks,
+        'character': CharacterSerializer(
+            starter, context={'request': request, 'owned_ids': owned_ids}
+        ).data,
+    })

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
@@ -115,12 +117,30 @@ class OnboardingQuestionSerializer(serializers.ModelSerializer):
 # --- Moneyverse: characters -------------------------------------------------
 
 class CharacterSerializer(serializers.ModelSerializer):
+    model_file_size = serializers.SerializerMethodField()
+    model_optimized = serializers.SerializerMethodField()
+
     class Meta:
         model = Character
         fields = (
             'id', 'name', 'description', 'price', 'rarity', 'accent_color',
-            'model_file', 'preview_image', 'order', 'is_active',
+            'model_file', 'preview_image', 'order', 'is_active', 'is_starter',
+            'model_file_size', 'model_optimized',
         )
+
+    def get_model_file_size(self, obj):
+        if not obj.model_file:
+            return None
+        try:
+            return obj.model_file.size
+        except (OSError, ValueError):
+            return None
+
+    def get_model_optimized(self, obj):
+        """Slimmer stamps '_opt' into the filename (Django may add a collision suffix)."""
+        if not obj.model_file:
+            return False
+        return '_opt' in Path(obj.model_file.name).name.lower()
 
 
 class BadgeAdminSerializer(serializers.ModelSerializer):

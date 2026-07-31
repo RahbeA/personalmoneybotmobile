@@ -172,6 +172,10 @@ class UserStats(models.Model):
     daily_claim_streak = models.PositiveIntegerField(
         default=0, help_text='Consecutive days the daily reward was claimed.',
     )
+    streak_goal = models.PositiveIntegerField(
+        default=7,
+        help_text='Personal streak commitment in days (e.g. 7, 14, 30, 60).',
+    )
     questions_correct = models.PositiveIntegerField(default=0)
     questions_answered = models.PositiveIntegerField(default=0)
     perfect_lessons = models.PositiveIntegerField(default=0)

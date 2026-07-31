@@ -1,7 +1,9 @@
 from datetime import timedelta
+from pathlib import Path
 
 from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Count, Sum, Q
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
@@ -10,12 +12,19 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 
+from .glb_optimize import (
+    DEFAULT_RATIO,
+    GlbOptimizeError,
+    apply_optimized_to_character,
+    optimize_uploaded_bytes,
+)
+
 from courses.models import (
     Module, Lesson, Question, Answer, UserProgress, UserStats, OnboardingQuestion,
     Badge, DailyRewardTier,
 )
 from moneyverse.models import Character, UserCharacter
-from social.campaigns import campaign_audience, send_campaign
+from social.campaigns import audience_push_stats, send_campaign
 from social.models import NotificationCampaign
 from ai.models import TutorConversation, MoneyChatSession
 from .pagination import AdminPagination
@@ -171,11 +180,165 @@ class AnswerViewSet(viewsets.ModelViewSet):
         return qs
 
 
+def _parse_optimize_flag(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _parse_ratio(value, default=DEFAULT_RATIO):
+    if value is None or value == '':
+        return default
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError) as exc:
+        raise GlbOptimizeError('ratio must be a number between 0 and 1') from exc
+    if not (0 < ratio <= 1):
+        raise GlbOptimizeError('ratio must be between 0 and 1')
+    return ratio
+
+
+def _request_form_value(request, key, default=None):
+    """Read a form field without forcing DRF to cache request.data (which freezes FILES)."""
+    if hasattr(request, 'POST') and key in request.POST:
+        return request.POST.get(key)
+    # JSON body fallback (rare for file uploads).
+    try:
+        if request.content_type and 'application/json' in request.content_type:
+            return request.data.get(key, default)
+    except Exception:
+        pass
+    return default
+
+
+def _clear_drf_data_cache(request):
+    for attr in ('_full_data', '_data', '_files'):
+        if hasattr(request, attr):
+            try:
+                delattr(request, attr)
+            except Exception:
+                pass
+
+
 class CharacterViewSet(viewsets.ModelViewSet):
     queryset = Character.objects.all()
     serializer_class = CharacterSerializer
     permission_classes = [IsAdminUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def _maybe_optimize_uploaded_model(self, request):
+        """If optimize=true and a model_file was uploaded, replace it with the lightweight GLB."""
+        if not _parse_optimize_flag(_request_form_value(request, 'optimize'), default=False):
+            return None
+        uploaded = request.FILES.get('model_file')
+        if not uploaded:
+            return None
+        ratio = _parse_ratio(_request_form_value(request, 'ratio'))
+        raw = uploaded.read()
+        optimized, stats = optimize_uploaded_bytes(raw, ratio=ratio)
+        name = Path(getattr(uploaded, 'name', 'character.glb') or 'character.glb').stem
+        from django.core.files.uploadedfile import InMemoryUploadedFile
+        import io
+        buf = io.BytesIO(optimized)
+        request.FILES['model_file'] = InMemoryUploadedFile(
+            file=buf,
+            field_name='model_file',
+            name=f'{name}_opt.glb',
+            content_type='model/gltf-binary',
+            size=len(optimized),
+            charset=None,
+        )
+        _clear_drf_data_cache(request)
+        return stats
+
+    def create(self, request, *args, **kwargs):
+        try:
+            opt_stats = self._maybe_optimize_uploaded_model(request)
+        except GlbOptimizeError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        response = super().create(request, *args, **kwargs)
+        if opt_stats is not None and isinstance(response.data, dict):
+            response.data = {**response.data, 'optimize': opt_stats}
+        return response
+
+    def update(self, request, *args, **kwargs):
+        try:
+            opt_stats = self._maybe_optimize_uploaded_model(request)
+        except GlbOptimizeError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        response = super().update(request, *args, **kwargs)
+        if opt_stats is not None and isinstance(response.data, dict):
+            response.data = {**response.data, 'optimize': opt_stats}
+        return response
+
+    def partial_update(self, request, *args, **kwargs):
+        try:
+            opt_stats = self._maybe_optimize_uploaded_model(request)
+        except GlbOptimizeError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        response = super().partial_update(request, *args, **kwargs)
+        if opt_stats is not None and isinstance(response.data, dict):
+            response.data = {**response.data, 'optimize': opt_stats}
+        return response
+
+    @action(detail=True, methods=['post'], url_path='optimize')
+    def optimize(self, request, pk=None):
+        """Optimize this character's current GLB and replace the model_file."""
+        character = self.get_object()
+        try:
+            ratio = _parse_ratio(request.data.get('ratio'))
+            stats = apply_optimized_to_character(character, ratio=ratio)
+        except GlbOptimizeError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        character.refresh_from_db()
+        data = self.get_serializer(character).data
+        return Response({'character': data, 'optimize': stats})
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def optimize_glb_upload(request):
+    """
+    Upload a raw .glb and get back a cleaned lightweight version.
+
+    Multipart fields:
+      - file / model_file: the source GLB (required)
+      - ratio: simplify ratio 0–1 (default 0.35)
+      - download: if true, return the binary GLB instead of JSON metadata
+    """
+    uploaded = request.FILES.get('file') or request.FILES.get('model_file')
+    if not uploaded:
+        return Response({'detail': 'Upload a .glb as "file" or "model_file".'}, status=400)
+
+    name = (getattr(uploaded, 'name', '') or 'model.glb').lower()
+    if not name.endswith(('.glb', '.gltf')):
+        return Response({'detail': 'Only .glb / .gltf files are supported.'}, status=400)
+
+    try:
+        ratio = _parse_ratio(_request_form_value(request, 'ratio') or request.data.get('ratio'))
+        optimized, stats = optimize_uploaded_bytes(uploaded.read(), ratio=ratio)
+    except GlbOptimizeError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if _parse_optimize_flag(
+        _request_form_value(request, 'download') or request.data.get('download'),
+        default=False,
+    ):
+        stem = Path(getattr(uploaded, 'name', 'model.glb')).stem or 'model'
+        response = HttpResponse(optimized, content_type='model/gltf-binary')
+        response['Content-Disposition'] = f'attachment; filename="{stem}_opt.glb"'
+        response['X-Optimize-Bytes-Before'] = str(stats.get('bytesBefore', ''))
+        response['X-Optimize-Bytes-After'] = str(stats.get('bytesAfter', ''))
+        response['X-Optimize-Saved-Pct'] = str(stats.get('savedPct', ''))
+        return response
+
+    return Response({
+        'optimize': stats,
+        'filename': f"{Path(getattr(uploaded, 'name', 'model.glb')).stem or 'model'}_opt.glb",
+    })
 
 
 class BadgeViewSet(viewsets.ModelViewSet):
@@ -394,13 +557,10 @@ class NotificationCampaignViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def preview(self, request, pk=None):
-        """Return the audience size and a sample of targeted users."""
+        """Return the audience size, push reach, and a sample of targeted users."""
         campaign = self.get_object()
-        audience = campaign_audience(campaign)
-        return Response({
-            'count': audience.count(),
-            'sample': list(audience.values('id', 'email', 'name')[:10]),
-        })
+        stats = audience_push_stats(campaign)
+        return Response(stats)
 
     @action(detail=True, methods=['post'])
     def send(self, request, pk=None):

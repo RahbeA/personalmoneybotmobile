@@ -26,6 +26,7 @@ import TutorScreen from '../screens/TutorScreen';
 import MoneyChatScreen from '../screens/MoneyChatScreen';
 import BadgeRevealScreen from '../screens/BadgeRevealScreen';
 import FriendsScreen from '../screens/social/FriendsScreen';
+import MyFriendsScreen from '../screens/social/MyFriendsScreen';
 import FriendRequestsScreen from '../screens/social/FriendRequestsScreen';
 import NotificationsScreen from '../screens/social/NotificationsScreen';
 import GroupsScreen from '../screens/social/GroupsScreen';
@@ -49,7 +50,7 @@ const TABS = [
   { name: 'HomeTab', label: 'Home', icon: 'home', iconOutline: 'home-outline' },
   { name: 'CoursesTab', label: 'Courses', icon: 'book', iconOutline: 'book-outline' },
   { name: 'MoneyverseTab', label: 'Moneyverse', icon: 'planet', iconOutline: 'planet-outline' },
-  { name: 'SocialTab', label: 'Friends', icon: 'people', iconOutline: 'people-outline' },
+  { name: 'SocialTab', label: 'Leaderboard', icon: 'trophy', iconOutline: 'trophy-outline' },
   { name: 'TutorTab', label: 'Tutor', icon: 'chatbubbles', iconOutline: 'chatbubbles-outline' },
   { name: 'SettingsTab', label: 'Profile', icon: 'person', iconOutline: 'person-outline' },
 ];
@@ -58,7 +59,7 @@ const LESSON_ROUTES = new Set([
   'LessonIntro', 'QuestionFlow', 'LessonComplete', 'ModuleComplete', 'MoneyChat', 'BadgeReveal',
   'Arcade', 'BudgetBlitz', 'InflationDodge', 'CreditClimb', 'ScamSpotter', 'DailyBlitz', 'DailyLeaderboard',
   'Groups', 'CreateGroup', 'GroupDetail', 'InviteFriends', 'GroupLeaderboard', 'CreateChallenge', 'ChallengeLeaderboard',
-  'FriendRequests', 'Notifications', 'CharacterDetail',
+  'FriendRequests', 'Notifications', 'MyFriends', 'CharacterDetail',
 ]);
 
 function getDeepestRouteName(route) {
@@ -207,6 +208,7 @@ function SocialStackNavigator() {
   return (
     <SocialStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <SocialStack.Screen name="Friends" component={FriendsScreen} />
+      <SocialStack.Screen name="MyFriends" component={MyFriendsScreen} />
       <SocialStack.Screen name="FriendRequests" component={FriendRequestsScreen} />
       <SocialStack.Screen name="Notifications" component={NotificationsScreen} />
       <SocialStack.Screen name="Groups" component={GroupsScreen} />
@@ -222,13 +224,19 @@ function SocialStackNavigator() {
 
 export default function MainTabNavigator() {
   const { colors } = useTheme();
-  const { pendingFirstLesson } = useUserProgress();
+  const { pendingFirstLesson, pendingMoneyverseIntro } = useUserProgress();
 
   return (
     <Tab.Navigator
-      // Right after onboarding, land on the Courses tab so it can push the
-      // user straight into their first lesson.
-      initialRouteName={pendingFirstLesson ? 'CoursesTab' : 'HomeTab'}
+      // Right after onboarding, land on Moneyverse to meet the free starter
+      // character. (pendingFirstLesson kept for older clients / edge cases.)
+      initialRouteName={
+        pendingMoneyverseIntro
+          ? 'MoneyverseTab'
+          : pendingFirstLesson
+            ? 'CoursesTab'
+            : 'HomeTab'
+      }
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,

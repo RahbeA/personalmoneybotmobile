@@ -80,6 +80,7 @@ class UserStatsSerializer(serializers.ModelSerializer):
     equipped_character = serializers.SerializerMethodField()
     rank = serializers.SerializerMethodField()
     onboarding_total = serializers.SerializerMethodField()
+    streak_days = serializers.SerializerMethodField()
 
     class Meta:
         model = UserStats
@@ -87,8 +88,12 @@ class UserStatsSerializer(serializers.ModelSerializer):
             'xp', 'streak_days', 'last_active', 'badges', 'bot_bucks',
             'equipped_character', 'onboarding_completed', 'onboarding_score',
             'onboarding_total', 'onboarding_goals', 'rank', 'daily_reward_day',
-            'daily_claim_streak', 'questions_correct', 'perfect_lessons',
+            'daily_claim_streak', 'streak_goal', 'questions_correct', 'perfect_lessons',
         ]
+
+    def get_streak_days(self, obj):
+        from .daily_rewards import effective_streak
+        return effective_streak(obj, self.context.get('client_today'))
 
     def get_equipped_character(self, obj):
         if not obj.equipped_character_id:
