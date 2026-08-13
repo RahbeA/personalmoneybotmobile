@@ -170,7 +170,8 @@ export default function AuthScreen({ route, navigation }) {
   async function handleApple() {
     if (appleLoading) return;
     setError('');
-    if (!requireValidInvite()) return;
+    // Existing Apple accounts must be able to sign in with no invite. The
+    // backend only requires a code when creating a brand-new account.
     setAppleLoading(true);
     try {
       const credential = await AppleAuthentication.signInAsync({
@@ -195,7 +196,7 @@ export default function AuthScreen({ route, navigation }) {
           email: email || undefined,
           fullName: nameStr || undefined,
         },
-        needsInvite ? inviteCode.trim().toUpperCase() : undefined,
+        inviteCode.trim().toUpperCase() || undefined,
       );
       // For a fresh sign-in the root navigator swaps stacks; for a guest
       // upgrade the user stays signed in, so dismiss this screen ourselves.
@@ -227,7 +228,7 @@ export default function AuthScreen({ route, navigation }) {
         try {
           await googleSignIn(
             idToken,
-            needsInvite ? inviteCode.trim().toUpperCase() : undefined,
+            inviteCode.trim().toUpperCase() || undefined,
           );
           dismissIfUpgrade();
         } catch (err) {
@@ -249,7 +250,6 @@ export default function AuthScreen({ route, navigation }) {
 
   async function handleGoogle() {
     setError('');
-    if (!requireValidInvite()) return;
     const blocked = getGoogleSignInBlockedMessage();
     if (blocked) {
       setError(blocked);

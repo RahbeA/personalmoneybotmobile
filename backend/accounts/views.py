@@ -138,6 +138,8 @@ def login(request):
         )
 
     token, _ = Token.objects.get_or_create(user=user)
+    if not getattr(user, 'is_guest', False):
+        ensure_user_invites(user)
     return Response({
         'token': token.key,
         'user': UserSerializer(user).data,
@@ -223,7 +225,7 @@ def google_auth(request):
             user.save()
 
             claimed_invite = _claim_invite_if_needed(request, user, is_new_account=is_new_account)
-            if is_new_account:
+            if is_new_account or not getattr(user, 'is_guest', False):
                 ensure_user_invites(user)
     except InviteError as exc:
         return _invite_error_response(exc)
@@ -295,7 +297,7 @@ def apple_auth(request):
             user.save()
 
             claimed_invite = _claim_invite_if_needed(request, user, is_new_account=is_new_account)
-            if is_new_account:
+            if is_new_account or not getattr(user, 'is_guest', False):
                 ensure_user_invites(user)
     except InviteError as exc:
         return _invite_error_response(exc)
