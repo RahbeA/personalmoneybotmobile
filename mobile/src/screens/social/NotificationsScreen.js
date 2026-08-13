@@ -17,6 +17,7 @@ const KIND_META = {
   friend_accepted: { icon: 'checkmark-circle', tint: '#3DDC5F' },
   friend_declined: { icon: 'close-circle', tint: '#FF8C42' },
   friend_nudge: { icon: 'hand-left', tint: '#F5B72B' },
+  invite_reward: { icon: 'cash', tint: '#3DDC5F' },
   announcement: { icon: 'megaphone', tint: '#56C8E8' },
 };
 
@@ -66,6 +67,8 @@ export default function NotificationsScreen({ navigation }) {
       navigation.navigate('FriendRequests');
     } else if (item.kind === 'friend_accepted' || item.kind === 'friend_nudge') {
       navigation.navigate('MyFriends');
+    } else if (item.kind === 'invite_reward') {
+      navigation.navigate('MyInvites');
     }
   };
 

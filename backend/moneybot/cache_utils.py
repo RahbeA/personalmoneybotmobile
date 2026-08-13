@@ -44,9 +44,54 @@ def attach_cache_header(response, hit):
     return response
 
 
+def _user_cache_version_key(user_id):
+    return f'user:{user_id}:cachever'
+
+
+def user_cache_version(user_id):
+    """Current per-user cache version, baked into modules/stats cache keys.
+
+    Bumping this on every write is what makes cache invalidation race-proof: a
+    modules/stats snapshot rebuilt from a pre-write DB read (i.e. an in-flight
+    GET that started before a completion) writes itself under the OLD version
+    key, which nothing reads again. The next GET uses the new version, misses,
+    and rebuilds fresh from the database.
+    """
+    key = _user_cache_version_key(user_id)
+    version = cache.get(key)
+    if version is None:
+        # timeout=None => persist (no TTL) so the version survives longer than
+        # the short-lived modules/stats snapshots it namespaces.
+        cache.set(key, 1, None)
+        return 1
+    return version
+
+
+def bump_user_cache_version(user_id):
+    key = _user_cache_version_key(user_id)
+    try:
+        return cache.incr(key)
+    except ValueError:
+        # Key was never set (or expired) — start a fresh version ahead of 1 so
+        # any snapshot cached under the implicit v1 is abandoned.
+        cache.set(key, 2, None)
+        return 2
+
+
+def user_modules_cache_key(user_id):
+    return f'user:{user_id}:modules:v1:cv{user_cache_version(user_id)}'
+
+
+def user_stats_cache_key(user_id):
+    return f'user:{user_id}:stats:v1:cv{user_cache_version(user_id)}'
+
+
 def invalidate_user_cache(user_id):
-    cache.delete(f'user:{user_id}:modules:v1')
-    cache.delete(f'user:{user_id}:stats:v1')
+    # Bump the per-user cache version so any modules/stats snapshot still being
+    # rebuilt from a pre-write DB read lands under the previous version key and
+    # is never served again (closes the non-atomic cache_get_or_set race that
+    # let a stale "lesson incomplete" roadmap resurrect right after completion).
+    bump_user_cache_version(user_id)
 
 
 def invalidate_badge_catalog_cache():

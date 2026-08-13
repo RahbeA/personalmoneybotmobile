@@ -2,7 +2,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.contrib.auth import authenticate, get_user_model
-from django.db.models import Count, Sum, Q
+from django.db.models import Count, F, Sum, Q
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -17,6 +17,11 @@ from .glb_optimize import (
     GlbOptimizeError,
     apply_optimized_to_character,
     optimize_uploaded_bytes,
+)
+from .glb_preview import (
+    DEFAULT_SIZE as PREVIEW_DEFAULT_SIZE,
+    GlbPreviewError,
+    apply_preview_to_character,
 )
 
 from courses.models import (
@@ -261,6 +266,26 @@ class CharacterViewSet(viewsets.ModelViewSet):
         response = super().create(request, *args, **kwargs)
         if opt_stats is not None and isinstance(response.data, dict):
             response.data = {**response.data, 'optimize': opt_stats}
+        # Auto-render a still when a model was uploaded without a preview image.
+        if (
+            isinstance(response.data, dict)
+            and response.data.get('id')
+            and not response.data.get('preview_image')
+            and response.data.get('model_file')
+        ):
+            try:
+                character = Character.objects.get(pk=response.data['id'])
+                preview_stats = apply_preview_to_character(character, force=False)
+                character.refresh_from_db()
+                response.data = {
+                    **self.get_serializer(character).data,
+                    **({'optimize': opt_stats} if opt_stats is not None else {}),
+                    'preview': preview_stats,
+                }
+            except GlbPreviewError as exc:
+                # Don't fail the create — admin can hit Generate Preview later.
+                if isinstance(response.data, dict):
+                    response.data = {**response.data, 'preview_error': str(exc)}
         return response
 
     def update(self, request, *args, **kwargs):
@@ -296,6 +321,66 @@ class CharacterViewSet(viewsets.ModelViewSet):
         character.refresh_from_db()
         data = self.get_serializer(character).data
         return Response({'character': data, 'optimize': stats})
+
+    @action(detail=True, methods=['post'], url_path='generate-preview')
+    def generate_preview(self, request, pk=None):
+        """Render a PNG still from this character's GLB into preview_image."""
+        character = self.get_object()
+        force = str(request.data.get('force', '')).lower() in ('1', 'true', 'yes', 'on')
+        try:
+            size = int(request.data.get('size') or PREVIEW_DEFAULT_SIZE)
+        except (TypeError, ValueError):
+            size = PREVIEW_DEFAULT_SIZE
+        try:
+            stats = apply_preview_to_character(character, size=size, force=force)
+        except GlbPreviewError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        character.refresh_from_db()
+        data = self.get_serializer(character).data
+        return Response({'character': data, 'preview': stats})
+
+    @action(detail=False, methods=['post'], url_path='generate-previews')
+    def generate_previews(self, request):
+        """Bulk-render PNG previews for characters missing one (or all if force)."""
+        force = str(request.data.get('force', '')).lower() in ('1', 'true', 'yes', 'on')
+        try:
+            size = int(request.data.get('size') or PREVIEW_DEFAULT_SIZE)
+        except (TypeError, ValueError):
+            size = PREVIEW_DEFAULT_SIZE
+
+        qs = Character.objects.exclude(model_file='').exclude(model_file=None).order_by('order', 'id')
+        if not force:
+            qs = qs.filter(Q(preview_image='') | Q(preview_image=None))
+
+        results = []
+        ok = 0
+        skipped = 0
+        failed = 0
+        for character in qs:
+            try:
+                stats = apply_preview_to_character(character, size=size, force=force)
+                if stats.get('skipped'):
+                    skipped += 1
+                else:
+                    ok += 1
+                results.append({'id': character.id, 'name': character.name, 'ok': True, **stats})
+            except GlbPreviewError as exc:
+                failed += 1
+                results.append({
+                    'id': character.id,
+                    'name': character.name,
+                    'ok': False,
+                    'error': str(exc),
+                })
+
+        return Response({
+            'ok': ok,
+            'skipped': skipped,
+            'failed': failed,
+            'total': len(results),
+            'results': results,
+        })
 
 
 @api_view(['POST'])
@@ -691,3 +776,148 @@ def cache_health(request):
         'ping_error': ping_error,
         'cache_debug': CACHE_DEBUG,
     })
+
+
+# --- Invites ----------------------------------------------------------------
+
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAdminUser])
+def invite_config(request):
+    from accounts.invites import join_base_url
+    from accounts.models import Invite, InviteConfig
+
+    from accounts.models import InviteClaim
+
+    config = InviteConfig.get()
+    if request.method == 'PATCH':
+        if 'invite_only_enabled' in request.data:
+            config.invite_only_enabled = bool(request.data.get('invite_only_enabled'))
+        if 'invites_per_user' in request.data:
+            try:
+                value = int(request.data.get('invites_per_user'))
+            except (TypeError, ValueError):
+                return Response({'detail': 'invites_per_user must be an integer.'}, status=400)
+            if value < 0 or value > 100:
+                return Response({'detail': 'invites_per_user must be between 0 and 100.'}, status=400)
+            config.invites_per_user = value
+        config.save()
+        config = InviteConfig.get()
+
+    real_users = User.objects.filter(is_guest=False).count()
+    return Response({
+        'invite_only_enabled': config.invite_only_enabled,
+        'invites_per_user': config.invites_per_user,
+        'join_base_url': join_base_url(),
+        'stats': {
+            'real_users': real_users,
+            'invites_total': Invite.objects.count(),
+            'invites_used': InviteClaim.objects.count(),
+            'invites_available': Invite.objects.filter(
+                is_revoked=False, uses_count__lt=F('max_uses'),
+            ).count(),
+            'seed_available': Invite.objects.filter(
+                created_by__isnull=True, is_revoked=False, uses_count__lt=F('max_uses'),
+            ).count(),
+        },
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def invites_bulk_create(request):
+    """Generate seed invites (created_by=null) for bootstrapping the first cohort."""
+    from accounts.models import Invite
+
+    try:
+        count = int(request.data.get('count', 10))
+    except (TypeError, ValueError):
+        return Response({'detail': 'count must be an integer.'}, status=400)
+    if count < 1 or count > 500:
+        return Response({'detail': 'count must be between 1 and 500.'}, status=400)
+
+    note = (request.data.get('note') or 'admin seed').strip()[:255]
+    created = Invite.create_unique(created_by=None, note=note, count=count)
+    return Response({
+        'created': len(created),
+        'invites': [
+            {
+                'id': inv.id,
+                'code': inv.code,
+                'url': inv.join_url,
+                'note': inv.note,
+                'created_at': inv.created_at.isoformat() if inv.created_at else None,
+            }
+            for inv in created
+        ],
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def invites_list(request):
+    from accounts.models import Invite
+
+    qs = Invite.objects.select_related('created_by', 'used_by').prefetch_related('claims__user')
+    status_filter = (request.query_params.get('status') or '').strip().lower()
+    if status_filter == 'used':
+        qs = qs.filter(uses_count__gt=0)
+    elif status_filter == 'available':
+        qs = qs.filter(is_revoked=False, uses_count__lt=F('max_uses'))
+    elif status_filter == 'revoked':
+        qs = qs.filter(is_revoked=True)
+    elif status_filter == 'seed':
+        qs = qs.filter(created_by__isnull=True)
+
+    search = (request.query_params.get('search') or '').strip()
+    if search:
+        qs = qs.filter(
+            Q(code__icontains=search)
+            | Q(note__icontains=search)
+            | Q(created_by__email__icontains=search)
+            | Q(claims__user__email__icontains=search)
+            | Q(created_by__name__icontains=search)
+            | Q(claims__user__name__icontains=search)
+        ).distinct()
+
+    paginator = AdminPagination()
+    page = paginator.paginate_queryset(qs, request)
+
+    def row(inv):
+        created_by = None
+        if inv.created_by_id:
+            created_by = {
+                'id': inv.created_by_id,
+                'email': inv.created_by.email,
+                'name': inv.created_by.name,
+            }
+        claims = list(inv.claims.all())
+        claimed_by = [
+            {
+                'id': claim.user_id,
+                'email': getattr(claim.user, 'email', None),
+                'name': getattr(claim.user, 'name', None),
+                'joined_at': claim.created_at.isoformat() if claim.created_at else None,
+            }
+            for claim in claims
+        ]
+        # Back-compat: expose the most recent redeemer as `used_by`.
+        used_by = claimed_by[0] if claimed_by else None
+        latest_used_at = claims[0].created_at if claims else inv.used_at
+        return {
+            'id': inv.id,
+            'code': inv.code,
+            'url': inv.join_url,
+            'status': inv.status,
+            'note': inv.note,
+            'is_revoked': inv.is_revoked,
+            'max_uses': inv.max_uses,
+            'uses': inv.uses_count,
+            'remaining': inv.remaining,
+            'created_by': created_by,
+            'used_by': used_by,
+            'claimed_by': claimed_by,
+            'used_at': latest_used_at.isoformat() if latest_used_at else None,
+            'created_at': inv.created_at.isoformat() if inv.created_at else None,
+        }
+
+    return paginator.get_paginated_response([row(inv) for inv in page])

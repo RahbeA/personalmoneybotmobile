@@ -1,5 +1,6 @@
 export { default as BrandLogo } from './BrandLogo';
 export { default as BrandLoader } from './BrandLoader';
+export { default as WelcomeSplash } from './WelcomeSplash';
 export { default as BrandAvatar } from './BrandAvatar';
 export { default as BrandLockup } from './BrandLockup';
 export { default as BrandEmptyState } from './BrandEmptyState';

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path, re_path, include
 from django.conf import settings
 
-from .views import panel_index, legal_document
+from .views import panel_index, legal_document, join_invite
 from .media_views import serve_media
 
 urlpatterns = [
@@ -19,6 +19,9 @@ urlpatterns = [
     path('legal/privacy/', legal_document, {'doc_id': 'privacy'}, name='privacy-policy'),
     path('legal/terms/', legal_document, {'doc_id': 'terms'}, name='terms-of-service'),
     path('legal/support/', legal_document, {'doc_id': 'support'}, name='support'),
+    # Invite join page (manual code entry in the app).
+    path('join/<str:code>/', join_invite, name='join-invite'),
+    path('join/<str:code>', join_invite),
     re_path(r'^media/(?P<path>.*)$', serve_media, {'document_root': settings.MEDIA_ROOT}),
     # Web control panel SPA (client-side routing handled by React Router).
     re_path(r'^panel/.*$', panel_index, name='panel'),

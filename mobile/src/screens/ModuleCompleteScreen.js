@@ -137,7 +137,7 @@ export default function ModuleCompleteScreen({ navigation, route }) {
           <TouchableOpacity
             style={styles.continueBtn}
             activeOpacity={0.85}
-            onPress={() => navigation.navigate('CourseMap')}
+            onPress={() => navigation.navigate('Home')}
           >
             <LinearGradient
               colors={[colors.primary, colors.primaryDark]}

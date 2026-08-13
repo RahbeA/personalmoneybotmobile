@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, Dimensions, Animated, Easing,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -9,8 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
-import CharacterViewer from '../components/CharacterViewer';
-import CharacterPoster from '../components/CharacterPoster';
+import FeaturedCharacter from '../components/FeaturedCharacter';
 import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
@@ -23,18 +21,6 @@ const RARITY_COLORS = {
 };
 
 const RARITY_ORDER = ['common', 'rare', 'epic', 'legendary'];
-
-const SCREEN_W = Dimensions.get('window').width;
-const CARD_W = (SCREEN_W - 20 * 2 - 14) / 2;
-
-// Deterministic-ish scattered star positions (generated once).
-const STARS = Array.from({ length: 22 }).map((_, i) => ({
-  key: i,
-  top: `${(i * 37 + 11) % 92}%`,
-  left: `${(i * 53 + 7) % 94}%`,
-  size: (i % 3) + 1.5,
-  opacity: 0.18 + ((i * 7) % 5) * 0.08,
-}));
 
 function rgba(hex, alpha) {
   const h = hex.replace('#', '');
@@ -53,32 +39,6 @@ function CoinBadge({ amount, styles, colors }) {
   );
 }
 
-function Starfield({ styles }) {
-  return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {STARS.map((s) => (
-        <View
-          key={s.key}
-          style={[
-            styles.star,
-            { top: s.top, left: s.left, width: s.size, height: s.size, opacity: s.opacity },
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
-
-function RarityChip({ rarity, styles }) {
-  const color = RARITY_COLORS[rarity] || '#9AA4B2';
-  return (
-    <View style={[styles.rarityChip, { backgroundColor: rgba(color, 0.16), borderColor: rgba(color, 0.5) }]}>
-      <View style={[styles.rarityDot, { backgroundColor: color }]} />
-      <Text style={[styles.rarityChipText, { color }]}>{rarity}</Text>
-    </View>
-  );
-}
-
 export default function MoneyverseScreen({ navigation }) {
   const {
     botBucks,
@@ -90,43 +50,21 @@ export default function MoneyverseScreen({ navigation }) {
     clearPendingMoneyverseIntro,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const tabBarInset = useTabBarInset(24);
+  const tabBarInset = useTabBarInset(16);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
 
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [index, setIndex] = useState(0);
 
   const loading = progressLoading && characters.length === 0;
-  const equipped = equippedCharacter;
-  const equippedRarityColor = RARITY_COLORS[equipped?.rarity] || colors.primary;
 
-  // Clear the post-onboarding landing flag once Moneyverse is visible.
   useEffect(() => {
     if (pendingMoneyverseIntro) clearPendingMoneyverseIntro();
   }, [pendingMoneyverseIntro, clearPendingMoneyverseIntro]);
 
-  // Gentle floating animation for the hero character.
-  const floatAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(floatAnim, {
-          toValue: 1, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true,
-        }),
-        Animated.timing(floatAnim, {
-          toValue: 0, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [floatAnim]);
-  const floatY = floatAnim.interpolate({ inputRange: [0, 1], outputRange: [6, -10] });
-  const platformScale = floatAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.86] });
-
   const ownedCount = useMemo(() => characters.filter((c) => c.is_owned).length, [characters]);
   const totalCount = characters.length;
-  const collectionPct = totalCount ? Math.round((ownedCount / totalCount) * 100) : 0;
 
   const availableRarities = useMemo(() => {
     const present = new Set(characters.map((c) => c.rarity));
@@ -138,6 +76,27 @@ export default function MoneyverseScreen({ navigation }) {
     if (filter === 'owned') return characters.filter((c) => c.is_owned);
     return characters.filter((c) => c.rarity === filter);
   }, [characters, filter]);
+
+  // Snap index when the filter changes. Prefer equipped character on "all".
+  useEffect(() => {
+    if (!visibleCharacters.length) {
+      setIndex(0);
+      return;
+    }
+    if (filter === 'all' && equippedCharacter?.id) {
+      const eq = visibleCharacters.findIndex((c) => c.id === equippedCharacter.id);
+      setIndex(eq >= 0 ? eq : 0);
+      return;
+    }
+    setIndex(0);
+    // Only re-snap when the user changes filter — not on every characters refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
+
+  // Clamp if the list shrinks under the current index.
+  useEffect(() => {
+    setIndex((i) => (visibleCharacters.length ? Math.min(i, visibleCharacters.length - 1) : 0));
+  }, [visibleCharacters.length]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -157,108 +116,42 @@ export default function MoneyverseScreen({ navigation }) {
     [availableRarities],
   );
 
+  const openCharacter = useCallback(
+    (character) => navigation.navigate('CharacterDetail', { character }),
+    [navigation],
+  );
+
+  const subtitle = totalCount
+    ? `${ownedCount} / ${totalCount} collected · swipe to shop`
+    : 'Collect characters with Bot Bucks';
+
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
         <BrandHeader
           title="Moneyverse"
-          subtitle="Collect characters with Bot Bucks"
+          subtitle={subtitle}
           style={styles.brandHeader}
           right={<CoinBadge amount={botBucks} styles={styles} colors={colors} />}
         />
 
         {loading ? (
           <BrandLoader message={LOADER_MESSAGES.moneyverse} />
-        ) : (
+        ) : characters.length === 0 ? (
           <ScrollView
-            contentContainerStyle={styles.scroll}
-            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.emptyScroll}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
             }
           >
-            {/* Immersive hero stage */}
-            <View style={styles.heroWrap}>
-              <LinearGradient
-                colors={
-                  equipped
-                    ? [rgba(equippedRarityColor, 0.22), 'rgba(10,10,10,0.05)', 'rgba(10,10,10,0)']
-                    : ['rgba(61,220,95,0.16)', 'rgba(10,10,10,0.02)', 'rgba(10,10,10,0)']
-                }
-                start={{ x: 0.5, y: 0 }}
-                end={{ x: 0.5, y: 1 }}
-                style={[styles.hero, { borderColor: rgba(equippedRarityColor, 0.28) }]}
-              >
-                <Starfield styles={styles} />
-
-                {equipped ? (
-                  <>
-                    <View style={styles.heroTopRow}>
-                      <View style={[styles.equippedPill, { borderColor: rgba(equippedRarityColor, 0.5) }]}>
-                        <Ionicons name="sparkles" size={12} color={equippedRarityColor} />
-                        <Text style={[styles.equippedPillText, { color: equippedRarityColor }]}>EQUIPPED</Text>
-                      </View>
-                    </View>
-
-                    {/* Glow halo behind the character */}
-                    <View
-                      style={[styles.heroGlow, { backgroundColor: rgba(equippedRarityColor, 0.28) }]}
-                      pointerEvents="none"
-                    />
-
-                    <Animated.View style={[styles.heroViewer, { transform: [{ translateY: floatY }] }]}>
-                      <CharacterViewer
-                        modelUrl={equipped.model_url}
-                        previewUrl={equipped.preview_url}
-                        autoRotate
-                        allowDrag
-                      />
-                    </Animated.View>
-
-                    {/* Floating platform shadow */}
-                    <Animated.View
-                      style={[
-                        styles.platform,
-                        { backgroundColor: rgba(equippedRarityColor, 0.35), transform: [{ scaleX: platformScale }] },
-                      ]}
-                      pointerEvents="none"
-                    />
-
-                    <Text style={styles.heroName}>{equipped.name}</Text>
-                    <RarityChip rarity={equipped.rarity} styles={styles} />
-                  </>
-                ) : (
-                  <BrandEmptyState
-                    title={EMPTY_STATES.moneyverseHero.title}
-                    body={EMPTY_STATES.moneyverseHero.body}
-                    avatarSize={80}
-                    style={styles.heroEmptyBrand}
-                  />
-                )}
-              </LinearGradient>
-            </View>
-
-            {/* Collection progress */}
-            {totalCount > 0 && (
-              <View style={styles.collectionCard}>
-                <View style={styles.collectionTop}>
-                  <View style={styles.collectionLabelRow}>
-                    <Ionicons name="library" size={15} color={colors.primary} />
-                    <Text style={styles.collectionLabel}>Collection</Text>
-                  </View>
-                  <Text style={styles.collectionCount}>
-                    <Text style={styles.collectionCountStrong}>{ownedCount}</Text>
-                    {` / ${totalCount}`}
-                  </Text>
-                </View>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${collectionPct}%` }]} />
-                </View>
-              </View>
-            )}
-
-            {/* Filter chips */}
+            <BrandEmptyState
+              title={EMPTY_STATES.moneyverseShop.title}
+              body={EMPTY_STATES.moneyverseShop.body}
+            />
+          </ScrollView>
+        ) : (
+          <View style={styles.body}>
             {filters.length > 1 && (
               <ScrollView
                 horizontal
@@ -286,77 +179,14 @@ export default function MoneyverseScreen({ navigation }) {
               </ScrollView>
             )}
 
-            {characters.length === 0 ? (
-              <BrandEmptyState
-                title={EMPTY_STATES.moneyverseShop.title}
-                body={EMPTY_STATES.moneyverseShop.body}
-                style={styles.emptyShopBrand}
-              />
-            ) : (
-              <View style={styles.grid}>
-                {visibleCharacters.map((c) => {
-                  const rarityColor = RARITY_COLORS[c.rarity] || colors.primary;
-                  const isEquipped = equippedCharacter?.id === c.id;
-                  const canAfford = botBucks >= c.price;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      style={[styles.card, { borderColor: rgba(rarityColor, isEquipped ? 0.6 : 0.28) }]}
-                      activeOpacity={0.85}
-                      onPress={() => navigation.navigate('CharacterDetail', { character: c })}
-                    >
-                      <LinearGradient
-                        colors={[rgba(rarityColor, 0.18), 'rgba(127,127,127,0.04)']}
-                        style={styles.cardViewer}
-                      >
-                        {/* Cover PNG only — 3D loads on CharacterDetail after tap */}
-                        <CharacterPoster
-                          previewUrl={c.preview_url}
-                          style={styles.cardPoster}
-                        />
-                        {c.is_owned ? (
-                          <View style={[styles.ownedTag, isEquipped && styles.equippedTag]}>
-                            <Ionicons
-                              name={isEquipped ? 'checkmark-circle' : 'bag-check'}
-                              size={12}
-                              color="#fff"
-                            />
-                            <Text style={styles.ownedTagText}>{isEquipped ? 'Equipped' : 'Owned'}</Text>
-                          </View>
-                        ) : (
-                          <View style={[styles.rarityTag, { backgroundColor: rgba(rarityColor, 0.9) }]}>
-                            <Text style={styles.rarityTagText}>{c.rarity}</Text>
-                          </View>
-                        )}
-                      </LinearGradient>
-                      <View style={styles.cardBody}>
-                        <Text style={styles.cardName} numberOfLines={1}>{c.name}</Text>
-                        <View style={styles.cardMetaRow}>
-                          {c.is_owned ? (
-                            <View style={styles.ownedPriceRow}>
-                              <Ionicons name="checkmark-circle" size={13} color={colors.primary} />
-                              <Text style={styles.ownedPrice}>In collection</Text>
-                            </View>
-                          ) : (
-                            <View style={styles.priceRow}>
-                              <Ionicons
-                                name="logo-bitcoin"
-                                size={14}
-                                color={canAfford ? colors.botBucks : colors.textMuted}
-                              />
-                              <Text style={[styles.priceText, !canAfford && styles.priceTextLocked]}>
-                                {c.price}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </ScrollView>
+            <FeaturedCharacter
+              characters={visibleCharacters}
+              index={index}
+              onIndexChange={setIndex}
+              onOpen={openCharacter}
+              equippedId={equippedCharacter?.id}
+            />
+          </View>
         )}
       </SafeAreaView>
     </LinearGradient>
@@ -373,105 +203,16 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
   },
   coinBadgeText: { fontSize: 15, fontWeight: '800', color: colors.botBucks },
-  scroll: { paddingHorizontal: 20, paddingBottom: tabBarInset },
+  body: { flex: 1, paddingBottom: tabBarInset },
+  emptyScroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
 
-  // Hero stage
-  heroWrap: { marginBottom: 20 },
-  hero: {
-    borderRadius: 28, paddingTop: 16, paddingBottom: 22, paddingHorizontal: 18,
-    alignItems: 'center', borderWidth: 1, overflow: 'hidden',
-  },
-  star: {
-    position: 'absolute', borderRadius: 4, backgroundColor: '#FFFFFF',
-  },
-  heroTopRow: { width: '100%', alignItems: 'center', marginBottom: 4 },
-  equippedPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: 'rgba(0,0,0,0.25)', borderWidth: 1,
-    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999,
-  },
-  equippedPillText: { fontSize: 11, fontWeight: '800', letterSpacing: 1.2 },
-  heroGlow: {
-    position: 'absolute', top: 70, alignSelf: 'center',
-    width: 220, height: 220, borderRadius: 110,
-    // Soft radial-like halo (blur approximated with large translucent circle).
-  },
-  heroViewer: { width: '100%', height: 250 },
-  platform: {
-    width: 150, height: 18, borderRadius: 999, marginTop: -6, marginBottom: 12,
-    opacity: 0.7,
-  },
-  heroName: { fontSize: 24, fontWeight: '800', color: colors.white, letterSpacing: -0.4, marginBottom: 8 },
-  heroEmptyBrand: { paddingVertical: 28 },
-
-  // Rarity chip (shared)
-  rarityChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1,
-  },
-  rarityDot: { width: 7, height: 7, borderRadius: 4 },
-  rarityChipText: { fontSize: 12, fontWeight: '800', textTransform: 'capitalize', letterSpacing: 0.3 },
-
-  // Collection progress
-  collectionCard: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 16,
-    borderWidth: 1, borderColor: colors.border, marginBottom: 18,
-  },
-  collectionTop: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10,
-  },
-  collectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  collectionLabel: { fontSize: 14, fontWeight: '700', color: colors.white, letterSpacing: 0.2 },
-  collectionCount: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
-  collectionCountStrong: { color: colors.white, fontWeight: '800' },
-  progressTrack: {
-    height: 8, borderRadius: 999, backgroundColor: 'rgba(127,127,127,0.18)', overflow: 'hidden',
-  },
-  progressFill: { height: '100%', borderRadius: 999, backgroundColor: colors.primary },
-
-  // Filters
-  filterScroll: { marginBottom: 16 },
-  filterRow: { gap: 8, paddingRight: 4 },
+  filterScroll: { flexGrow: 0, marginBottom: 12, maxHeight: 44 },
+  filterRow: { gap: 8, paddingHorizontal: 20, paddingRight: 24 },
   filterChip: {
     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999,
     backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
   },
-  filterChipText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary, textTransform: 'capitalize' },
-
-  // Grid
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  card: {
-    width: CARD_W, borderRadius: 20, overflow: 'hidden',
-    backgroundColor: colors.surfaceElevated, borderWidth: 1,
+  filterChipText: {
+    fontSize: 13, fontWeight: '700', color: colors.textSecondary, textTransform: 'capitalize',
   },
-  cardViewer: {
-    height: 152,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  cardPoster: {
-    width: '100%',
-    height: '100%',
-  },
-  ownedTag: {
-    position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: 'rgba(96,96,96,0.9)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3,
-  },
-  equippedTag: { backgroundColor: colors.primaryDark },
-  ownedTagText: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  rarityTag: {
-    position: 'absolute', top: 8, left: 8, borderRadius: 10,
-    paddingHorizontal: 8, paddingVertical: 3,
-  },
-  rarityTagText: { fontSize: 10, fontWeight: '800', color: '#fff', textTransform: 'capitalize', letterSpacing: 0.3 },
-  cardBody: { padding: 12 },
-  cardName: { fontSize: 15, fontWeight: '700', color: colors.white, marginBottom: 8 },
-  cardMetaRow: { flexDirection: 'row', alignItems: 'center' },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  priceText: { fontSize: 15, fontWeight: '800', color: colors.botBucks },
-  priceTextLocked: { color: colors.textMuted },
-  ownedPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  ownedPrice: { fontSize: 13, fontWeight: '700', color: colors.primary },
-  emptyShopBrand: { paddingVertical: 16 },
 });

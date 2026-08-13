@@ -375,6 +375,32 @@ export default function SettingsScreen({ navigation }) {
           </View>
           <Text style={styles.notifHint}>Tap to add or remove goals — we tailor your journey to these.</Text>
 
+          {/* Invite friends to the app */}
+          {!isGuest && (
+            <>
+              <Text style={styles.sectionTitle}>Invite friends</Text>
+              <TouchableOpacity
+                style={styles.guestCta}
+                activeOpacity={0.9}
+                onPress={() => {
+                  const rootNav = navigation.getParent?.() ?? navigation;
+                  rootNav.navigate('MyInvites');
+                }}
+              >
+                <View style={styles.guestCtaIcon}>
+                  <Ionicons name="mail-outline" size={22} color={colors.primary} />
+                </View>
+                <View style={styles.guestCtaText}>
+                  <Text style={styles.guestCtaTitle}>Your invite codes</Text>
+                  <Text style={styles.guestCtaBody}>
+                    Share up to 10 join links. Friends paste the code when they sign up.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </>
+          )}
+
           {/* Support & legal */}
           <Text style={styles.sectionTitle}>Support</Text>
           <View style={styles.linkGrid}>

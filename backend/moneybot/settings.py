@@ -49,6 +49,24 @@ APPLE_CLIENT_IDS = [
     if cid.strip()
 ]
 
+# Invite-only signup (gated account creation for the first ~1000 users).
+# Toggleable at runtime via InviteConfig in the admin panel; these are defaults
+# used when the singleton row is first created.
+INVITE_ONLY_DEFAULT = os.environ.get('INVITE_ONLY_DEFAULT', 'True').lower() in ('1', 'true', 'yes')
+try:
+    INVITES_PER_USER = max(0, int(os.environ.get('INVITES_PER_USER', '10')))
+except ValueError:
+    INVITES_PER_USER = 10
+INVITE_JOIN_BASE_URL = os.environ.get(
+    'INVITE_JOIN_BASE_URL',
+    'https://getmoneybot.com/join',
+).rstrip('/')
+# Bot Bucks credited to a user each time someone joins via their invite code.
+try:
+    INVITE_REWARD_BOT_BUCKS = max(0, int(os.environ.get('INVITE_REWARD_BOT_BUCKS', '50')))
+except ValueError:
+    INVITE_REWARD_BOT_BUCKS = 50
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -191,6 +209,14 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
 }
+
+# DRF's TokenAuthentication tokens never expire on their own, so the mobile app
+# stays signed in until the user explicitly logs out. Keep the admin/web session
+# cookie long-lived too, and slide its expiry on every request so active admins
+# aren't kicked out mid-session.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 365  # 1 year
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 # In dev, allow any origin so the Vite dev server can reach the API. In production
 # the panel is served same-origin, so only list extra browser origins if you need them.

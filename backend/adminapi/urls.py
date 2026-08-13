@@ -26,5 +26,8 @@ urlpatterns = [
     path('stats/summary/', views.stats_summary, name='admin-stats-summary'),
     path('cache/health/', views.cache_health, name='admin-cache-health'),
     path('glb/optimize/', views.optimize_glb_upload, name='admin-glb-optimize'),
+    path('invite-config/', views.invite_config, name='admin-invite-config'),
+    path('invites/bulk/', views.invites_bulk_create, name='admin-invites-bulk'),
+    path('invites/', views.invites_list, name='admin-invites-list'),
     path('', include(router.urls)),
 ]

@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Animated,
+  Animated, RefreshControl,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,16 +9,19 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { useUserProgress, getModuleIonIcon } from '../context/UserProgressContext';
+import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
-import { BrandLogo, BrandToast } from '../components/brand';
+import { BrandLogo, BrandToast, BrandEmptyState } from '../components/brand';
 import { BRAND_NAME } from '../constants/brandCopy';
 import DailyRewardCard from '../components/DailyRewardCard';
 import DailyClaimCelebration from '../components/DailyClaimCelebration';
 import BadgeIcon from '../components/BadgeIcon';
 import AppBar from '../components/AppBar';
+import LessonRoadmap, { getNextLesson, ROADMAP_GREEN } from '../components/LessonRoadmap';
+import PuckButton from '../components/PuckButton';
 import { getFirstName } from '../utils/displayName';
+import { API_BASE_URL } from '../config/api';
 
 const DAILY_TIPS = [
   'Pay yourself first — automate savings before spending.',
@@ -61,19 +64,33 @@ function AnimatedCard({ delay = 0, style, children }) {
   );
 }
 
-export default function HomeScreen({ navigation }) {
+export default function HomeScreen({ navigation, route }) {
   const { user } = useAuth();
   const {
-    streakDays, badges, modules,
-    botBucks,
-    dailyReward, claimingDaily, claimDailyReward, getBadgeMeta, badgeCatalog, refresh,
+    streakDays, badges, modules, loading, loadError, refresh,
+    dailyReward, claimingDaily, claimDailyReward, getBadgeMeta, badgeCatalog,
+    pendingFirstLesson, clearPendingFirstLesson,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(24);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
   const [streakToast, setStreakToast] = useState(null);
   const [celebration, setCelebration] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [collapsed, setCollapsed] = useState({});
   const pendingBadgeRef = useRef(null);
+  const scrollRef = useRef(null);
+  const sectionYRef = useRef({});
+
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 1100, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, [pulse]);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,39 +105,60 @@ export default function HomeScreen({ navigation }) {
     }
   }, [streakDays]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refresh();
+    setRefreshing(false);
+  }, [refresh]);
+
   const displayName = getFirstName(user);
-
-  const nextLesson = (() => {
-    for (const mod of modules) {
-      if (!mod.lessons) continue;
-      for (const lesson of mod.lessons) {
-        if (!lesson.is_completed) {
-          return { lesson, module: mod };
-        }
-      }
-    }
-    return null;
-  })();
-
-  const moduleProgress = modules.slice(0, 4).map((mod) => ({
-    ...mod,
-    pct: mod.lesson_count ? Math.round((mod.completed_lesson_count / mod.lesson_count) * 100) : 0,
-  }));
+  const nextLesson = getNextLesson(modules);
 
   const earnedBadges = badges.map((key) => getBadgeMeta(key));
-
   const catalogBadges = badgeCatalog.map((b) => ({
     ...getBadgeMeta(b.key),
     earned: badges.includes(b.key),
   }));
 
-  function goToTab(tab) {
-    navigation.navigate(tab);
+  function goToProfile() {
+    navigation.navigate('SettingsTab');
   }
 
-  function goToProfile() {
-    goToTab('SettingsTab');
+  function handleLessonPress(lesson, module) {
+    navigation.navigate('LessonIntro', { lesson, module });
   }
+
+  function toggleSection(id, isCurrentlyCollapsed) {
+    setCollapsed((prev) => ({ ...prev, [id]: !isCurrentlyCollapsed }));
+  }
+
+  useEffect(() => {
+    if (!pendingFirstLesson) return;
+    if (loading || !modules.length) return;
+    const first = getNextLesson(modules);
+    clearPendingFirstLesson();
+    if (first) {
+      navigation.navigate('LessonIntro', { lesson: first.lesson, module: first.module });
+    }
+  }, [pendingFirstLesson, loading, modules, navigation, clearPendingFirstLesson]);
+
+  const focusModuleId = route?.params?.focusModuleId;
+  useEffect(() => {
+    if (focusModuleId == null) return;
+    if (loading || !modules.length) return;
+    if (!modules.some((m) => m.id === focusModuleId)) return;
+
+    setCollapsed((prev) => ({ ...prev, [focusModuleId]: false }));
+
+    const timer = setTimeout(() => {
+      const y = sectionYRef.current[focusModuleId];
+      if (y != null && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: Math.max(y - 12, 0), animated: true });
+      }
+      navigation.setParams({ focusModuleId: undefined });
+    }, 320);
+    return () => clearTimeout(timer);
+  }, [focusModuleId, loading, modules, navigation]);
 
   async function handleDailyClaim() {
     const claimAmount = dailyReward?.claim_amount ?? 0;
@@ -145,7 +183,6 @@ export default function HomeScreen({ navigation }) {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        {/* Pinned — stays fixed while home content scrolls */}
         <AppBar
           variant="home"
           subtitle={getGreeting()}
@@ -155,12 +192,14 @@ export default function HomeScreen({ navigation }) {
         />
 
         <ScrollView
+          ref={scrollRef}
           style={styles.scrollView}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ROADMAP_GREEN.solid} />
+          }
         >
-
-          {/* Today's Tip — first content under the pinned app bar */}
           <AnimatedCard delay={60} style={styles.section}>
             <Text style={styles.sectionTitle}>Today's Tip</Text>
             <View style={styles.tipCard}>
@@ -184,81 +223,77 @@ export default function HomeScreen({ navigation }) {
             </AnimatedCard>
           )}
 
-          <AnimatedCard delay={120} style={styles.section}>
-            <Text style={styles.sectionTitle}>Pick Up Where You Left Off</Text>
+          <AnimatedCard delay={120} style={styles.quickRow}>
             {nextLesson ? (
-              <TouchableOpacity
+              <PuckButton
+                color={ROADMAP_GREEN.solid}
+                height={88}
+                borderRadius={18}
+                lip={8}
+                onPress={() => handleLessonPress(nextLesson.lesson, nextLesson.module)}
                 style={styles.continueCard}
-                activeOpacity={0.85}
-                onPress={() => goToTab('CoursesTab')}
+                contentStyle={styles.continueGrad}
               >
-                <View style={styles.continueIconWrap}>
-                  <Ionicons name={getModuleIonIcon(nextLesson.module)} size={26} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.continueLabel}>CONTINUE</Text>
+                  <Text style={styles.continueTitle} numberOfLines={2}>{nextLesson.lesson.title}</Text>
                 </View>
-                <View style={styles.continueBody}>
-                  <Text style={styles.continueMod}>{nextLesson.module.title}</Text>
-                  <Text style={styles.continueLesson}>{nextLesson.lesson.title}</Text>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        {
-                          width: `${(nextLesson.module.completed_lesson_count / nextLesson.module.lesson_count) * 100}%`,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.progressLabel}>
-                    {nextLesson.module.completed_lesson_count}/{nextLesson.module.lesson_count} lessons in module
-                  </Text>
-                </View>
-                <View style={styles.continueGo}>
-                  <Ionicons name="play" size={16} color={colors.background} />
-                </View>
-              </TouchableOpacity>
+                <PuckButton
+                  color="#FFFFFF"
+                  width={32}
+                  height={32}
+                  borderRadius={16}
+                  lip={3}
+                >
+                  <Ionicons name="play" size={16} color={ROADMAP_GREEN.solid} />
+                </PuckButton>
+              </PuckButton>
             ) : (
               <View style={styles.allDoneCard}>
-                <Ionicons name="trophy" size={32} color={colors.primary} />
-                <Text style={styles.allDoneTitle}>All caught up!</Text>
-                <Text style={styles.allDoneText}>You've completed every lesson. Nice work.</Text>
+                <Ionicons name="trophy" size={22} color={colors.primary} />
+                <Text style={styles.allDoneTitle}>All caught up</Text>
               </View>
             )}
+
+            <PuckButton
+              color="#FF8A1F"
+              width={88}
+              height={88}
+              borderRadius={18}
+              lip={8}
+              onPress={() => navigation.navigate('DailyBlitz')}
+              contentStyle={styles.puzzleGrad}
+            >
+              <Ionicons name="today" size={22} color="#FFFFFF" />
+              <Text style={styles.puzzleLabel}>Daily{'\n'}Puzzle</Text>
+            </PuckButton>
           </AnimatedCard>
 
-          {moduleProgress.length > 0 && (
-            <AnimatedCard delay={240} style={styles.section}>
-              <View style={styles.sectionRow}>
-                <Text style={[styles.sectionTitle, styles.sectionTitleInline]}>Your Roadmap</Text>
-                <TouchableOpacity onPress={() => goToTab('CoursesTab')} hitSlop={8}>
-                  <Text style={styles.sectionLink}>View all</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.roadmapList}>
-                {moduleProgress.map((mod) => (
-                  <TouchableOpacity
-                    key={mod.id}
-                    style={styles.roadmapItem}
-                    activeOpacity={0.8}
-                    onPress={() => goToTab('CoursesTab')}
-                  >
-                    <View style={styles.roadmapIcon}>
-                      <Ionicons name={getModuleIonIcon(mod)} size={18} color={colors.primary} />
-                    </View>
-                    <View style={styles.roadmapBody}>
-                      <Text style={styles.roadmapTitle} numberOfLines={1}>{mod.title}</Text>
-                      <View style={styles.roadmapTrack}>
-                        <View style={[styles.roadmapFill, { width: `${mod.pct}%` }]} />
-                      </View>
-                    </View>
-                    <Text style={styles.roadmapPct}>{mod.pct}%</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </AnimatedCard>
+          {loadError ? (
+            <BrandEmptyState
+              title="Couldn't load courses"
+              body={`${loadError}\n\nConnected to:\n${API_BASE_URL}\n\nPull down to retry, or sign out and sign back in.`}
+              style={{ marginTop: 24 }}
+            />
+          ) : modules.length === 0 && !loading ? (
+            <BrandEmptyState
+              title="No courses yet"
+              body={`Nothing returned from the server.\n\nConnected to:\n${API_BASE_URL}\n\nPull down to refresh.`}
+              style={{ marginTop: 24 }}
+            />
+          ) : (
+            <LessonRoadmap
+              modules={modules}
+              collapsed={collapsed}
+              onToggle={toggleSection}
+              onLessonPress={handleLessonPress}
+              pulse={pulse}
+              onSectionLayout={(id, y) => { sectionYRef.current[id] = y; }}
+            />
           )}
 
           {catalogBadges.length > 0 && (
-            <AnimatedCard delay={300} style={styles.section}>
+            <AnimatedCard delay={240} style={styles.section}>
               <Text style={styles.sectionTitle}>Badges</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
                 {catalogBadges.map((badge) => (
@@ -283,7 +318,7 @@ export default function HomeScreen({ navigation }) {
           )}
 
           {catalogBadges.length === 0 && earnedBadges.length > 0 && (
-            <AnimatedCard delay={300} style={styles.section}>
+            <AnimatedCard delay={240} style={styles.section}>
               <Text style={styles.sectionTitle}>Badges Earned</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgesScroll}>
                 {earnedBadges.map((badge) => (
@@ -304,7 +339,6 @@ export default function HomeScreen({ navigation }) {
               </ScrollView>
             </AnimatedCard>
           )}
-
         </ScrollView>
 
         <BrandToast
@@ -330,90 +364,7 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   scroll: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: tabBarInset },
 
   section: { marginBottom: 22 },
-  sectionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: colors.white, letterSpacing: -0.2, marginBottom: 12 },
-  sectionTitleInline: { marginBottom: 0 },
-  sectionLink: { fontSize: 13, fontWeight: '600', color: colors.primary },
-
-  continueCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.25)',
-  },
-  continueIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
-    backgroundColor: 'rgba(61,220,95,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  continueBody: { flex: 1 },
-  continueMod: { fontSize: 12, color: colors.primary, fontWeight: '600', marginBottom: 2 },
-  continueLesson: { fontSize: 16, fontWeight: '700', color: colors.white, marginBottom: 10 },
-  progressTrack: { height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: 'hidden', marginBottom: 4 },
-  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
-  progressLabel: { fontSize: 11, color: colors.textSecondary },
-  continueGo: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  allDoneCard: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 6,
-  },
-  allDoneTitle: { fontSize: 17, fontWeight: '700', color: colors.white },
-  allDoneText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center' },
-
-  roadmapList: { gap: 10 },
-  roadmapItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  roadmapIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(61,220,95,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roadmapBody: { flex: 1, gap: 6 },
-  roadmapTitle: { fontSize: 14, fontWeight: '600', color: colors.white },
-  roadmapTrack: { height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: 'hidden' },
-  roadmapFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
-  roadmapPct: { fontSize: 13, fontWeight: '700', color: colors.textMuted, minWidth: 36, textAlign: 'right' },
-
-  badgesScroll: { marginHorizontal: -4 },
-  badgeItem: { alignItems: 'center', marginHorizontal: 8, width: 72 },
-  badgeItemLocked: { opacity: 0.75 },
-  badgeLabel: { fontSize: 10, color: colors.textSecondary, textAlign: 'center', fontWeight: '500' },
-  badgeLabelLocked: { color: colors.textMuted },
 
   tipCard: {
     backgroundColor: colors.surfaceElevated,
@@ -429,4 +380,67 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   tipBody: { flex: 1 },
   tipTag: { fontSize: 11, fontWeight: '700', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
   tipText: { fontSize: 14, color: colors.offWhite, lineHeight: 20 },
+
+  quickRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 10,
+    marginBottom: 22,
+  },
+  continueCard: {
+    flex: 1,
+  },
+  continueGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  continueLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.85)',
+    letterSpacing: 1.1,
+    marginBottom: 4,
+  },
+  continueTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  allDoneCard: {
+    flex: 1,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+    minHeight: 88,
+  },
+  allDoneTitle: { fontSize: 14, fontWeight: '700', color: colors.white },
+
+  puzzleGrad: {
+    gap: 6,
+    paddingVertical: 10,
+  },
+  puzzleLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+
+  badgesScroll: { marginHorizontal: -4 },
+  badgeItem: { alignItems: 'center', marginHorizontal: 8, width: 72 },
+  badgeItemLocked: { opacity: 0.75 },
+  badgeLabel: { fontSize: 10, color: colors.textSecondary, textAlign: 'center', fontWeight: '500' },
+  badgeLabelLocked: { color: colors.textMuted },
 });

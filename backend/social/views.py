@@ -431,16 +431,21 @@ def friend_requests(request):
                 })
             return Response({'error': 'Request already sent.'}, status=status.HTTP_400_BAD_REQUEST)
         if existing.status == Friendship.STATUS_DECLINED:
-            if existing.requester_id == request.user.id:
-                existing.status = Friendship.STATUS_PENDING
-                existing.responded_at = None
-                existing.save(update_fields=['status', 'responded_at'])
-                service.notify_friend_request(actor=request.user, recipient=target, request_id=existing.id)
-                return Response({
-                    'status': 'pending',
-                    'request': _serialize_friendship_request(existing, request.user),
-                })
-            return Response({'error': 'Request was declined.'}, status=status.HTTP_400_BAD_REQUEST)
+            # A prior decline shouldn't permanently block either person from
+            # reaching out again. Reopen the row as a fresh request from the
+            # current user → target, regardless of who originally sent it.
+            existing.requester = request.user
+            existing.addressee = target
+            existing.status = Friendship.STATUS_PENDING
+            existing.responded_at = None
+            existing.save(update_fields=[
+                'requester', 'addressee', 'status', 'responded_at',
+            ])
+            service.notify_friend_request(actor=request.user, recipient=target, request_id=existing.id)
+            return Response({
+                'status': 'pending',
+                'request': _serialize_friendship_request(existing, request.user),
+            })
 
     friendship = Friendship.objects.create(
         requester=request.user,

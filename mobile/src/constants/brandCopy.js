@@ -1,6 +1,7 @@
 export const BRAND_NAME = 'MoneyBot';
 export const BRAND_TAGLINE = 'Financial literacy for everyone';
 export const BRAND_URL = 'getmoneybot.com';
+export const APP_STORE_URL = 'https://apps.apple.com/us/app/moneybot-mobile/id6778658807';
 
 export const LOADER_MESSAGES = {
   boot: 'Starting MoneyBot...',

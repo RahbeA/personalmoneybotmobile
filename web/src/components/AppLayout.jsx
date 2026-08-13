@@ -14,6 +14,7 @@ import {
   TrophyOutlined,
   GiftOutlined,
   BellOutlined,
+  MailOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { key: '/badges', icon: <TrophyOutlined />, label: 'Badges' },
   { key: '/daily-rewards', icon: <GiftOutlined />, label: 'Daily Rewards' },
   { key: '/users', icon: <TeamOutlined />, label: 'Users' },
+  { key: '/invites', icon: <MailOutlined />, label: 'Invites' },
   { key: '/notifications', icon: <BellOutlined />, label: 'Notifications' },
   { key: '/admin-access', icon: <SafetyCertificateOutlined />, label: 'Admin Access' },
   { key: '/ai', icon: <RobotOutlined />, label: 'AI Inspector' },

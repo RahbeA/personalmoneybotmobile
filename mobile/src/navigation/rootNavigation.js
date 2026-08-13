@@ -16,6 +16,13 @@ export function handleNotificationNavigation(data = {}) {
   if (!navigationRef.isReady()) return;
 
   const kind = data.kind;
+
+  // Invite reward lives on the root stack (sibling of Main), not the Social tab.
+  if (kind === 'invite_reward') {
+    navigationRef.dispatch(CommonActions.navigate({ name: 'MyInvites' }));
+    return;
+  }
+
   let socialScreen = 'Friends';
   if (kind === 'friend_request') socialScreen = 'FriendRequests';
   else if (kind === 'friend_accepted' || kind === 'friend_declined' || kind === 'friend_nudge') {

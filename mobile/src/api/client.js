@@ -34,7 +34,10 @@ function extractError(data, fallback) {
  * Shared fetch wrapper for all mobile API modules.
  * Logs the full URL in dev so you can confirm production is being hit.
  */
-export async function apiRequest(endpoint, { method = 'GET', token, body, headers = {} } = {}) {
+export async function apiRequest(
+  endpoint,
+  { method = 'GET', token, body, headers = {}, skipUnauthorizedHandler = false } = {},
+) {
   const url = `${API_BASE_URL}${endpoint}`;
 
   if (__DEV__) {
@@ -62,7 +65,7 @@ export async function apiRequest(endpoint, { method = 'GET', token, body, header
 
   const data = await parseJson(response);
 
-  if (response.status === 401 && onUnauthorized) {
+  if (response.status === 401 && onUnauthorized && !skipUnauthorizedHandler) {
     onUnauthorized();
   }
 

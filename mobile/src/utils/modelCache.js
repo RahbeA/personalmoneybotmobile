@@ -11,8 +11,11 @@ const MANIFEST_URI = `${MODELS_DIR}manifest.json`;
 
 const DOWNLOAD_CONCURRENCY = 2;
 const MIN_MODEL_BYTES = 100;
-/** Equipped hero + at most one open detail viewer. */
-const BASE64_CACHE_MAX = 2;
+/**
+ * Equipped hero + featured carousel + an open detail viewer. Unmounted viewers
+ * evict eagerly, so RAM stays bounded regardless.
+ */
+const BASE64_CACHE_MAX = 3;
 const LOG_RING_MAX = 120;
 
 export const isModelCacheDebugEnabled =

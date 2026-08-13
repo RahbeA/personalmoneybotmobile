@@ -14,7 +14,6 @@ import DailyLeaderboardScreen from '../screens/daily/DailyLeaderboardScreen';
 import InflationDodgeScreen from '../games/inflationDodge/InflationDodgeScreen';
 import CreditClimbScreen from '../games/creditClimb/CreditClimbScreen';
 import ScamSpotterScreen from '../games/scamSpotter/ScamSpotterScreen';
-import CoursesScreen from '../screens/CoursesScreen';
 import LessonIntroScreen from '../screens/LessonIntroScreen';
 import QuestionFlowScreen from '../screens/QuestionFlowScreen';
 import LessonCompleteScreen from '../screens/LessonCompleteScreen';
@@ -41,14 +40,12 @@ import { useUserProgress } from '../context/UserProgressContext';
 
 const Tab = createBottomTabNavigator();
 const HomeStack = createNativeStackNavigator();
-const CourseStack = createNativeStackNavigator();
 const MoneyverseStack = createNativeStackNavigator();
 const TutorStack = createNativeStackNavigator();
 const SocialStack = createNativeStackNavigator();
 
 const TABS = [
   { name: 'HomeTab', label: 'Home', icon: 'home', iconOutline: 'home-outline' },
-  { name: 'CoursesTab', label: 'Courses', icon: 'book', iconOutline: 'book-outline' },
   { name: 'MoneyverseTab', label: 'Moneyverse', icon: 'planet', iconOutline: 'planet-outline' },
   { name: 'SocialTab', label: 'Leaderboard', icon: 'trophy', iconOutline: 'trophy-outline' },
   { name: 'TutorTab', label: 'Tutor', icon: 'chatbubbles', iconOutline: 'chatbubbles-outline' },
@@ -119,6 +116,11 @@ function HomeStackNavigator() {
   return (
     <HomeStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <HomeStack.Screen name="Home" component={HomeScreen} />
+      <HomeStack.Screen name="LessonIntro" component={LessonIntroScreen} options={{ animation: 'fade', animationDuration: 200, gestureEnabled: false }} />
+      <HomeStack.Screen name="QuestionFlow" component={QuestionFlowScreen} options={{ animation: 'fade', animationDuration: 200, gestureEnabled: false }} />
+      <HomeStack.Screen name="LessonComplete" component={LessonCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
+      <HomeStack.Screen name="MoneyChat" component={MoneyChatScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
+      <HomeStack.Screen name="ModuleComplete" component={ModuleCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
       <HomeStack.Screen name="Leaderboard" component={LeaderboardScreen} />
       <HomeStack.Screen name="Arcade" component={ArcadeScreen} />
       <HomeStack.Screen
@@ -165,37 +167,6 @@ function MoneyverseStackNavigator() {
   );
 }
 
-function CoursesStackNavigator() {
-  const { colors } = useTheme();
-  const badgeRevealOptions = {
-    animation: 'slide_from_right',
-    gestureEnabled: false,
-    contentStyle: { backgroundColor: colors.background },
-  };
-
-  return (
-    <CourseStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-      <CourseStack.Screen name="CourseMap" component={CoursesScreen} />
-      <CourseStack.Screen name="LessonIntro" component={LessonIntroScreen} options={{ animation: 'fade', animationDuration: 200, gestureEnabled: false }} />
-      <CourseStack.Screen name="QuestionFlow" component={QuestionFlowScreen} options={{ animation: 'fade', animationDuration: 200, gestureEnabled: false }} />
-      <CourseStack.Screen name="LessonComplete" component={LessonCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
-      <CourseStack.Screen name="MoneyChat" component={MoneyChatScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
-      <CourseStack.Screen name="ModuleComplete" component={ModuleCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
-      <CourseStack.Screen
-        name="DailyBlitz"
-        component={DailyBlitzScreen}
-        options={{ animation: 'fade', gestureEnabled: false }}
-      />
-      <CourseStack.Screen name="DailyLeaderboard" component={DailyLeaderboardScreen} />
-      <CourseStack.Screen
-        name="BadgeReveal"
-        component={BadgeRevealScreen}
-        options={badgeRevealOptions}
-      />
-    </CourseStack.Navigator>
-  );
-}
-
 function TutorStackNavigator() {
   return (
     <TutorStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
@@ -224,19 +195,13 @@ function SocialStackNavigator() {
 
 export default function MainTabNavigator() {
   const { colors } = useTheme();
-  const { pendingFirstLesson, pendingMoneyverseIntro } = useUserProgress();
+  const { pendingMoneyverseIntro } = useUserProgress();
 
   return (
     <Tab.Navigator
       // Right after onboarding, land on Moneyverse to meet the free starter
       // character. (pendingFirstLesson kept for older clients / edge cases.)
-      initialRouteName={
-        pendingMoneyverseIntro
-          ? 'MoneyverseTab'
-          : pendingFirstLesson
-            ? 'CoursesTab'
-            : 'HomeTab'
-      }
+      initialRouteName={pendingMoneyverseIntro ? 'MoneyverseTab' : 'HomeTab'}
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
@@ -244,7 +209,6 @@ export default function MainTabNavigator() {
       }}
     >
       <Tab.Screen name="HomeTab" component={HomeStackNavigator} />
-      <Tab.Screen name="CoursesTab" component={CoursesStackNavigator} />
       <Tab.Screen name="MoneyverseTab" component={MoneyverseStackNavigator} />
       <Tab.Screen name="SocialTab" component={SocialStackNavigator} />
       <Tab.Screen name="TutorTab" component={TutorStackNavigator} options={{ lazy: true }} />

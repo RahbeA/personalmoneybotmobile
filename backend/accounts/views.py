@@ -1,14 +1,26 @@
+from django.conf import settings
+from django.contrib.auth import authenticate, get_user_model
+from django.db import transaction
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from rest_framework import status
+from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.authtoken.models import Token
-from django.conf import settings
-from django.contrib.auth import authenticate, get_user_model
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token as google_id_token
+
 from .apple_auth import verify_apple_identity_token
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+from .invites import join_base_url
+from .models import (
+    Invite,
+    InviteClaim,
+    InviteError,
+    ensure_user_invites,
+    get_or_create_personal_invite,
+    invite_only_enabled,
+)
+from .rewards import reward_inviter_for_signup
+from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 
 User = get_user_model()
 
@@ -24,6 +36,34 @@ def _current_guest(request):
     if user is not None and user.is_authenticated and getattr(user, 'is_guest', False):
         return user
     return None
+
+
+def _invite_code_from_request(request):
+    return (
+        request.data.get('invite_code')
+        or request.data.get('inviteCode')
+        or request.data.get('code')
+        or ''
+    )
+
+
+def _claim_invite_if_needed(request, user, *, is_new_account):
+    """Claim invite atomically when invite-only is on and this is a new real account.
+
+    Returns the claimed Invite (so the caller can reward the inviter) or None.
+    """
+    if not is_new_account:
+        return None
+    if not invite_only_enabled():
+        return None
+    return Invite.claim(_invite_code_from_request(request), user)
+
+
+def _invite_error_response(exc):
+    return Response(
+        {'detail': exc.detail, 'code': exc.code},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 @api_view(['POST'])
@@ -49,29 +89,34 @@ def register(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     guest = _current_guest(request)
-    if guest is not None:
-        # Upgrade the existing guest account in place, keeping all their progress.
-        data = serializer.validated_data
-        guest.email = User.objects.normalize_email(data['email'])
-        guest.set_password(data['password'])
-        if data.get('name'):
-            guest.name = data['name']
-        guest.is_guest = False
-        guest.save()
-        token, _ = Token.objects.get_or_create(user=guest)
-        return Response(
-            {'token': token.key, 'user': UserSerializer(guest).data},
-            status=status.HTTP_200_OK,
-        )
+    try:
+        with transaction.atomic():
+            if guest is not None:
+                data = serializer.validated_data
+                guest.email = User.objects.normalize_email(data['email'])
+                guest.set_password(data['password'])
+                if data.get('name'):
+                    guest.name = data['name']
+                guest.is_guest = False
+                guest.save()
+                user = guest
+                status_code = status.HTTP_200_OK
+            else:
+                user = serializer.save()
+                status_code = status.HTTP_201_CREATED
 
-    user = serializer.save()
+            claimed_invite = _claim_invite_if_needed(request, user, is_new_account=True)
+            ensure_user_invites(user)
+    except InviteError as exc:
+        return _invite_error_response(exc)
+
+    if claimed_invite is not None:
+        reward_inviter_for_signup(claimed_invite, user)
+
     token, _ = Token.objects.get_or_create(user=user)
     return Response(
-        {
-            'token': token.key,
-            'user': UserSerializer(user).data,
-        },
-        status=status.HTTP_201_CREATED,
+        {'token': token.key, 'user': UserSerializer(user).data},
+        status=status_code,
     )
 
 
@@ -124,8 +169,6 @@ def google_auth(request):
         )
 
     try:
-        # Passing no audience here lets us accept any of our configured client
-        # IDs (web/iOS/Android), which all produce tokens for the same project.
         claims = google_id_token.verify_oauth2_token(
             token_str, google_requests.Request()
         )
@@ -154,26 +197,39 @@ def google_auth(request):
 
     guest = _current_guest(request)
 
-    user = User.objects.filter(google_id=google_sub).first()
-    if user is None:
-        # Link to an existing email/password account if one exists, otherwise
-        # upgrade the current guest (preserving progress), or create a new user.
-        user = User.objects.filter(email=email).first()
-        if user is None:
-            if guest is not None:
-                user = guest
-                user.email = email
-                user.is_guest = False
-            else:
-                user = User.objects.create_user(email=email, password=None)
-        user.google_id = google_sub
+    try:
+        with transaction.atomic():
+            existing = User.objects.filter(google_id=google_sub).first()
+            is_new_account = False
 
-    # Keep profile details fresh from Google.
-    if name:
-        user.name = name
-    if avatar_url:
-        user.avatar_url = avatar_url
-    user.save()
+            if existing is not None:
+                user = existing
+            else:
+                user = User.objects.filter(email=email).first()
+                if user is None:
+                    is_new_account = True
+                    if guest is not None:
+                        user = guest
+                        user.email = email
+                        user.is_guest = False
+                    else:
+                        user = User.objects.create_user(email=email, password=None)
+                user.google_id = google_sub
+
+            if name:
+                user.name = name
+            if avatar_url:
+                user.avatar_url = avatar_url
+            user.save()
+
+            claimed_invite = _claim_invite_if_needed(request, user, is_new_account=is_new_account)
+            if is_new_account:
+                ensure_user_invites(user)
+    except InviteError as exc:
+        return _invite_error_response(exc)
+
+    if claimed_invite is not None:
+        reward_inviter_for_signup(claimed_invite, user)
 
     token, _ = Token.objects.get_or_create(user=user)
     return Response({
@@ -204,37 +260,48 @@ def apple_auth(request):
 
     guest = _current_guest(request)
 
-    user = User.objects.filter(apple_id=apple_sub).first()
-    if user is None and email:
-        user = User.objects.filter(email=email).first()
+    try:
+        with transaction.atomic():
+            user = User.objects.filter(apple_id=apple_sub).first()
+            is_new_account = False
 
-    if user is None:
-        if guest is not None:
-            # Upgrade the current guest, preserving progress. Apple's private-relay
-            # flow may omit the email on repeat sign-ins, which is fine here since
-            # the Apple identifier is what anchors the account.
-            user = guest
-            if email:
-                user.email = email
-            user.is_guest = False
-        elif not email:
-            return Response(
-                {
-                    'detail': (
-                        'Apple did not provide an email address. '
-                        'Use a different sign-in method or revoke MoneyBot in '
-                        'Settings > Apple ID > Sign-In & Security and try again.'
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        else:
-            user = User.objects.create_user(email=email, password=None)
+            if user is None and email:
+                user = User.objects.filter(email=email).first()
 
-    user.apple_id = apple_sub
-    if name and not user.name:
-        user.name = name
-    user.save()
+            if user is None:
+                is_new_account = True
+                if guest is not None:
+                    user = guest
+                    if email:
+                        user.email = email
+                    user.is_guest = False
+                elif not email:
+                    return Response(
+                        {
+                            'detail': (
+                                'Apple did not provide an email address. '
+                                'Use a different sign-in method or revoke MoneyBot in '
+                                'Settings > Apple ID > Sign-In & Security and try again.'
+                            ),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    user = User.objects.create_user(email=email, password=None)
+
+            user.apple_id = apple_sub
+            if name and not user.name:
+                user.name = name
+            user.save()
+
+            claimed_invite = _claim_invite_if_needed(request, user, is_new_account=is_new_account)
+            if is_new_account:
+                ensure_user_invites(user)
+    except InviteError as exc:
+        return _invite_error_response(exc)
+
+    if claimed_invite is not None:
+        reward_inviter_for_signup(claimed_invite, user)
 
     token, _ = Token.objects.get_or_create(user=user)
     return Response({
@@ -278,3 +345,151 @@ def delete_account(request):
 
     user.delete()
     return Response({'detail': 'Account deleted successfully.'})
+
+
+# --- Invite endpoints -------------------------------------------------------
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def invite_status(request):
+    """Public flag so Landing/Auth know whether to show the invite code field."""
+    return Response({'invite_only_enabled': invite_only_enabled()})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def invite_validate(request):
+    """Soft-validate an invite code before submit (does not claim it)."""
+    code = Invite.normalize_code(
+        request.data.get('invite_code')
+        or request.data.get('inviteCode')
+        or request.data.get('code')
+        or ''
+    )
+    if not code:
+        return Response({
+            'valid': False,
+            'reason': 'required',
+            'detail': 'Enter an invite code.',
+        })
+
+    invite = Invite.objects.select_related('created_by').filter(code=code).first()
+    if invite is None:
+        return Response({
+            'valid': False,
+            'reason': 'invalid',
+            'detail': 'That invite code is not valid.',
+        })
+    if invite.is_revoked:
+        return Response({
+            'valid': False,
+            'reason': 'revoked',
+            'detail': 'That invite code has been revoked.',
+        })
+    if invite.remaining <= 0:
+        return Response({
+            'valid': False,
+            'reason': 'used',
+            'detail': 'That invite code has already been used up.',
+        })
+
+    inviter = invite.created_by
+    inviter_name = None
+    if inviter is not None:
+        inviter_name = (inviter.name or '').strip() or (
+            (inviter.email or '').split('@')[0] if inviter.email else None
+        )
+
+    return Response({
+        'valid': True,
+        'inviter_name': inviter_name,
+    })
+
+
+def _serialize_personal_invite(invite):
+    """Shape the user's single reusable invite code for the mobile app."""
+    claims = (
+        InviteClaim.objects.filter(invite=invite)
+        .select_related('user')
+        .order_by('-created_at', '-id')
+    )
+    claimed_by = []
+    for claim in claims:
+        joined = claim.user
+        name = (getattr(joined, 'name', '') or '').strip() or (
+            (joined.email or '').split('@')[0] if joined and joined.email else 'A friend'
+        )
+        claimed_by.append({
+            'name': name,
+            'joined_at': claim.created_at.isoformat() if claim.created_at else None,
+        })
+
+    used = invite.uses_count
+    total = invite.max_uses
+    return {
+        'code': invite.code,
+        'url': invite.join_url,
+        'status': invite.status,
+        'used': used,
+        'max_uses': total,
+        'remaining': invite.remaining,
+        'claimed_by': claimed_by,
+        'created_at': invite.created_at.isoformat() if invite.created_at else None,
+        # Back-compat with the old list-of-codes shape.
+        'invites': [{
+            'code': invite.code,
+            'url': invite.join_url,
+            'status': invite.status,
+            'used_by_name': claimed_by[0]['name'] if claimed_by else None,
+            'used_at': claimed_by[0]['joined_at'] if claimed_by else None,
+            'created_at': invite.created_at.isoformat() if invite.created_at else None,
+        }],
+        'remaining_legacy': invite.remaining,
+        'total': total,
+        'join_base_url': join_base_url(),
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def my_invites(request):
+    """Return the current user's single reusable invite code (real accounts only)."""
+    user = request.user
+    if getattr(user, 'is_guest', False):
+        return Response(
+            {'detail': 'Create a free account to invite friends.', 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    invite = get_or_create_personal_invite(user)
+    if invite is None:
+        return Response(
+            {'detail': 'Create a free account to invite friends.', 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    payload = _serialize_personal_invite(invite)
+    payload['reward_bot_bucks'] = int(getattr(settings, 'INVITE_REWARD_BOT_BUCKS', 50) or 0)
+    return Response(payload)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def regenerate_invite(request):
+    """Swap the user's reusable code for a fresh one (old link stops working)."""
+    user = request.user
+    if getattr(user, 'is_guest', False):
+        return Response(
+            {'detail': 'Create a free account to invite friends.', 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    invite = get_or_create_personal_invite(user)
+    if invite is None:
+        return Response(
+            {'detail': 'Create a free account to invite friends.', 'code': 'account_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    invite.regenerate_code()
+    payload = _serialize_personal_invite(invite)
+    payload['reward_bot_bucks'] = int(getattr(settings, 'INVITE_REWARD_BOT_BUCKS', 50) or 0)
+    return Response(payload)

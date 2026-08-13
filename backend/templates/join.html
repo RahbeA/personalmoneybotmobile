@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Join MoneyBot{% if code %} — {{ code }}{% endif %}</title>
+  <style>
+    :root {
+      --bg: #0A0A0A;
+      --surface: #141414;
+      --border: #242424;
+      --text: #EDEDED;
+      --muted: #9A9A9A;
+      --accent: #3DDC5F;
+      --danger: #FF6B6B;
+      --warn: #F5B72B;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px 18px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 28px 24px 26px;
+      text-align: center;
+    }
+    .dot {
+      width: 52px; height: 52px;
+      border-radius: 15px;
+      background: linear-gradient(135deg, var(--accent), #2bb14b);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; color: #062a10; font-size: 1.4rem;
+      margin: 0 auto 16px;
+    }
+    h1 { font-size: 1.55rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 0.95rem; margin: 0 0 22px; }
+    .badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .badge.ok { background: rgba(61,220,95,0.16); color: var(--accent); }
+    .badge.used { background: rgba(245,183,43,0.16); color: var(--warn); }
+    .badge.bad { background: rgba(255,107,107,0.16); color: var(--danger); }
+    .code-box {
+      background: #0A0A0A;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      padding: 16px 12px;
+      margin-bottom: 10px;
+    }
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 1.7rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      color: #fff;
+    }
+    .hint { color: var(--muted); font-size: 0.88rem; margin: 0 0 22px; }
+    .btn {
+      display: block;
+      width: 100%;
+      border: none;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      margin-bottom: 10px;
+    }
+    .btn-primary { background: var(--accent); color: #062a10; }
+    .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .copy-btn { background: #1c1c1c; color: var(--text); border: 1px solid var(--border); }
+    .copy-btn.copied { border-color: var(--accent); color: var(--accent); }
+    footer { margin-top: 18px; color: var(--muted); font-size: 0.82rem; }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="dot">$</div>
+    <h1>You're invited to MoneyBot</h1>
+    {% if inviter_name %}
+      <p class="sub">{{ inviter_name }} invited you to join.</p>
+    {% else %}
+      <p class="sub">Use this code to create your account in the app.</p>
+    {% endif %}
+
+    {% if state == 'valid' %}
+      <div class="badge ok">Invite ready</div>
+    {% elif state == 'used' %}
+      <div class="badge used">Already used</div>
+    {% else %}
+      <div class="badge bad">Not valid</div>
+    {% endif %}
+
+    {% if code %}
+      <div class="code-box">
+        <div class="code" id="invite-code">{{ code }}</div>
+      </div>
+      {% if state == 'valid' %}
+        <button class="btn copy-btn" id="copy-btn" type="button">Copy invite code</button>
+        <p class="hint">Open MoneyBot → Have an invite? → paste this code.</p>
+      {% elif state == 'used' %}
+        <p class="hint">This invite was already claimed. Ask a friend for a new one, or sign in if you already have an account.</p>
+      {% else %}
+        <p class="hint">This invite link isn't valid. Double-check the link or ask for a new invite.</p>
+      {% endif %}
+    {% endif %}
+
+    <a class="btn btn-primary" href="{{ app_store_url }}">Get on the App Store</a>
+    <a class="btn btn-secondary" href="{{ play_store_url }}">Get on Google Play</a>
+
+    <footer>
+      <a href="https://getmoneybot.com">getmoneybot.com</a>
+      ·
+      <a href="/legal/privacy/">Privacy</a>
+      ·
+      <a href="/legal/terms/">Terms</a>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var btn = document.getElementById('copy-btn');
+      var codeEl = document.getElementById('invite-code');
+      if (!btn || !codeEl) return;
+      btn.addEventListener('click', function () {
+        var text = codeEl.textContent.trim();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+          });
+        } else {
+          var range = document.createRange();
+          range.selectNodeContents(codeEl);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          try { document.execCommand('copy'); } catch (e) {}
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

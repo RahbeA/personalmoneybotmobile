@@ -101,14 +101,14 @@ export default function LessonCompleteScreen({ navigation, route }) {
         mode: 'earned',
         next: moduleComplete
           ? { screen: 'MoneyChat', params: { module, badge: newBadge, xp: xpEarned } }
-          : { screen: 'CourseMap' },
+          : { screen: 'Home' },
       });
       return;
     }
     if (moduleComplete) {
       navigation.navigate('MoneyChat', { module, badge: newBadge, xp: xpEarned });
     } else {
-      navigation.navigate('CourseMap');
+      navigation.navigate('Home');
     }
   }
 

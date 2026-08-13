@@ -13,6 +13,48 @@ def legal_document(request, doc_id):
     return render(request, 'legal.html', {'doc': doc, 'meta': LEGAL_META})
 
 
+def join_invite(request, code):
+    """Public join page: show invite code + store links for manual app entry."""
+    from accounts.models import Invite
+
+    normalized = Invite.normalize_code(code)
+    invite = (
+        Invite.objects.select_related('created_by').filter(code=normalized).first()
+        if normalized else None
+    )
+
+    if invite is None:
+        state = 'invalid'
+        inviter_name = None
+    elif invite.is_revoked:
+        state = 'invalid'
+        inviter_name = None
+    elif invite.used_by_id:
+        state = 'used'
+        inviter = invite.created_by
+        inviter_name = None
+        if inviter is not None:
+            inviter_name = (inviter.name or '').strip() or (
+                (inviter.email or '').split('@')[0] if inviter.email else None
+            )
+    else:
+        state = 'valid'
+        inviter = invite.created_by
+        inviter_name = None
+        if inviter is not None:
+            inviter_name = (inviter.name or '').strip() or (
+                (inviter.email or '').split('@')[0] if inviter.email else None
+            )
+
+    return render(request, 'join.html', {
+        'code': normalized or code,
+        'state': state,
+        'inviter_name': inviter_name,
+        'app_store_url': 'https://apps.apple.com/app/id6778658807',
+        'play_store_url': 'https://play.google.com/store/apps/details?id=com.moneybot.app',
+    })
+
+
 def panel_index(request, path=''):
     """Serve the built control-panel SPA so client-side routing works.
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { authApi } from '../api/auth';
 import { setUnauthorizedHandler } from '../api/client';
@@ -13,6 +13,19 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [inviteOnlyEnabled, setInviteOnlyEnabled] = useState(true);
+
+  const refreshInviteStatus = useCallback(async () => {
+    try {
+      const data = await authApi.getInviteStatus();
+      setInviteOnlyEnabled(!!data?.invite_only_enabled);
+      return !!data?.invite_only_enabled;
+    } catch {
+      // Fail closed while invite-only is the default for the first cohort.
+      setInviteOnlyEnabled(true);
+      return true;
+    }
+  }, []);
 
   const clearSession = useCallback(async () => {
     let userId = null;
@@ -32,15 +45,34 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // A 401 from any endpoint used to log the user out instantly. Because our DRF
+  // tokens never expire, a genuine 401 only happens if the token was actually
+  // revoked — but a flaky proxy/network can also surface a one-off 401. So we
+  // confirm with a silent profile check before nuking the session, and only
+  // clear when that check *also* comes back 401. Anything else (offline, 5xx,
+  // timeout) leaves the user signed in.
+  const verifyingRef = useRef(false);
   useEffect(() => {
-    setUnauthorizedHandler(() => {
-      clearSession();
+    setUnauthorizedHandler(async () => {
+      if (verifyingRef.current) return;
+      const storedToken = await SecureStore.getItemAsync('authToken');
+      if (!storedToken) return;
+      verifyingRef.current = true;
+      try {
+        await authApi.getProfile(storedToken, { skipUnauthorizedHandler: true });
+        // Token is still valid — the earlier 401 was a fluke. Keep the session.
+      } catch (e) {
+        if (e?.status === 401) await clearSession();
+      } finally {
+        verifyingRef.current = false;
+      }
     });
     return () => setUnauthorizedHandler(null);
   }, [clearSession]);
 
   useEffect(() => {
     restoreSession();
+    refreshInviteStatus();
   }, []);
 
   async function persistSession(data) {
@@ -67,17 +99,24 @@ export function AuthProvider({ children }) {
         return;
       }
 
+      // Optimistically restore from the cached user first so a slow or offline
+      // network never blocks (or drops) the session on launch.
+      setToken(storedToken);
+      setUser(JSON.parse(storedUser));
+
       try {
-        const profile = await authApi.getProfile(storedToken);
+        const profile = await authApi.getProfile(storedToken, { skipUnauthorizedHandler: true });
         await SecureStore.setItemAsync('profileLastValidatedAt', String(Date.now()));
         await SecureStore.setItemAsync('authUser', JSON.stringify(profile));
         setToken(storedToken);
         setUser(profile);
-      } catch {
-        await clearSession();
+      } catch (e) {
+        // Only a real 401 means the token was revoked — then sign out. Network
+        // errors, timeouts and 5xx keep the user signed in with cached data.
+        if (e?.status === 401) await clearSession();
       }
     } catch {
-      await clearSession();
+      // SecureStore read failed — leave whatever we have; don't force a logout.
     } finally {
       setLoading(false);
     }
@@ -99,20 +138,24 @@ export function AuthProvider({ children }) {
   // backend upgrades that same account in place (keeping the guest's progress).
   const upgradeToken = () => (user?.is_guest ? token : undefined);
 
-  async function register(email, password, name) {
-    const data = await authApi.register(email, password, name, upgradeToken());
+  async function register(email, password, name, inviteCode) {
+    const data = await authApi.register(email, password, name, upgradeToken(), inviteCode);
     await persistSession(data);
     return data;
   }
 
-  async function googleSignIn(idToken) {
-    const data = await authApi.google(idToken, upgradeToken());
+  async function googleSignIn(idToken, inviteCode) {
+    const data = await authApi.google(idToken, upgradeToken(), inviteCode);
     await persistSession(data);
     return data;
   }
 
-  async function appleSignIn({ identityToken, email, fullName }) {
-    const data = await authApi.apple({ identityToken, email, fullName }, upgradeToken());
+  async function appleSignIn({ identityToken, email, fullName }, inviteCode) {
+    const data = await authApi.apple(
+      { identityToken, email, fullName },
+      upgradeToken(),
+      inviteCode,
+    );
     await persistSession(data);
     return data;
   }
@@ -147,7 +190,22 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, isGuest: !!user?.is_guest, login, register, guestSignIn, googleSignIn, appleSignIn, updateProfile, logout, deleteAccount }}
+      value={{
+        user,
+        token,
+        loading,
+        isGuest: !!user?.is_guest,
+        inviteOnlyEnabled,
+        refreshInviteStatus,
+        login,
+        register,
+        guestSignIn,
+        googleSignIn,
+        appleSignIn,
+        updateProfile,
+        logout,
+        deleteAccount,
+      }}
     >
       {children}
     </AuthContext.Provider>

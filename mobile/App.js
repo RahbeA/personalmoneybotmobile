@@ -8,8 +8,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { UserProgressProvider, useUserProgress } from './src/context/UserProgressContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
-import { BrandLoader, BrandEmptyState } from './src/components/brand';
-import { LOADER_MESSAGES } from './src/constants/brandCopy';
+import { BrandEmptyState, WelcomeSplash } from './src/components/brand';
 import { API_BASE_URL } from './src/config/api';
 import { bootstrapNotifications, syncStreakNotifications } from './src/utils/notifications';
 import { getFirstName } from './src/utils/displayName';
@@ -21,6 +20,7 @@ import LandingScreen from './src/screens/LandingScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import LegalDocumentScreen from './src/screens/LegalDocumentScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import MyInvitesScreen from './src/screens/MyInvitesScreen';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
 import NameCapturePrompt from './src/components/NameCapturePrompt';
 
@@ -75,37 +75,32 @@ function BootErrorScreen({ message, onRetry }) {
 
 function RootNavigator() {
   const { user, loading } = useAuth();
-  const { onboardingCompleted, loading: progressLoading, loadError, refresh } = useUserProgress();
-  const { colors } = useTheme();
+  const {
+    onboardingCompleted, loading: progressLoading, loadError, refresh, equippedCharacter,
+  } = useUserProgress();
+  const [splashDone, setSplashDone] = useState(false);
 
   // Wait for auth and (when signed in) the first stats fetch, so we know
   // whether to show onboarding before rendering the main app.
   const booting = loading || (user && progressLoading);
 
   useEffect(() => {
-    if (!booting) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [booting]);
-
-  // Safety net — never stay stuck on the native splash screen.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      SplashScreen.hideAsync().catch(() => {});
-    }, 4000);
-    return () => clearTimeout(timer);
+    SplashScreen.hideAsync().catch(() => {});
   }, []);
 
   const onLayout = useCallback(async () => {
-    if (!booting) {
-      await SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [booting]);
+    await SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
-  if (booting) {
+  if (booting || !splashDone) {
     return (
       <View style={{ flex: 1 }} onLayout={onLayout}>
-        <BrandLoader message={LOADER_MESSAGES.boot} />
+        <WelcomeSplash
+          firstName={getFirstName(user)}
+          character={equippedCharacter}
+          ready={!booting}
+          onDone={() => setSplashDone(true)}
+        />
       </View>
     );
   }
@@ -136,6 +131,11 @@ function RootNavigator() {
                 name="AuthUpgrade"
                 component={AuthScreen}
                 options={{ animation: 'slide_from_bottom' }}
+              />
+              <Stack.Screen
+                name="MyInvites"
+                component={MyInvitesScreen}
+                options={{ animation: 'slide_from_right' }}
               />
             </>
           ) : (

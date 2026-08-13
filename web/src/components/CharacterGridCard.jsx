@@ -1,7 +1,7 @@
 import { Card, Tag, Typography, Space, Button, Tooltip } from 'antd';
 import {
   EditOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined,
-  StarFilled, StarOutlined,
+  StarFilled, StarOutlined, CameraOutlined,
 } from '@ant-design/icons';
 import CharacterModelViewer from './CharacterModelViewer';
 import { brand } from '../theme/tokens';
@@ -31,8 +31,10 @@ export default function CharacterGridCard({
   onEdit,
   onDelete,
   onOptimize,
+  onGeneratePreview,
   onSetStarter,
   optimizing,
+  generatingPreview,
 }) {
   const rarity = RARITY_META[character.rarity] || RARITY_META.common;
   const accent = character.accent_color || brand.primary;
@@ -191,6 +193,21 @@ export default function CharacterGridCard({
               onClick={() => onOptimize?.(character)}
             >
               {character.model_optimized ? 'Slimmed' : 'Slim'}
+            </Button>
+          </Tooltip>
+          <Tooltip title={
+            character.preview_image
+              ? 'Re-render PNG still from the GLB'
+              : 'Render a PNG still from the GLB for the mobile shop'
+          }
+          >
+            <Button
+              size="small"
+              icon={<CameraOutlined />}
+              loading={generatingPreview}
+              onClick={() => onGeneratePreview?.(character)}
+            >
+              {character.preview_image ? 'Re-preview' : 'Preview'}
             </Button>
           </Tooltip>
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(character)} />

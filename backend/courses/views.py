@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import copy
 
+from django.db import transaction
 from django.db.models import F, Prefetch, Window
 from django.utils.dateparse import parse_date
 from django.db.models.functions import RowNumber
@@ -22,6 +23,8 @@ from moneybot.cache_utils import (
     invalidate_user_cache,
     leaderboard_cache_key,
     strip_leaderboard_user_flags,
+    user_modules_cache_key,
+    user_stats_cache_key,
 )
 from .models import Module, Lesson, Question, UserProgress, UserStats
 from .serializers import (
@@ -94,7 +97,7 @@ def _serialize_modules(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def module_list(request):
-    key = f'user:{request.user.id}:modules:v1'
+    key = user_modules_cache_key(request.user.id)
     data, hit = cache_get_or_set(key, lambda: _serialize_modules(request), TTL_USER_MODULES)
     return attach_cache_header(Response(data), hit)
 
@@ -149,66 +152,81 @@ def complete_lesson(request, lesson_id):
     mistakes = serializer.validated_data['mistakes']
     today = resolve_client_today(serializer.validated_data.get('client_date'))
 
-    already_completed = UserProgress.objects.filter(user=request.user, lesson=lesson).exists()
+    # Reward candidates applied only if this POST is the FIRST completion.
+    if mistakes == 0:
+        candidate_xp = XP_PER_LESSON + XP_BONUS_PERFECT
+        candidate_stars = 3
+    elif mistakes == 1:
+        candidate_xp = XP_PER_LESSON
+        candidate_stars = 2
+    else:
+        candidate_xp = max(XP_PER_LESSON - (mistakes * 5), 10)
+        candidate_stars = 1
+    candidate_bot_bucks = BOT_BUCKS_PER_LESSON + (BOT_BUCKS_PERFECT_BONUS if mistakes == 0 else 0)
 
     xp_earned = 0
-    stars = 3
+    stars = candidate_stars
     new_badge = None
     bot_bucks_earned = 0
 
-    if not already_completed:
-        if mistakes == 0:
-            xp_earned = XP_PER_LESSON + XP_BONUS_PERFECT
-        elif mistakes == 1:
-            stars = 2
-            xp_earned = XP_PER_LESSON
-        else:
-            stars = 1
-            xp_earned = max(XP_PER_LESSON - (mistakes * 5), 10)
-
-        bot_bucks_earned = BOT_BUCKS_PER_LESSON + (BOT_BUCKS_PERFECT_BONUS if mistakes == 0 else 0)
-
-        UserProgress.objects.create(
+    # get_or_create inside a transaction: the unique_together (user, lesson)
+    # constraint makes a duplicate/concurrent double-tap collapse into a single
+    # row instead of racing two exists()+create() calls into an IntegrityError.
+    with transaction.atomic():
+        progress, created = UserProgress.objects.get_or_create(
             user=request.user,
             lesson=lesson,
-            xp_earned=xp_earned,
-            stars=stars,
+            defaults={'xp_earned': candidate_xp, 'stars': candidate_stars},
         )
+        already_completed = not created
 
-        stats = get_or_create_stats(request.user)
-        stats.xp += xp_earned
-        stats.bot_bucks += bot_bucks_earned
+        if created:
+            xp_earned = candidate_xp
+            bot_bucks_earned = candidate_bot_bucks
 
-        if stats.last_active == today - timedelta(days=1):
-            stats.streak_days += 1
-        elif stats.last_active != today:
-            stats.streak_days = 1
-        stats.last_active = today
+            stats = get_or_create_stats(request.user)
+            stats.xp += xp_earned
+            stats.bot_bucks += bot_bucks_earned
 
-        question_count = lesson.questions.count()
-        stats.questions_answered += question_count
-        stats.questions_correct += max(0, question_count - mistakes)
-        if mistakes == 0:
-            stats.perfect_lessons += 1
+            if stats.last_active == today - timedelta(days=1):
+                stats.streak_days += 1
+            elif stats.last_active != today:
+                stats.streak_days = 1
+            stats.last_active = today
 
-        from .badges import evaluate_and_award
-        new_badges = evaluate_and_award(request.user, stats)
-        new_badge = new_badges[0] if new_badges else None
+            question_count = lesson.questions.count()
+            stats.questions_answered += question_count
+            stats.questions_correct += max(0, question_count - mistakes)
+            if mistakes == 0:
+                stats.perfect_lessons += 1
 
-        stats.save()
+            from .badges import evaluate_and_award
+            new_badges = evaluate_and_award(request.user, stats)
+            new_badge = new_badges[0] if new_badges else None
 
-        invalidate_user_cache(request.user.id)
+            stats.save()
+        else:
+            stars = progress.stars
+
+    # Always bump the per-user cache version so the next modules/stats fetch is
+    # rebuilt fresh. This runs on the already_completed path too: a client only
+    # replays a finished lesson when its cached roadmap drifted stale, so busting
+    # here stops the "loops on the same lesson" symptom.
+    invalidate_user_cache(request.user.id)
+    if created:
         invalidate_leaderboard_snapshots()
 
     updated_stats = get_or_create_stats(request.user)
-    module_complete = False
-    if not already_completed:
-        module = lesson.module
-        module_lessons_total = module.lessons.count()
-        module_lessons_done = UserProgress.objects.filter(
-            user=request.user, lesson__module=module
-        ).count()
-        module_complete = module_lessons_done >= module_lessons_total
+
+    module = lesson.module
+    module_lessons_total = module.lessons.count()
+    completed_lesson_ids = list(
+        UserProgress.objects.filter(user=request.user).values_list('lesson_id', flat=True)
+    )
+    module_lessons_done = UserProgress.objects.filter(
+        user=request.user, lesson__module=module
+    ).count()
+    module_complete = module_lessons_done >= module_lessons_total
 
     return Response({
         'already_completed': already_completed,
@@ -219,6 +237,10 @@ def complete_lesson(request, lesson_id):
         'module_complete': module_complete,
         'module_title': lesson.module.title,
         'module_icon': lesson.module.icon,
+        # Authoritative completion set so the client reconciles from THIS response
+        # instead of a follow-up GET that may still be serving a stale snapshot.
+        'completed_lesson_ids': completed_lesson_ids,
+        'lessons_completed': len(completed_lesson_ids),
         'stats': UserStatsSerializer(updated_stats, context={'request': request}).data,
     })
 
@@ -306,18 +328,31 @@ def leaderboard(request):
         me_entry['is_me'] = True
     else:
         my_stats = get_or_create_stats(request.user)
-        ranked = _leaderboard_ranked_qs(_leaderboard_stats_qs())
-        total_count = cached.get('total_count')
-        try:
-            my_stats = ranked.get(pk=my_stats.pk)
-            me_entry = _serialize_leaderboard_entry(my_stats, my_stats.rank, request)
-        except UserStats.DoesNotExist:
-            rank = (total_count or ranked.count()) + 1
-            my_stats.rank = rank
-            me_entry = _serialize_leaderboard_entry(my_stats, rank, request)
+        rank = _compute_user_rank(request.user, my_stats)
+        me_entry = _serialize_leaderboard_entry(my_stats, rank, request)
 
     data = apply_leaderboard_user_flags(cached, request, me_entry)
     return attach_cache_header(Response(data), hit)
+
+
+def _compute_user_rank(user, stats):
+    """Global 1-based rank for a single user.
+
+    NOTE: We deliberately avoid ``ranked_qs.get(pk=...)`` here. Filtering a
+    queryset that carries a ``RowNumber()`` window by a non-window column (pk)
+    pushes the filter into WHERE, which runs *before* the window is evaluated —
+    so ``RowNumber()`` sees a single row and always returns 1. Instead we count
+    how many learners outrank this user, matching the queryset ordering
+    (lp desc, then earlier date_joined wins ties).
+    """
+    base = _leaderboard_stats_qs()
+    my_lp = (stats.onboarding_score or 0) * 100 + (stats.xp or 0)
+    higher = base.filter(lp__gt=my_lp).count()
+    ties_ahead = base.filter(
+        lp=my_lp,
+        user__date_joined__lt=user.date_joined,
+    ).exclude(pk=stats.pk).count()
+    return higher + ties_ahead + 1
 
 
 def _build_leaderboard_payload(request):
@@ -419,7 +454,7 @@ def _build_user_stats(request, today=None):
 @permission_classes([IsAuthenticated])
 def user_stats(request):
     today = client_today_from_request(request)
-    key = f'user:{request.user.id}:stats:v1'
+    key = user_stats_cache_key(request.user.id)
     data, hit = cache_get_or_set(key, lambda: _build_user_stats(request, today), TTL_USER_STATS)
     # daily_reward is date-sensitive (can_claim / claimed_today / current_day are
     # relative to the client's local "today"). The cache key has no date, so a

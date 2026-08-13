@@ -7,6 +7,8 @@ import {
   saveGeneratedPoster,
   getPendingPosterJob,
   setPendingPosterJob,
+  acquireViewerModel,
+  releaseViewerModel,
   logCharacterViewerEvent,
 } from '../utils/modelCache';
 
@@ -133,11 +135,15 @@ export default function PosterCaptureHost() {
       busyRef.current = true;
       activeUrlRef.current = modelUrl;
       doneRef.current = false;
+      // getViewerAssets aborts if the model isn't "retained", so hold it for the
+      // duration of the capture and release it when the job settles.
+      acquireViewerModel(modelUrl);
       try {
         const assets = await getViewerAssets(modelUrl);
         setJob({ modelUrl, html: buildCaptureHtml(assets) });
         return; // wait for onMessage
       } catch (e) {
+        releaseViewerModel(modelUrl);
         settleWaiters(modelUrl, null, e);
         busyRef.current = false;
         activeUrlRef.current = null;
@@ -155,6 +161,7 @@ export default function PosterCaptureHost() {
     const modelUrl = activeUrlRef.current;
     if (!modelUrl || doneRef.current) return;
     doneRef.current = true;
+    releaseViewerModel(modelUrl);
     settleWaiters(modelUrl, uri, err);
     setJob(null);
     busyRef.current = false;
@@ -197,6 +204,7 @@ export default function PosterCaptureHost() {
         scrollEnabled={false}
         javaScriptEnabled
         domStorageEnabled
+        opaque={false}
         onMessage={onMessage}
         androidLayerType="hardware"
       />
@@ -205,21 +213,23 @@ export default function PosterCaptureHost() {
 }
 
 const styles = StyleSheet.create({
-  // Must stay WITHIN the window bounds — iOS/Android pause WebGL rendering for
-  // fully off-screen webviews, so toDataURL would return an empty frame. We keep
-  // it on-screen at the top-left but at ~1% opacity so it's imperceptible.
+  // iOS/WebKit refuses to give a GPU drawable to a near-invisible (opacity ~0)
+  // or fully off-screen WebView, so WebGL never renders and model-viewer never
+  // fires `load` (captures time out). We keep it fully opaque and render at full
+  // 220x220 so the captured canvas is sharp, but push almost all of it past the
+  // top-left corner (behind the status bar) — the few visible pixels are enough
+  // for the compositor to keep rendering, while staying imperceptible.
   host: {
     position: 'absolute',
-    width: 256,
-    height: 256,
-    left: 0,
-    top: 0,
-    opacity: 0.012,
-    zIndex: -1,
+    width: 220,
+    height: 220,
+    left: -206,
+    top: -206,
+    opacity: 1,
   },
   webview: {
-    width: 256,
-    height: 256,
+    width: 220,
+    height: 220,
     backgroundColor: 'transparent',
   },
 });

@@ -118,12 +118,14 @@ class Notification(models.Model):
     TYPE_FRIEND_ACCEPTED = 'friend_accepted'
     TYPE_FRIEND_DECLINED = 'friend_declined'
     TYPE_FRIEND_NUDGE = 'friend_nudge'
+    TYPE_INVITE_REWARD = 'invite_reward'
     TYPE_ANNOUNCEMENT = 'announcement'
     TYPE_CHOICES = [
         (TYPE_FRIEND_REQUEST, 'Friend request received'),
         (TYPE_FRIEND_ACCEPTED, 'Friend request accepted'),
         (TYPE_FRIEND_DECLINED, 'Friend request declined'),
         (TYPE_FRIEND_NUDGE, 'Friend nudge'),
+        (TYPE_INVITE_REWARD, 'Invite reward earned'),
         (TYPE_ANNOUNCEMENT, 'Admin announcement'),
     ]
 

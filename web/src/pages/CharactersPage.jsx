@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PlusOutlined, UploadOutlined, ThunderboltOutlined, DownloadOutlined,
-  StarFilled, StarOutlined,
+  StarFilled, StarOutlined, CameraOutlined,
 } from '@ant-design/icons';
 import { api, getToken } from '../api/client';
 import CharacterGridCard from '../components/CharacterGridCard';
@@ -54,9 +54,11 @@ export default function CharactersPage() {
   const [viewing, setViewing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [optimizingId, setOptimizingId] = useState(null);
+  const [previewingId, setPreviewingId] = useState(null);
   const [toolBusy, setToolBusy] = useState(false);
   const [toolStats, setToolStats] = useState(null);
   const [slimAll, setSlimAll] = useState(null); // { done, total } while running
+  const [previewAll, setPreviewAll] = useState(null); // { done, total } while running
   const [search, setSearch] = useState('');
   const [rarityFilter, setRarityFilter] = useState('all');
   const [activeFilter, setActiveFilter] = useState('all');
@@ -79,6 +81,11 @@ export default function CharactersPage() {
   // Backend flags slimmed models (filename carries _opt) — single source of truth.
   const unslimmed = useMemo(
     () => rows.filter((c) => c.model_file && !c.model_optimized),
+    [rows],
+  );
+
+  const missingPreview = useMemo(
+    () => rows.filter((c) => c.model_file && !c.preview_image),
     [rows],
   );
 
@@ -213,6 +220,48 @@ export default function CharactersPage() {
     });
   }
 
+  function generatePreview(record) {
+    const hasPreview = !!record.preview_image;
+    modal.confirm({
+      title: hasPreview ? `Re-generate preview for "${record.name}"?` : `Generate preview for "${record.name}"?`,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            Renders a PNG still from the character&apos;s GLB with headless Chromium
+            and saves it as the shop preview image used by the mobile app.
+          </p>
+          <Text type="secondary">
+            {hasPreview ? 'This will replace the current preview image.' : 'Takes a few seconds per character.'}
+          </Text>
+        </div>
+      ),
+      okText: hasPreview ? 'Re-generate' : 'Generate preview',
+      onOk: async () => {
+        setPreviewingId(record.id);
+        try {
+          const result = await api.post(`/characters/${record.id}/generate-preview/`, {
+            force: hasPreview,
+          });
+          const bytes = result?.preview?.bytesOut;
+          message.success(
+            bytes
+              ? `Preview saved · ${formatBytes(bytes)}`
+              : 'Preview saved',
+          );
+          if (viewing?.id === record.id && result?.character) {
+            setViewing(result.character);
+          }
+          load();
+        } catch (e) {
+          message.error(e.message);
+          throw e;
+        } finally {
+          setPreviewingId(null);
+        }
+      },
+    });
+  }
+
   async function setStarter(record) {
     if (record.is_starter) return;
     try {
@@ -268,6 +317,49 @@ export default function CharactersPage() {
           message.success(
             `Slimmed ${targets.length} models · saved ${formatBytes(saved)}${savedPct ? ` (−${savedPct}%)` : ''}`,
           );
+        }
+        load();
+      },
+    });
+  }
+
+  function generateAllMissingPreviews() {
+    const targets = missingPreview;
+    if (!targets.length) return;
+    modal.confirm({
+      title: `Generate ${targets.length} missing previews?`,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            Renders a PNG still from each character GLB that doesn&apos;t have a
+            preview image yet, and uploads it automatically.
+          </p>
+          <Text type="secondary">
+            Requires Node + the tools/glb-preview package on the server. Runs one at a time.
+          </Text>
+        </div>
+      ),
+      okText: `Generate ${targets.length}`,
+      onOk: async () => {
+        setPreviewAll({ done: 0, total: targets.length });
+        let ok = 0;
+        let failed = 0;
+        for (let i = 0; i < targets.length; i += 1) {
+          const c = targets[i];
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await api.post(`/characters/${c.id}/generate-preview/`, { force: false });
+            ok += 1;
+          } catch {
+            failed += 1;
+          }
+          setPreviewAll({ done: i + 1, total: targets.length });
+        }
+        setPreviewAll(null);
+        if (failed) {
+          message.warning(`Generated ${ok}/${targets.length} · ${failed} failed`);
+        } else {
+          message.success(`Generated ${ok} preview images`);
         }
         load();
       },
@@ -333,6 +425,17 @@ export default function CharactersPage() {
               {slimAll
                 ? `Slimming ${slimAll.done}/${slimAll.total}…`
                 : `Slim all (${unslimmed.length})`}
+            </Button>
+          )}
+          {(missingPreview.length > 0 || previewAll) && (
+            <Button
+              icon={<CameraOutlined />}
+              loading={!!previewAll}
+              onClick={generateAllMissingPreviews}
+            >
+              {previewAll
+                ? `Previews ${previewAll.done}/${previewAll.total}…`
+                : `Generate previews (${missingPreview.length})`}
             </Button>
           )}
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
@@ -424,8 +527,10 @@ export default function CharactersPage() {
               onEdit={openModal}
               onDelete={remove}
               onOptimize={optimizeCharacter}
+              onGeneratePreview={generatePreview}
               onSetStarter={setStarter}
               optimizing={optimizingId === character.id}
+              generatingPreview={previewingId === character.id}
             />
           ))}
         </div>
@@ -456,6 +561,14 @@ export default function CharactersPage() {
               onClick={() => viewing && optimizeCharacter(viewing)}
             >
               {viewing?.model_optimized ? 'Slimmed' : 'Slim'}
+            </Button>
+            <Button
+              size="small"
+              icon={<CameraOutlined />}
+              loading={previewingId === viewing?.id}
+              onClick={() => viewing && generatePreview(viewing)}
+            >
+              {viewing?.preview_image ? 'Re-preview' : 'Preview'}
             </Button>
             <Button size="small" onClick={() => { openModal(viewing); setViewing(null); }}>
               Edit

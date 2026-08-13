@@ -13,6 +13,11 @@ import {
   TTL,
 } from '../utils/apiCache';
 import { readOnboardingCompleted, persistOnboardingCompleted, inferOnboardingCompleted } from '../utils/onboardingStore';
+import {
+  getPendingCompletions,
+  enqueuePendingCompletion,
+  dequeuePendingCompletion,
+} from '../utils/pendingCompletions';
 import { localDate } from '../utils/localDate';
 import { getFirstName } from '../utils/displayName';
 import { syncStreakNotifications, areNotificationsSupported } from '../utils/notifications';
@@ -78,6 +83,12 @@ export function UserProgressProvider({ children }) {
   const [lastActive, setLastActive] = useState(null);
   const [badges, setBadges] = useState([]);
   const [completedLessonIds, setCompletedLessonIds] = useState(new Set());
+  // Accumulates every lesson id known completed this session. Completions are
+  // permanent, so we only ever add — this lets us overlay completion onto any
+  // modules payload and guarantee the roadmap never regresses a finished lesson
+  // if a background fetch briefly returns a stale snapshot (root cause of the
+  // "repeats the same lesson until I restart the app" bug).
+  const completedIdsRef = useRef(new Set());
   const [lessonsCompleted, setLessonsCompleted] = useState(0);
   const [modules, setModules] = useState([]);
   const [botBucks, setBotBucks] = useState(0);
@@ -114,6 +125,33 @@ export function UserProgressProvider({ children }) {
     }).catch(() => {});
   }, [user]);
 
+  // Overlay session-known completions onto a modules array so a stale server
+  // snapshot can never show a finished lesson as incomplete (which would re-lock
+  // the roadmap and loop the user on the same lesson).
+  const overlayCompleted = useCallback((mods) => {
+    if (!Array.isArray(mods)) return [];
+    const done = completedIdsRef.current;
+    if (done.size === 0) return mods;
+    return mods.map((mod) => {
+      const lessons = mod.lessons || [];
+      let changed = false;
+      const newLessons = lessons.map((l) => {
+        if (done.has(l.id) && !l.is_completed) {
+          changed = true;
+          return { ...l, is_completed: true };
+        }
+        return l;
+      });
+      if (!changed) return mod;
+      const completedCount = newLessons.filter((l) => l.is_completed).length;
+      return {
+        ...mod,
+        lessons: newLessons,
+        completed_lesson_count: Math.max(mod.completed_lesson_count || 0, completedCount),
+      };
+    });
+  }, []);
+
   const applyStats = useCallback((statsData, gen = null, { syncGate = true } = {}) => {
     // Drop results from a superseded fetch so a slow/stale stats response can't
     // clobber fresher values (e.g. a just-incremented streak from completeLesson
@@ -123,8 +161,15 @@ export function UserProgressProvider({ children }) {
     setStreakDays(statsData.streak_days);
     setLastActive(statsData.last_active ?? null);
     setBadges(statsData.badges || []);
-    setCompletedLessonIds(new Set(statsData.completed_lesson_ids || []));
-    setLessonsCompleted(statsData.lessons_completed || 0);
+    // Union with the session set — completions only accumulate, so a stale
+    // stats payload can never un-complete a lesson we already know is done.
+    const merged = new Set([
+      ...completedIdsRef.current,
+      ...(statsData.completed_lesson_ids || []),
+    ]);
+    completedIdsRef.current = merged;
+    setCompletedLessonIds(merged);
+    setLessonsCompleted(Math.max(statsData.lessons_completed || 0, merged.size));
     setBotBucks(statsData.bot_bucks || 0);
     setEquippedCharacter(statsData.equipped_character || null);
     const completed = inferOnboardingCompleted(statsData);
@@ -247,11 +292,14 @@ export function UserProgressProvider({ children }) {
       }
 
       applyStats(statsData, syncId);
-      setModules(Array.isArray(modulesData) ? modulesData : []);
+      // applyStats just refreshed completedIdsRef, so overlay reflects the
+      // freshest known completions and can't regress the roadmap.
+      const mergedModules = overlayCompleted(Array.isArray(modulesData) ? modulesData : []);
+      setModules(mergedModules);
 
       await writeCache(cacheKeys.progress(user.id), {
         stats: statsData,
-        modules: Array.isArray(modulesData) ? modulesData : [],
+        modules: mergedModules,
       });
 
       const priorityUrl = statsData.equipped_character?.model_url;
@@ -280,7 +328,7 @@ export function UserProgressProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [token, user?.id, loadCharacters, applyStats]);
+  }, [token, user?.id, loadCharacters, applyStats, overlayCompleted]);
 
   const hydrateFromCache = useCallback(async (userId) => {
     const cached = await readCache(cacheKeys.progress(userId), {
@@ -292,7 +340,7 @@ export function UserProgressProvider({ children }) {
     }
 
     applyStats(cached.data.stats);
-    setModules(Array.isArray(cached.data.modules) ? cached.data.modules : []);
+    setModules(overlayCompleted(Array.isArray(cached.data.modules) ? cached.data.modules : []));
 
     const charCached = await readCache(cacheKeys.characters(userId), {
       freshMs: TTL.CHARACTERS_STALE_MS,
@@ -310,7 +358,7 @@ export function UserProgressProvider({ children }) {
       hydrated: true,
       onboardingCompleted: inferOnboardingCompleted(cached.data.stats),
     };
-  }, [applyStats]);
+  }, [applyStats, overlayCompleted]);
 
   const refreshCharacterCache = useCallback(async (forceRefresh = false) => {
     if (!token) return;
@@ -337,6 +385,9 @@ export function UserProgressProvider({ children }) {
   useEffect(() => {
     if (user?.id) {
       setLoading(true);
+      // New session for this user — start the completed-lesson overlay empty so
+      // a previous account's completions can't leak in; hydrate/fetch repopulate.
+      completedIdsRef.current = new Set();
       let cancelled = false;
       (async () => {
         const storedCompleted = await readOnboardingCompleted(user.id);
@@ -354,6 +405,10 @@ export function UserProgressProvider({ children }) {
         }
 
         await fetchData({ background: knownCompleted || hydrated });
+        if (cancelled) return;
+        // Retry any completions that failed to reach the server last session so
+        // a killed/offline app still catches up (and never re-locks the lesson).
+        flushPendingCompletions().catch(() => {});
       })();
       return () => { cancelled = true; };
     }
@@ -369,28 +424,108 @@ export function UserProgressProvider({ children }) {
     charactersFetchRef.current = { at: 0, promise: null };
   }
 
+  function markLessonCompletedLocally(lessonId) {
+    if (completedIdsRef.current.has(lessonId)) {
+      // Still re-apply the overlay in case a stale modules snapshot re-locked it.
+      setModules((prev) => overlayCompleted(prev));
+      return;
+    }
+    completedIdsRef.current = new Set([...completedIdsRef.current, lessonId]);
+    setCompletedLessonIds(new Set(completedIdsRef.current));
+    setModules((prev) => overlayCompleted(prev));
+  }
+
+  // Fold the server's authoritative completion list into the session set so the
+  // roadmap reconciles straight from the /complete/ response — no dependence on
+  // a follow-up GET that might still be serving a stale snapshot.
+  function mergeCompletedIds(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const before = completedIdsRef.current;
+    const merged = new Set([...before, ...ids]);
+    if (merged.size === before.size) return;
+    completedIdsRef.current = merged;
+    setCompletedLessonIds(merged);
+    setModules((prev) => overlayCompleted(prev));
+  }
+
+  // A 4xx (except throttling/timeout) is a permanent failure for THIS request —
+  // retrying it forever would be pointless, so we stop queueing/retrying it.
+  function isPermanentCompletionError(status) {
+    return typeof status === 'number' && status >= 400 && status < 500
+      && status !== 408 && status !== 429;
+  }
+
+  // Retry any completions whose POST previously failed (offline / dropped
+  // response). Runs on boot and on refresh so the server always catches up.
+  const flushPendingCompletions = useCallback(async () => {
+    if (!token || !user?.id) return;
+    const pending = await getPendingCompletions(user.id);
+    if (!pending.length) return;
+    let changed = false;
+    for (const entry of pending) {
+      try {
+        const result = await coursesApi.completeLesson(token, entry.lessonId, entry.mistakes || 0);
+        markLessonCompletedLocally(entry.lessonId);
+        mergeCompletedIds(result.completed_lesson_ids);
+        await dequeuePendingCompletion(user.id, entry.lessonId);
+        changed = true;
+      } catch (e) {
+        if (isPermanentCompletionError(e?.status)) {
+          // Give up on this one so it can't wedge the queue.
+          await dequeuePendingCompletion(user.id, entry.lessonId);
+          changed = true;
+        }
+        // else: transient — leave it queued for the next flush.
+      }
+    }
+    if (changed) {
+      await invalidateCache(cacheKeys.progress(user.id));
+    }
+  }, [token, user?.id, overlayCompleted]);
+
   async function completeLesson(lessonId, mistakes = 0) {
     if (!token || !user?.id) return null;
+    const clientDate = localDate();
+    // Advance the roadmap instantly and permanently BEFORE the network call, so
+    // a slow or failed request can never leave a finished lesson looking
+    // incomplete. The overlay is permanent for the session and self-heals
+    // against stale fetches (root cause of the "says I didn't finish it until I
+    // restart the app" bug).
+    markLessonCompletedLocally(lessonId);
     try {
       const result = await coursesApi.completeLesson(token, lessonId, mistakes);
+      // Succeeded — clear any earlier failed attempt for this same lesson.
+      await dequeuePendingCompletion(user.id, lessonId);
       if (!result.already_completed) {
         // Invalidate any in-flight stats fetch so its (pre-completion) response
         // can't land after us and revert the streak we just earned (DEV-460).
         syncGeneration.current += 1;
-        setXp((prev) => prev + result.xp_earned);
-        setStreakDays(result.stats.streak_days);
+        setXp((prev) => prev + (result.xp_earned || 0));
+        if (result.stats) {
+          setStreakDays(result.stats.streak_days);
+          setBadges(result.stats.badges || []);
+          setBotBucks(result.stats.bot_bucks ?? botBucks);
+          refreshStreakNotifications(result.stats, { activeToday: true });
+        }
         setLastActive(localDate());
-        setBadges(result.stats.badges || []);
-        setBotBucks(result.stats.bot_bucks ?? botBucks);
-        setCompletedLessonIds((prev) => new Set([...prev, lessonId]));
         setLessonsCompleted((prev) => prev + 1);
-        refreshStreakNotifications(result.stats, { activeToday: true });
-        await invalidateCache(cacheKeys.progress(user.id));
-        await fetchData();
       }
+      // Reconcile from the authoritative server list in THIS response.
+      mergeCompletedIds(result.completed_lesson_ids);
+      // Always reconcile with the server so a drifted client self-heals.
+      await invalidateCache(cacheKeys.progress(user.id));
+      await fetchData({ background: true });
       return result;
     } catch (e) {
-      return null;
+      // The POST failed (offline / dropped response). Keep the optimistic mark
+      // and persist a retry so the server still records the completion — even
+      // across an app kill. A permanent 4xx (e.g. lesson removed) isn't queued.
+      if (!isPermanentCompletionError(e?.status)) {
+        await enqueuePendingCompletion(user.id, { lessonId, mistakes, clientDate });
+      }
+      // Return a truthy result so the celebration screen still shows success;
+      // fallbacks supply the displayed XP/Bot Bucks.
+      return { already_completed: false, pending: true };
     }
   }
 
@@ -580,7 +715,12 @@ export function UserProgressProvider({ children }) {
   const xpInCurrentLevel = xp % XP_PER_LEVEL;
   const xpProgress = xpInCurrentLevel / XP_PER_LEVEL;
 
-  const refresh = useCallback((opts = {}) => fetchData({ background: false, ...opts }), [fetchData]);
+  const refresh = useCallback(async (opts = {}) => {
+    // Opportunistically drain any queued completions on every manual/focus
+    // refresh so a transient failure self-heals without an app restart.
+    await flushPendingCompletions();
+    return fetchData({ background: false, ...opts });
+  }, [fetchData, flushPendingCompletions]);
 
   return (
     <UserProgressContext.Provider

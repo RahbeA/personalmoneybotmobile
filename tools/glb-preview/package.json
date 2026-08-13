@@ -1,0 +1,13 @@
+{
+  "name": "moneybot-glb-preview",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Render a PNG still from a MoneyBot character GLB via headless Chromium + model-viewer",
+  "scripts": {
+    "preview": "node preview.mjs"
+  },
+  "dependencies": {
+    "puppeteer": "^24.2.0"
+  }
+}
