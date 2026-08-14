@@ -14,6 +14,7 @@ backend/media/
 # Node / web build artifacts (rebuilt in stage 1)
 web/node_modules/
 web/dist/
+tools/**/node_modules/
 
 # Mobile app is not part of the backend image
 mobile/
