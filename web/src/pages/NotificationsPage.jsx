@@ -322,14 +322,14 @@ export default function NotificationsPage() {
     <Card className="mb-brand-card">
       <div className="mb-page-header">
         <Title level={4} className="mb-page-title">Notifications</Title>
-        <Space>
+        <Space wrap>
           <Input
             placeholder="Search campaigns"
             prefix={<SearchOutlined />}
             value={search}
             allowClear
             onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 240 }}
+            style={{ width: 240, maxWidth: '100%' }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openComposer()}>
             New notification
@@ -346,7 +346,7 @@ export default function NotificationsPage() {
         scroll={{ x: 1000 }}
         expandable={{
           expandedRowRender: (r) => (
-            <Descriptions size="small" column={2}>
+            <Descriptions size="small" column={{ xs: 1, sm: 2 }}>
               <Descriptions.Item label="Body" span={2}>{r.body}</Descriptions.Item>
               {r.audience === 'selected' && (
                 <Descriptions.Item label="Recipients" span={2}>

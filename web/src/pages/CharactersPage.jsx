@@ -415,7 +415,7 @@ export default function CharactersPage() {
             {filtered.length} of {rows.length} · drag to rotate in detail view
           </Text>
         </div>
-        <Space>
+        <Space wrap>
           {(unslimmed.length > 0 || slimAll) && (
             <Button
               icon={<ThunderboltOutlined />}
@@ -486,12 +486,12 @@ export default function CharactersPage() {
           value={search}
           allowClear
           onChange={(e) => setSearch(e.target.value)}
-          style={{ maxWidth: 280 }}
+          style={{ width: 280, maxWidth: '100%' }}
         />
         <Select
           value={rarityFilter}
           onChange={setRarityFilter}
-          style={{ width: 140 }}
+          style={{ width: 140, maxWidth: '100%' }}
           options={[
             { value: 'all', label: 'All rarities' },
             ...RARITY.map((r) => ({ value: r.value, label: r.label })),
@@ -539,11 +539,11 @@ export default function CharactersPage() {
       <Drawer
         open={!!viewing}
         onClose={() => setViewing(null)}
-        width={Math.min(560, window.innerWidth - 24)}
+        width="min(560px, calc(100vw - 16px))"
         title={viewing?.name}
         styles={{ body: { paddingTop: 0 } }}
         extra={(
-          <Space>
+          <Space wrap>
             <Button
               size="small"
               type={viewing?.is_starter ? 'primary' : 'default'}

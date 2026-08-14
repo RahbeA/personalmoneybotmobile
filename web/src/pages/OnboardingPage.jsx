@@ -99,7 +99,7 @@ export default function OnboardingPage() {
 
   return (
     <Card className="mb-brand-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="mb-page-header">
         <Title level={4} style={{ margin: 0 }}>Onboarding Questions</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>Add Question</Button>
       </div>
@@ -109,7 +109,7 @@ export default function OnboardingPage() {
         style={{ marginBottom: 16 }}
         message="These are the financial-literacy questions shown to new users. Mark exactly one option as correct per question. The slug must stay stable once users have answered."
       />
-      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} />
+      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={!!editing}
@@ -120,7 +120,7 @@ export default function OnboardingPage() {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Space style={{ width: '100%' }} align="start">
+          <Space style={{ width: '100%' }} align="start" wrap>
             <Form.Item name="slug" label="Slug (stable id)" rules={[{ required: true }]}>
               <Input placeholder="interest" disabled={!!editing?.id} />
             </Form.Item>

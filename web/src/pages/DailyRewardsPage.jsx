@@ -62,7 +62,7 @@ export default function DailyRewardsPage() {
         style={{ margin: '16px 0' }}
         message="Default ladder: 5 → 10 → 15 → 20 → 30 → 40 → 75. Missing a day resets to Day 1."
       />
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} scroll={{ x: 'max-content' }} />
       <Button type="primary" onClick={saveAll} loading={saving} style={{ marginTop: 16 }}>
         Save changes
       </Button>

@@ -38,7 +38,9 @@ export default function LoginPage() {
         alignItems: 'center',
         justifyContent: 'center',
         background: `linear-gradient(145deg, ${brand.background} 0%, #0D160F 45%, ${brand.background} 100%)`,
-        padding: 24,
+        padding: '24px 16px',
+        paddingTop: 'max(24px, env(safe-area-inset-top))',
+        paddingBottom: 'max(24px, env(safe-area-inset-bottom))',
       }}
     >
       <div style={{ width: 420, maxWidth: '100%' }}>

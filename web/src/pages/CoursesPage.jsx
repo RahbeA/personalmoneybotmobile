@@ -114,11 +114,11 @@ function ModulesView({ message, modal, onOpen }) {
 
   return (
     <Card className="mb-brand-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="mb-page-header">
         <Title level={4} style={{ margin: 0 }}>Modules</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>Add Module</Button>
       </div>
-      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} />
+      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={!!editing}
@@ -227,11 +227,11 @@ function LessonsView({ message, modal, module, onOpen }) {
 
   return (
     <Card className="mb-brand-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="mb-page-header">
         <Title level={4} style={{ margin: 0 }}>Lessons</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>Add Lesson</Button>
       </div>
-      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} />
+      <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
 
       <Modal
         open={!!editing}
@@ -330,14 +330,14 @@ function QuestionsView({ message, modal, lesson }) {
 
   return (
     <Card className="mb-brand-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="mb-page-header">
         <Title level={4} style={{ margin: 0 }}>Questions</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>Add Question</Button>
       </div>
       {rows.length === 0 && !loading ? (
         <Empty description="No questions yet" />
       ) : (
-        <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} />
+        <Table rowKey="id" loading={loading} dataSource={rows} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
       )}
 
       <Modal
@@ -349,7 +349,7 @@ function QuestionsView({ message, modal, lesson }) {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Space style={{ width: '100%' }} align="start">
+          <Space style={{ width: '100%' }} align="start" wrap>
             <Form.Item name="question_type" label="Type" rules={[{ required: true }]}>
               <Select
                 options={QUESTION_TYPES}

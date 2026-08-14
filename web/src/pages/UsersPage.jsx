@@ -113,7 +113,8 @@ export default function UsersPage() {
           value={search}
           allowClear
           onChange={(e) => setSearch(e.target.value)}
-          style={{ width: 280 }}
+          className="mb-toolbar-search"
+          style={{ width: 280, maxWidth: '100%' }}
         />
       </div>
 
@@ -126,7 +127,7 @@ export default function UsersPage() {
         scroll={{ x: 900 }}
         expandable={{
           expandedRowRender: (r) => (
-            <Descriptions size="small" column={3}>
+            <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }}>
               <Descriptions.Item label="Name">{r.name || '—'}</Descriptions.Item>
               <Descriptions.Item label="Streak">{r.stats?.streak_days ?? 0} days</Descriptions.Item>
               <Descriptions.Item label="Onboarding">

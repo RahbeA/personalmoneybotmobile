@@ -69,8 +69,8 @@ export default function Dashboard() {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={12} md={6}><StatCard title="Lessons Completed" value={data.engagement.lessons_completed} icon={<CheckCircleOutlined />} /></Col>
-        <Col xs={12} md={6}><StatCard title="Money Chats Passed" value={data.engagement.money_chats_passed} icon={<RobotOutlined />} /></Col>
+        <Col xs={24} sm={12} md={6}><StatCard title="Lessons Completed" value={data.engagement.lessons_completed} icon={<CheckCircleOutlined />} /></Col>
+        <Col xs={24} sm={12} md={6}><StatCard title="Money Chats Passed" value={data.engagement.money_chats_passed} icon={<RobotOutlined />} /></Col>
         <Col xs={12} md={6}><StatCard title="Total XP" value={data.economy.total_xp} icon={<TrophyOutlined />} /></Col>
         <Col xs={12} md={6}><StatCard title="Total Bot Bucks" value={data.economy.total_bot_bucks} icon={<DollarOutlined />} /></Col>
       </Row>

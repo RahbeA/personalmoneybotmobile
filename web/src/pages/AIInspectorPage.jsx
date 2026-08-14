@@ -53,7 +53,7 @@ function PaginatedInspectorTable({ endpoint, columns, onOpen, searchPlaceholder 
         value={search}
         allowClear
         onChange={(e) => setSearch(e.target.value)}
-        style={{ width: 320, marginBottom: 12 }}
+        style={{ width: '100%', maxWidth: 320, marginBottom: 12 }}
       />
       <Table
         rowKey="id"
@@ -100,7 +100,7 @@ function TutorTab() {
         onOpen={open}
         searchPlaceholder="Search by user email or title"
       />
-      <Drawer open={!!detail} title={detail?.title} width={560} onClose={() => setDetail(null)}>
+      <Drawer open={!!detail} title={detail?.title} width="min(560px, 100vw)" onClose={() => setDetail(null)}>
         {detailLoading ? <Spin /> : (
           <>
             <Text style={{ color: brand.textSecondary }}>{detail?.user_email}</Text>
@@ -151,7 +151,7 @@ function MoneyChatTab() {
       <Drawer
         open={!!detail}
         title={detail?.module_title ? `Money Chat — ${detail.module_title}` : 'Money Chat'}
-        width={560}
+        width="min(560px, 100vw)"
         onClose={() => setDetail(null)}
       >
         {detailLoading ? <Spin /> : (

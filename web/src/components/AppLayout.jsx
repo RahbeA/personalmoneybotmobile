@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Dropdown, Typography } from 'antd';
+import { Layout, Menu, Button, Avatar, Dropdown, Typography, Drawer } from 'antd';
 import {
   DashboardOutlined,
   BookOutlined,
@@ -15,6 +15,7 @@ import {
   GiftOutlined,
   BellOutlined,
   MailOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
@@ -23,6 +24,24 @@ import ChangePasswordModal from './ChangePasswordModal';
 import { brand } from '../theme/tokens';
 
 const { Sider, Content, Header } = Layout;
+
+const MOBILE_QUERY = '(max-width: 991px)';
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+
+  return isMobile;
+}
 
 const NAV_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
@@ -38,22 +57,42 @@ const NAV_ITEMS = [
   { key: '/ai', icon: <RobotOutlined />, label: 'AI Inspector' },
 ];
 
+function NavMenu({ selectedKey, onNavigate }) {
+  return (
+    <Menu
+      theme="dark"
+      mode="inline"
+      selectedKeys={[selectedKey]}
+      items={NAV_ITEMS}
+      onClick={({ key }) => onNavigate(key)}
+      style={{ borderInlineEnd: 'none', paddingTop: 8 }}
+    />
+  );
+}
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const isMobile = useIsMobile();
   const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // Force a password change when an owner created/reset this admin's password.
   const mustChange = !!user?.must_change_password;
   useEffect(() => {
     if (mustChange) setPwModalOpen(true);
   }, [mustChange]);
 
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
   const selectedKey =
     NAV_ITEMS.map((i) => i.key)
       .filter((key) => key !== '/' && location.pathname.startsWith(key))
       .sort((a, b) => b.length - a.length)[0] || '/';
+
+  const pageLabel = NAV_ITEMS.find((i) => i.key === selectedKey)?.label || 'Dashboard';
 
   const userMenu = {
     items: [
@@ -67,75 +106,92 @@ export default function AppLayout() {
     },
   };
 
+  function go(key) {
+    navigate(key);
+    setMobileNavOpen(false);
+  }
+
+  const siderBrand = (
+    <div
+      style={{
+        padding: '20px 16px 12px',
+        borderBottom: `1px solid ${brand.border}`,
+      }}
+    >
+      <BrandLogo size={44} showWordmark wordmarkSize="md" />
+    </div>
+  );
+
   return (
-    <Layout style={{ minHeight: '100vh', width: '100%' }}>
-      <Sider
-        width={brand.sidebarWidth}
-        breakpoint="lg"
-        collapsedWidth="0"
-        theme="dark"
-        style={{ borderRight: `1px solid ${brand.border}` }}
-      >
-        <div
-          style={{
-            padding: '20px 16px 12px',
-            borderBottom: `1px solid ${brand.border}`,
-          }}
-        >
-          <BrandLogo size={44} showWordmark wordmarkSize="md" />
-        </div>
-        <Menu
+    <Layout className="mb-app-shell" style={{ minHeight: '100vh', width: '100%' }}>
+      {!isMobile && (
+        <Sider
+          width={brand.sidebarWidth}
           theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={NAV_ITEMS}
-          onClick={({ key }) => navigate(key)}
-          style={{ borderInlineEnd: 'none', paddingTop: 8 }}
-        />
+          style={{ borderRight: `1px solid ${brand.border}` }}
+        >
+          {siderBrand}
+          <NavMenu selectedKey={selectedKey} onNavigate={go} />
+          <div style={{ padding: '16px', marginTop: 'auto' }}>
+            <Typography.Text style={{ color: brand.textMuted, fontSize: 11 }}>
+              MoneyBot Admin · v1.0
+            </Typography.Text>
+          </div>
+        </Sider>
+      )}
+
+      <Drawer
+        placement="left"
+        open={isMobile && mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+        width={280}
+        className="mb-mobile-nav"
+        styles={{
+          body: { padding: 0, display: 'flex', flexDirection: 'column', height: '100%' },
+          header: { display: 'none' },
+        }}
+      >
+        {siderBrand}
+        <NavMenu selectedKey={selectedKey} onNavigate={go} />
         <div style={{ padding: '16px', marginTop: 'auto' }}>
           <Typography.Text style={{ color: brand.textMuted, fontSize: 11 }}>
             MoneyBot Admin · v1.0
           </Typography.Text>
         </div>
-      </Sider>
-      <Layout style={{ background: brand.background }}>
-        <Header
-          style={{
-            background: brand.surfaceElevated,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingInline: 20,
-            height: 56,
-            lineHeight: '56px',
-            borderBottom: `1px solid ${brand.border}`,
-          }}
-        >
-          <Typography.Text style={{ color: brand.textSecondary, fontSize: 13 }}>
-            {NAV_ITEMS.find((i) => i.key === selectedKey)?.label || 'Dashboard'}
-          </Typography.Text>
+      </Drawer>
+
+      <Layout style={{ background: brand.background, minWidth: 0, flex: 1 }}>
+        <Header className="mb-app-header">
+          <div className="mb-app-header-left">
+            {isMobile && (
+              <Button
+                type="text"
+                aria-label="Open navigation"
+                icon={<MenuOutlined />}
+                onClick={() => setMobileNavOpen(true)}
+                style={{ color: brand.textPrimary, marginRight: 4 }}
+              />
+            )}
+            {isMobile && <BrandLogo size={28} />}
+            <Typography.Text className="mb-app-header-title">
+              {pageLabel}
+            </Typography.Text>
+          </div>
           <Dropdown menu={userMenu} placement="bottomRight">
-            <Button type="text" style={{ height: 'auto', padding: '4px 8px', color: brand.textPrimary }}>
+            <Button type="text" className="mb-app-user-btn">
               <Avatar
                 size="small"
                 icon={<UserOutlined />}
-                style={{ marginRight: 8, backgroundColor: brand.primary, color: brand.background }}
+                style={{ backgroundColor: brand.primary, color: brand.background }}
               />
-              {user?.email}
+              <span className="mb-app-user-email">{user?.email}</span>
               {user?.is_superuser ? (
-                <span style={{ marginLeft: 6, color: brand.botBucks, fontSize: 11 }}>super</span>
+                <span className="mb-app-user-badge">super</span>
               ) : null}
             </Button>
           </Dropdown>
         </Header>
-        <Content
-          style={{
-            padding: '16px 20px',
-            background: brand.background,
-            minHeight: 'calc(100vh - 56px)',
-            overflow: 'auto',
-          }}
-        >
+        <Content className="mb-app-content">
           <Outlet />
         </Content>
       </Layout>

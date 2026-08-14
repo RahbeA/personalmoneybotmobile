@@ -146,7 +146,7 @@ export default function BadgesPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="mb-page-header">
         <div>
           <Title level={3} style={{ margin: 0 }}>Badges</Title>
           <Text type="secondary">Configure achievement badges and upload AI-generated icons.</Text>
@@ -161,7 +161,7 @@ export default function BadgesPage() {
         message="Badge metrics are evaluated automatically when users complete lessons, claim daily rewards, or purchase characters."
       />
 
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} scroll={{ x: 'max-content' }} />
 
       <Modal
         title={editing?.id ? 'Edit badge' : 'New badge'}

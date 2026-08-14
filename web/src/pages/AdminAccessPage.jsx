@@ -130,7 +130,7 @@ export default function AdminAccessPage() {
             value={search}
             allowClear
             onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 260 }}
+            style={{ width: 260, maxWidth: '100%' }}
           />
           {canManage ? (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>

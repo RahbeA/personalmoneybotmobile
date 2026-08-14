@@ -250,12 +250,12 @@ export default function InvitesPage() {
         <Input.Search
           placeholder="Search code, email, note…"
           allowClear
-          style={{ width: 280 }}
+          style={{ width: 280, maxWidth: '100%' }}
           onSearch={(v) => { setPage(1); setSearch(v); }}
         />
         <Select
           value={statusFilter}
-          style={{ width: 160 }}
+          style={{ width: 160, maxWidth: '100%' }}
           onChange={(v) => { setPage(1); setStatusFilter(v); }}
           options={[
             { value: 'all', label: 'All statuses' },
@@ -272,6 +272,7 @@ export default function InvitesPage() {
         loading={listLoading}
         columns={columns}
         dataSource={rows}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           total,
