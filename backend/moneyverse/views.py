@@ -46,7 +46,7 @@ def character_list(request):
         )
         return serializer.data
 
-    catalog, hit = cache_get_or_set('moneyverse:catalog:v1', factory, TTL_CHARACTER_CATALOG)
+    catalog, hit = cache_get_or_set('moneyverse:catalog:v2', factory, TTL_CHARACTER_CATALOG)
     owned_ids = set(
         UserCharacter.objects.filter(user=request.user).values_list('character_id', flat=True)
     )

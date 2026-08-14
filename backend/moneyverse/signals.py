@@ -11,4 +11,5 @@ from .models import Character
 def bust_character_catalog(sender, **kwargs):
     from django.core.cache import cache
     cache.delete('moneyverse:catalog:v1')
+    cache.delete('moneyverse:catalog:v2')
     invalidate_leaderboard_snapshots()

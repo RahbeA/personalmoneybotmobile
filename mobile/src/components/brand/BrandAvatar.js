@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../context/ThemeContext';
 import CharacterViewer from '../CharacterViewer';
@@ -15,6 +15,18 @@ export default function BrandAvatar({
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors, size), [colors, size]);
   const resolvedLogoSize = logoSize ?? Math.round(size * 0.72);
+
+  if (character?.preview_url && !autoRotate) {
+    return (
+      <View style={[styles.wrap, styles.characterWrap, style]}>
+        <Image
+          source={{ uri: character.preview_url }}
+          style={styles.image}
+          resizeMode="contain"
+        />
+      </View>
+    );
+  }
 
   if (character?.model_url) {
     return (
@@ -54,5 +66,9 @@ const makeStyles = (colors, size) => StyleSheet.create({
   },
   characterWrap: {
     backgroundColor: colors.surfaceElevated,
+  },
+  image: {
+    width: '100%',
+    height: '100%',
   },
 });

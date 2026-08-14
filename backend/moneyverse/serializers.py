@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 from .models import Character
 
@@ -17,9 +18,19 @@ class CharacterSerializer(serializers.ModelSerializer):
     def _absolute(self, file_field):
         if not file_field:
             return None
-        request = self.context.get('request')
         url = file_field.url
-        return request.build_absolute_uri(url) if request else url
+        request = self.context.get('request')
+        if request:
+            absolute = request.build_absolute_uri(url)
+            # Guard against a misconfigured proxy still emitting http://.
+            if absolute.startswith('http://') and not settings.DEBUG:
+                return 'https://' + absolute[len('http://'):]
+            return absolute
+        domain = getattr(settings, 'RAILWAY_PUBLIC_DOMAIN', '') or ''
+        if domain:
+            path = url if url.startswith('/') else f'/{url}'
+            return f'https://{domain}{path}'
+        return url
 
     def get_model_url(self, obj):
         return self._absolute(obj.model_file)

@@ -236,4 +236,9 @@ if RAILWAY_PUBLIC_DOMAIN:
     if _railway_origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(_railway_origin)
 
+# Railway terminates TLS and forwards HTTP. Without this, request.build_absolute_uri()
+# emits http:// media URLs and iOS App Transport Security refuses to load them.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

@@ -185,7 +185,9 @@ export async function clearAllApiCache() {
 }
 
 /**
- * Return cached data if fresh; optionally return stale data while revalidating.
+ * Return cached data if it is still fresh. Stale entries are ignored so the
+ * caller fetches a current payload (callers that want a stale first paint
+ * should readCache themselves before calling this).
  */
 export async function fetchWithCache(key, fetchFn, { freshMs, staleMs, force = false } = {}) {
   if (!force) {
@@ -193,12 +195,9 @@ export async function fetchWithCache(key, fetchFn, { freshMs, staleMs, force = f
     if (cached.data != null && !cached.stale) {
       return { data: cached.data, source: cached.source, fromCache: true };
     }
-    if (cached.data != null && cached.stale) {
-      fetchFn()
-        .then((data) => writeCache(key, data))
-        .catch(() => {});
-      return { data: cached.data, source: cached.source, fromCache: true, revalidating: true };
-    }
+    // Stale entries are only used as a paint-first hint by callers that read
+    // the cache themselves. Returning them here left the UI stuck on old
+    // payloads (e.g. characters with no preview_url) until the 24h TTL died.
   }
 
   const data = await fetchFn();

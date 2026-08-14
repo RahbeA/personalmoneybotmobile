@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated, Easing,
-  PanResponder, FlatList, Image,
+  PanResponder, FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
-import CharacterViewer from './CharacterViewer';
+import CharacterPoster from './CharacterPoster';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -143,8 +143,8 @@ export default function FeaturedCharacter({
           ]}
         >
           {item.preview_url ? (
-            <Image
-              source={{ uri: item.preview_url }}
+            <CharacterPoster
+              previewUrl={item.preview_url}
               style={styles.stripImage}
               resizeMode="contain"
             />
@@ -207,12 +207,10 @@ export default function FeaturedCharacter({
             style={[styles.viewer, { transform: [{ translateY: floatY }] }]}
             pointerEvents="none"
           >
-            <CharacterViewer
-              modelUrl={character.model_url}
+            <CharacterPoster
               previewUrl={character.preview_url}
-              autoRotate
-              allowDrag={false}
-              logoSize="md"
+              modelUrl={character.preview_url ? undefined : character.model_url}
+              resizeMode="contain"
             />
           </Animated.View>
           {/* Overlay captures swipe + tap — WebView would otherwise eat gestures. */}
