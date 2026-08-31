@@ -8,6 +8,7 @@ import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { BrandAvatar } from '../components/brand';
 import BadgeIcon from '../components/BadgeIcon';
+import PuckButton from '../components/PuckButton';
 import { CELEBRATIONS } from '../constants/brandCopy';
 
 const MODULE_BADGES = {
@@ -134,20 +135,17 @@ export default function ModuleCompleteScreen({ navigation, route }) {
         </Animated.View>
 
         <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <TouchableOpacity
-            style={styles.continueBtn}
-            activeOpacity={0.85}
+          <PuckButton
+            color={colors.primary}
+            height={56}
+            borderRadius={18}
+            lip={5}
             onPress={() => navigation.navigate('Home')}
+            contentStyle={styles.continueInner}
           >
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.continueBtnGrad}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.continueBtnText}>Continue</Text>
-              <Ionicons name="arrow-forward" size={20} color={colors.background} />
-            </LinearGradient>
-          </TouchableOpacity>
+            <Text style={styles.continueBtnText}>Continue</Text>
+            <Ionicons name="arrow-forward" size={20} color={colors.background} />
+          </PuckButton>
         </Animated.View>
       </SafeAreaView>
     </LinearGradient>
@@ -192,10 +190,8 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   bonusText: { fontSize: 13, fontWeight: '700', color: '#F5B72B' },
   footer: { paddingBottom: 16 },
-  continueBtn: { borderRadius: 18, overflow: 'hidden' },
-  continueBtnGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 10, paddingVertical: 18, borderRadius: 18,
+  continueInner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
   },
   continueBtnText: { fontSize: 17, fontWeight: '800', color: colors.background },
 });

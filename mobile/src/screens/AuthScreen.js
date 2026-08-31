@@ -28,7 +28,6 @@ import { BrandLogo } from '../components/brand';
 import LegalFooter from '../components/LegalFooter';
 import { BRAND_NAME } from '../constants/brandCopy';
 import { isGoogleConfigured } from '../config/google';
-import { authApi } from '../api/auth';
 import { buildGoogleAuthConfig, getGoogleSignInBlockedMessage } from '../utils/googleAuth';
 import { isAppleSignInAvailable } from '../utils/appleAuth';
 
@@ -44,11 +43,6 @@ export default function AuthScreen({ route, navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState(
-    String(route?.params?.code || route?.params?.inviteCode || '').toUpperCase(),
-  );
-  const [inviteStatus, setInviteStatus] = useState(null); // { valid, inviter_name?, detail? }
-  const [inviteChecking, setInviteChecking] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -58,11 +52,8 @@ export default function AuthScreen({ route, navigation }) {
   const [appleLoading, setAppleLoading] = useState(false);
 
   const {
-    login, register, googleSignIn, appleSignIn, isGuest, inviteOnlyEnabled,
+    login, register, googleSignIn, appleSignIn, isGuest,
   } = useAuth();
-  // Invite is only required when creating/upgrading a real account (Sign Up).
-  // Login for existing users stays ungated — including guests signing into a real account.
-  const needsInvite = inviteOnlyEnabled && mode === 'register';
   // If we opened this screen from an active guest session, upgrading keeps the
   // user signed in (so the root navigator won't swap stacks) — dismiss manually.
   const startedAsGuest = useRef(isGuest).current;
@@ -118,60 +109,9 @@ export default function AuthScreen({ route, navigation }) {
     return () => { active = false; };
   }, []);
 
-  // Soft-validate invite code while typing (register / guest upgrade only).
-  useEffect(() => {
-    if (!needsInvite) {
-      setInviteStatus(null);
-      setInviteChecking(false);
-      return undefined;
-    }
-    const code = inviteCode.trim().toUpperCase();
-    if (code.length < 6) {
-      setInviteStatus(null);
-      setInviteChecking(false);
-      return undefined;
-    }
-    let cancelled = false;
-    setInviteChecking(true);
-    const timer = setTimeout(async () => {
-      try {
-        const result = await authApi.validateInvite(code);
-        if (!cancelled) setInviteStatus(result);
-      } catch {
-        if (!cancelled) {
-          setInviteStatus({ valid: false, detail: 'Could not check invite code.' });
-        }
-      } finally {
-        if (!cancelled) setInviteChecking(false);
-      }
-    }, 350);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [inviteCode, needsInvite]);
-
-  function requireValidInvite() {
-    if (!needsInvite) return true;
-    const code = inviteCode.trim().toUpperCase();
-    if (!code) {
-      setError('Enter your invite code to create an account.');
-      shake();
-      return false;
-    }
-    if (inviteStatus && inviteStatus.valid === false) {
-      setError(inviteStatus.detail || 'That invite code is not valid.');
-      shake();
-      return false;
-    }
-    return true;
-  }
-
   async function handleApple() {
     if (appleLoading) return;
     setError('');
-    // Existing Apple accounts must be able to sign in with no invite. The
-    // backend only requires a code when creating a brand-new account.
     setAppleLoading(true);
     try {
       const credential = await AppleAuthentication.signInAsync({
@@ -190,14 +130,11 @@ export default function AuthScreen({ route, navigation }) {
         .filter(Boolean)
         .join(' ')
         .trim();
-      await appleSignIn(
-        {
-          identityToken,
-          email: email || undefined,
-          fullName: nameStr || undefined,
-        },
-        inviteCode.trim().toUpperCase() || undefined,
-      );
+      await appleSignIn({
+        identityToken,
+        email: email || undefined,
+        fullName: nameStr || undefined,
+      });
       // For a fresh sign-in the root navigator swaps stacks; for a guest
       // upgrade the user stays signed in, so dismiss this screen ourselves.
       dismissIfUpgrade();
@@ -226,10 +163,7 @@ export default function AuthScreen({ route, navigation }) {
       }
       (async () => {
         try {
-          await googleSignIn(
-            idToken,
-            inviteCode.trim().toUpperCase() || undefined,
-          );
+          await googleSignIn(idToken);
           dismissIfUpgrade();
         } catch (err) {
           setError(err.message || 'Google sign-in failed. Try again.');
@@ -311,7 +245,6 @@ export default function AuthScreen({ route, navigation }) {
         shake();
         return;
       }
-      if (!requireValidInvite()) return;
       if (!acceptedTerms) {
         setError('Please agree to the Terms of Service and Privacy Policy.');
         shake();
@@ -338,7 +271,6 @@ export default function AuthScreen({ route, navigation }) {
           email.trim().toLowerCase(),
           password,
           name.trim(),
-          needsInvite ? inviteCode.trim().toUpperCase() : undefined,
         );
       }
       dismissIfUpgrade();
@@ -419,43 +351,6 @@ export default function AuthScreen({ route, navigation }) {
                 { opacity: fadeAnim, transform: [{ translateX: shakeAnim }] },
               ]}
             >
-              {needsInvite && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Invite code</Text>
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      style={[styles.input, styles.inviteInput]}
-                      value={inviteCode}
-                      onChangeText={(t) => setInviteCode(t.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())}
-                      placeholder="ABCD1234"
-                      placeholderTextColor={colors.textMuted}
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      autoComplete="off"
-                      maxLength={16}
-                      returnKeyType="next"
-                    />
-                  </View>
-                  {inviteChecking ? (
-                    <Text style={styles.inviteHint}>Checking code…</Text>
-                  ) : inviteStatus?.valid ? (
-                    <Text style={[styles.inviteHint, styles.inviteHintOk]}>
-                      {inviteStatus.inviter_name
-                        ? `Invited by ${inviteStatus.inviter_name}`
-                        : 'Invite code looks good'}
-                    </Text>
-                  ) : inviteStatus && inviteStatus.valid === false ? (
-                    <Text style={[styles.inviteHint, styles.inviteHintBad]}>
-                      {inviteStatus.detail || 'Invalid invite code'}
-                    </Text>
-                  ) : (
-                    <Text style={styles.inviteHint}>
-                      Paste the code from your join link to create an account.
-                    </Text>
-                  )}
-                </View>
-              )}
-
               {/* Social first so Google / Apple stay above the fold */}
               {isGoogleConfigured && (
                 <TouchableOpacity
@@ -796,24 +691,6 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   inputWithIcon: {
     paddingRight: 48,
-  },
-  inviteInput: {
-    letterSpacing: 3,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  inviteHint: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  inviteHintOk: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  inviteHintBad: {
-    color: '#FF6B6B',
-    fontWeight: '600',
   },
   eyeButton: {
     position: 'absolute',

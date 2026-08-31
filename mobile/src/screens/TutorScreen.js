@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, ScrollView, Image,
+  View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, ScrollView, Image, Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,32 +14,29 @@ import { tutorApi } from '../api/tutor';
 import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { requireAccount } from '../utils/requireAccount';
 import ChatThread from '../components/chat/ChatThread';
+import PersonalityChips from '../components/chat/PersonalityChips';
+import { personalityByKey } from '../components/chat/personalities';
+import { BrandAvatar } from '../components/brand';
+import PuckButton from '../components/PuckButton';
 import { EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
+import { navigate as rootNavigate } from '../navigation/rootNavigation';
+import { ANALYTICS_EVENTS, track } from '../utils/analytics';
 
 const TUTOR_HERO = require('../../assets/tutor-hero.png');
-
-const CARD_SHADOW = {
-  shadowColor: '#000',
-  shadowOpacity: 0.35,
-  shadowRadius: 16,
-  shadowOffset: { width: 0, height: 8 },
-  elevation: 6,
-};
 
 const SUGGESTED_PROMPTS = [
   'How do I start budgeting?',
   'What is compound interest?',
   'How does credit work?',
   'Tips for building an emergency fund',
-  'Explain the 50/30/20 rule',
 ];
 
 function hairlineBorder(isDark) {
   return isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
 }
 
-function TutorEmptyHero({ styles, colors, onPrompt }) {
+function TutorEmptyHero({ styles, colors, voice, character, onPrompt }) {
   return (
     <ScrollView
       contentContainerStyle={styles.emptyScroll}
@@ -48,28 +45,35 @@ function TutorEmptyHero({ styles, colors, onPrompt }) {
     >
       <View style={styles.emptyHero}>
         <LinearGradient
-          colors={['rgba(61,220,95,0.18)', 'rgba(61,220,95,0.02)', 'transparent']}
+          colors={[`${voice.accent || colors.primary}28`, 'transparent']}
           style={styles.emptyHeroGlow}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
         />
-        <View style={styles.emptyAvatarRing}>
-          <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
+        <View style={[styles.emptyAvatarRing, { borderColor: voice.accent || colors.primary }]}>
+          {character ? (
+            <BrandAvatar character={character} size={80} autoRotate logoSize={44} />
+          ) : (
+            <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
+          )}
         </View>
-        <Text style={styles.emptyTitle}>{EMPTY_STATES.tutor.title}</Text>
+        <Text style={[styles.emptyKicker, { color: voice.accent || colors.primary }]}>
+          {voice.label.toUpperCase()}
+        </Text>
+        <Text style={styles.emptyTitle}>{voice.greeting}</Text>
         <Text style={styles.emptyBody}>{EMPTY_STATES.tutor.body}</Text>
       </View>
 
       <Text style={styles.promptsLabel}>TRY ASKING</Text>
-      <View style={styles.promptsWrap}>
+      <View style={styles.promptsGrid}>
         {SUGGESTED_PROMPTS.map((prompt) => (
           <TouchableOpacity
             key={prompt}
-            style={styles.promptChip}
-            activeOpacity={0.85}
+            style={styles.promptTile}
+            activeOpacity={0.88}
             onPress={() => onPrompt(prompt)}
           >
-            <Ionicons name="sparkles" size={14} color={colors.primary} />
+            <Ionicons name="sparkles" size={15} color={voice.accent || colors.primary} />
             <Text style={styles.promptChipText}>{prompt}</Text>
           </TouchableOpacity>
         ))}
@@ -80,9 +84,9 @@ function TutorEmptyHero({ styles, colors, onPrompt }) {
 
 export default function TutorScreen({ navigation }) {
   const { token, user, isGuest } = useAuth();
-  const { equippedCharacter } = useUserProgress();
+  const { equippedCharacter, chatPersonality, updatePersonality, isPremium } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const tabBarInset = useTabBarInset();
+  const tabBarInset = useTabBarInset(6);
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
 
@@ -91,7 +95,10 @@ export default function TutorScreen({ navigation }) {
   const [sending, setSending] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [savingPersonality, setSavingPersonality] = useState(null);
+
+  const voice = personalityByKey(chatPersonality);
 
   const goCreateAccount = useCallback(() => {
     requireAccount({ isGuest: true, navigation, feature: 'chat with the AI Tutor' });
@@ -106,7 +113,7 @@ export default function TutorScreen({ navigation }) {
         { freshMs: TTL.TUTOR_CONVERSATIONS_MS, staleMs: TTL.TUTOR_CONVERSATIONS_MS * 5 },
       );
       setConversations(data || []);
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, [token, user?.id, isGuest]);
@@ -119,20 +126,36 @@ export default function TutorScreen({ navigation }) {
 
   async function openConversation(id) {
     if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
-    setActionsOpen(false);
     setHistoryOpen(false);
     setConversationId(id);
     try {
       const msgs = await tutorApi.getMessages(token, id);
       setMessages(msgs || []);
-    } catch (e) {
+    } catch {
       setMessages([]);
     }
   }
 
+  const handlePersonality = useCallback(async (item) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'change Tutor voice' })) return;
+    if (item.premium && !isPremium) {
+      rootNavigate('Paywall');
+      return;
+    }
+    if (item.key === chatPersonality) return;
+    setSavingPersonality(item.key);
+    try {
+      await updatePersonality(item.key);
+      track(ANALYTICS_EVENTS.PERSONALITY_CHANGED, { personality: item.key });
+    } catch (err) {
+      Alert.alert('Could not update', err.message || 'Try again in a moment.');
+    } finally {
+      setSavingPersonality(null);
+    }
+  }, [isGuest, navigation, isPremium, chatPersonality, updatePersonality]);
+
   function startNewChat() {
     if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
-    setActionsOpen(false);
     setConversationId(null);
     setMessages([]);
     setHistoryOpen(false);
@@ -160,17 +183,24 @@ export default function TutorScreen({ navigation }) {
     }
   }
 
-  // Guests can open the Tutor tab, but chatting is account-based.
+  const handleKeyboardVisible = useCallback((visible) => {
+    setKeyboardOpen(visible);
+  }, []);
+
   if (isGuest) {
     return (
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <SafeAreaView style={styles.safe} edges={['top']}>
           <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.heroEyebrow}>AI TUTOR</Text>
-              <Text style={styles.title}>Tutor</Text>
-              <Text style={styles.heroSub}>Your personal finance coach</Text>
+            <View style={styles.identity}>
+              <View style={styles.identityAvatar}>
+                <Image source={TUTOR_HERO} style={styles.identityImage} />
+              </View>
+              <View style={styles.identityCopy}>
+                <Text style={styles.heroEyebrow}>AI TUTOR</Text>
+                <Text style={styles.title}>MoneyBot</Text>
+              </View>
             </View>
           </View>
 
@@ -179,12 +209,6 @@ export default function TutorScreen({ navigation }) {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.emptyHero}>
-              <LinearGradient
-                colors={['rgba(61,220,95,0.18)', 'rgba(61,220,95,0.02)', 'transparent']}
-                style={styles.emptyHeroGlow}
-                start={{ x: 0.5, y: 0 }}
-                end={{ x: 0.5, y: 1 }}
-              />
               <View style={styles.emptyAvatarRing}>
                 <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
               </View>
@@ -193,9 +217,9 @@ export default function TutorScreen({ navigation }) {
                 The AI Tutor keeps a personalized chat history and learning profile.
                 Create a free account to start asking questions — lessons stay available without signing up.
               </Text>
-              <TouchableOpacity style={styles.guestCtaBtn} activeOpacity={0.9} onPress={goCreateAccount}>
+              <PuckButton color={colors.primary} height={52} borderRadius={16} lip={5} onPress={goCreateAccount}>
                 <Text style={styles.guestCtaBtnText}>Create free account</Text>
-              </TouchableOpacity>
+              </PuckButton>
             </View>
           </ScrollView>
         </SafeAreaView>
@@ -207,86 +231,70 @@ export default function TutorScreen({ navigation }) {
     <TutorEmptyHero
       styles={styles}
       colors={colors}
+      voice={voice}
+      character={equippedCharacter}
       onPrompt={handleSend}
     />
   );
 
   const hasMessages = messages.length > 0;
-  const composerLeading = (
-    <TouchableOpacity
-      style={[styles.addButton, actionsOpen && styles.addButtonOpen]}
-      onPress={() => setActionsOpen((open) => !open)}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel={actionsOpen ? 'Close chat actions' : 'Open chat actions'}
-      accessibilityState={{ expanded: actionsOpen }}
-    >
-      <Ionicons
-        name={actionsOpen ? 'close' : 'add'}
-        size={28}
-        color={actionsOpen ? colors.background : colors.textSecondary}
-      />
-    </TouchableOpacity>
-  );
+  const activeTitle = conversations.find((c) => c.id === conversationId)?.title;
 
-  const composerMenu = actionsOpen ? (
-    <View style={styles.actionMenu}>
-      <TouchableOpacity
-        style={styles.actionMenuItem}
-        onPress={startNewChat}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityLabel="New chat"
-      >
-        <View style={styles.actionMenuIcon}>
-          <Ionicons name="create-outline" size={21} color={colors.primary} />
-        </View>
-        <Text style={styles.actionMenuLabel}>New chat</Text>
+  const composerAccessory = (
+    <View style={styles.composerToolbar}>
+      <TouchableOpacity style={styles.toolbarBtn} onPress={startNewChat} activeOpacity={0.85}>
+        <Ionicons name="create-outline" size={18} color={colors.primary} />
+        <Text style={styles.toolbarBtnText}>New</Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.actionMenuItem}
-        onPress={() => {
-          setActionsOpen(false);
-          setHistoryOpen(true);
-        }}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityLabel="Chat history"
-      >
-        <View style={styles.actionMenuIcon}>
-          <Ionicons name="time-outline" size={21} color={colors.primary} />
-          {conversations.length > 0 && (
-            <View style={styles.actionMenuBadge}>
-              <Text style={styles.actionMenuBadgeText}>
-                {conversations.length > 9 ? '9+' : conversations.length}
-              </Text>
-            </View>
-          )}
-        </View>
-        <Text style={styles.actionMenuLabel}>History</Text>
+      <View style={styles.toolbarDivider} />
+      <TouchableOpacity style={styles.toolbarBtn} onPress={() => setHistoryOpen(true)} activeOpacity={0.85}>
+        <Ionicons name="time-outline" size={18} color={colors.primary} />
+        <Text style={styles.toolbarBtnText}>
+          History{conversations.length > 0 ? ` (${conversations.length})` : ''}
+        </Text>
       </TouchableOpacity>
+      {hasMessages && activeTitle ? (
+        <>
+          <View style={styles.toolbarDivider} />
+          <Text style={styles.toolbarActive} numberOfLines={1}>{activeTitle}</Text>
+        </>
+      ) : null}
     </View>
-  ) : null;
+  );
 
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.heroEyebrow}>AI TUTOR</Text>
-            <Text style={styles.title}>Tutor</Text>
-            <Text style={styles.heroSub}>Your personal finance coach</Text>
+          <View style={styles.identity}>
+            <View style={[styles.identityAvatar, { borderColor: voice.accent || colors.primary }]}>
+              {equippedCharacter ? (
+                <BrandAvatar character={equippedCharacter} size={40} autoRotate={false} />
+              ) : (
+                <Image source={TUTOR_HERO} style={styles.identityImage} />
+              )}
+            </View>
+            <View style={styles.identityCopy}>
+              <Text style={styles.heroEyebrow}>AI TUTOR</Text>
+              <Text style={styles.title}>MoneyBot</Text>
+              {!keyboardOpen && (
+                <Text style={[styles.heroSub, { color: voice.accent || colors.textSecondary }]}>
+                  {voice.label} · {voice.blurb}
+                </Text>
+              )}
+            </View>
           </View>
         </View>
 
-        {hasMessages && conversationId && (
-          <View style={styles.activeChatBar}>
-            <Ionicons name="chatbubble-ellipses" size={14} color={colors.primary} />
-            <Text style={styles.activeChatText} numberOfLines={1}>
-              {conversations.find((c) => c.id === conversationId)?.title || 'Current chat'}
-            </Text>
-          </View>
+        {!keyboardOpen && (
+          <PersonalityChips
+            variant="dock"
+            selected={chatPersonality || 'chill'}
+            isPremium={isPremium}
+            savingKey={savingPersonality}
+            onSelect={handlePersonality}
+          />
         )}
 
         <ChatThread
@@ -295,13 +303,12 @@ export default function TutorScreen({ navigation }) {
           onSend={handleSend}
           composerDisabled={sending}
           placeholder="Ask about anything you're learning..."
-          keyboardVerticalOffset={8}
           bottomInset={tabBarInset}
           emptyComponent={emptyState}
           character={equippedCharacter}
           composerStyle={styles.composerWrap}
-          composerLeading={composerLeading}
-          composerMenu={composerMenu}
+          composerAccessory={composerAccessory}
+          onKeyboardVisibleChange={handleKeyboardVisible}
         />
       </SafeAreaView>
 
@@ -376,197 +383,158 @@ const makeStyles = (colors, isDark) => {
 
     header: {
       flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingTop: 8,
-      paddingBottom: 24,
-    },
-    headerLeft: { flex: 1, marginRight: 12 },
-    heroEyebrow: {
-      fontSize: 11,
-      fontWeight: '700',
-      color: colors.textMuted,
-      letterSpacing: 1,
-      marginBottom: 4,
-    },
-    title: { fontSize: 30, fontWeight: '800', color: colors.white, letterSpacing: -0.8, marginBottom: 4 },
-    heroSub: { fontSize: 14, color: colors.textSecondary, fontWeight: '500' },
-    activeChatBar: {
-      flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      marginHorizontal: 20,
-      marginBottom: 8,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
-      backgroundColor: colors.primaryTint,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.primaryTintStrong,
+      paddingHorizontal: 16,
+      paddingTop: 4,
+      paddingBottom: 8,
     },
-    activeChatText: { flex: 1, fontSize: 12, fontWeight: '700', color: colors.primary },
-
-    composerWrap: {
-      marginHorizontal: 12,
-      marginBottom: 4,
-      borderRadius: 28,
-      borderWidth: 1,
-      borderColor: hairline,
-      backgroundColor: colors.surfaceElevated,
-      ...CARD_SHADOW,
-    },
-    addButton: {
+    identity: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+    identityAvatar: {
       width: 44,
       height: 44,
       borderRadius: 22,
-      backgroundColor: colors.inputBg,
-      borderWidth: 1,
-      borderColor: colors.border,
+      overflow: 'hidden',
+      borderWidth: 2,
+      borderColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    addButtonOpen: {
-      backgroundColor: colors.primary,
-      borderColor: colors.primary,
-    },
-    actionMenu: {
-      position: 'absolute',
-      left: 0,
-      bottom: 60,
-      zIndex: 10,
-      flexDirection: 'row',
-      gap: 8,
-      paddingHorizontal: 12,
-      paddingTop: 12,
-      paddingBottom: 10,
-      borderRadius: 16,
       backgroundColor: colors.surfaceElevated,
+    },
+    identityImage: { width: 44, height: 44 },
+    identityCopy: { flex: 1, minWidth: 0 },
+    heroEyebrow: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: colors.textMuted,
+      letterSpacing: 1.2,
+      marginBottom: 1,
+    },
+    title: { fontSize: 20, fontWeight: '800', color: colors.white, letterSpacing: -0.6 },
+    heroSub: { fontSize: 13, fontWeight: '600', marginTop: 1 },
+
+    composerWrap: {
+      marginHorizontal: 12,
+      borderRadius: 24,
       borderWidth: 1,
       borderColor: hairline,
-      ...CARD_SHADOW,
+      backgroundColor: colors.surfaceElevated,
+      overflow: 'hidden',
     },
-    actionMenuItem: {
-      minWidth: 72,
+    composerToolbar: {
+      flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
+      paddingHorizontal: 14,
+      paddingTop: 10,
+      paddingBottom: 4,
+      gap: 8,
     },
-    actionMenuIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      backgroundColor: colors.primaryTint,
-      borderWidth: 1,
-      borderColor: colors.primaryTintStrong,
+    toolbarBtn: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      gap: 5,
+      paddingVertical: 4,
+      paddingHorizontal: 2,
     },
-    actionMenuLabel: {
-      fontSize: 12,
-      fontWeight: '600',
+    toolbarBtnText: {
+      fontSize: 13,
+      fontWeight: '700',
       color: colors.textSecondary,
     },
-    actionMenuBadge: {
-      position: 'absolute',
-      top: -4,
-      right: -4,
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
-      paddingHorizontal: 4,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.primary,
-      borderWidth: 2,
-      borderColor: colors.surfaceElevated,
+    toolbarDivider: {
+      width: 1,
+      height: 14,
+      backgroundColor: hairline,
     },
-    actionMenuBadgeText: {
-      fontSize: 9,
-      fontWeight: '800',
-      color: colors.background,
+    toolbarActive: {
+      flex: 1,
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textMuted,
+      textAlign: 'right',
     },
 
     emptyScroll: {
       flexGrow: 1,
-      paddingHorizontal: 20,
-      paddingBottom: 24,
+      paddingHorizontal: 16,
+      paddingBottom: 12,
       justifyContent: 'center',
     },
     emptyHero: {
       alignItems: 'center',
-      paddingVertical: 28,
-      paddingHorizontal: 20,
-      marginBottom: 24,
+      paddingVertical: 24,
+      paddingHorizontal: 18,
+      marginBottom: 16,
       borderRadius: 24,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(61,220,95,0.15)' : 'rgba(22,163,74,0.15)',
+      borderColor: isDark ? 'rgba(61,220,95,0.14)' : 'rgba(22,163,74,0.14)',
       backgroundColor: colors.surfaceElevated,
       overflow: 'hidden',
       position: 'relative',
-      ...CARD_SHADOW,
     },
     emptyHeroGlow: {
       ...StyleSheet.absoluteFillObject,
       borderRadius: 24,
     },
     emptyAvatarRing: {
-      borderRadius: 70,
+      borderRadius: 44,
       borderWidth: 2,
-      borderColor: colors.primaryTintStrong,
       padding: 3,
-      marginBottom: 16,
+      marginBottom: 12,
       overflow: 'hidden',
     },
     emptyHeroImage: {
-      width: 120,
-      height: 120,
-      borderRadius: 60,
+      width: 80,
+      height: 80,
+      borderRadius: 40,
+    },
+    emptyKicker: {
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 1.1,
+      marginBottom: 6,
     },
     emptyTitle: {
-      fontSize: 20,
+      fontSize: 21,
       fontWeight: '800',
       color: colors.white,
-      letterSpacing: -0.3,
+      letterSpacing: -0.4,
       textAlign: 'center',
       marginBottom: 8,
+      lineHeight: 27,
     },
     emptyBody: {
       fontSize: 14,
       color: colors.textSecondary,
       textAlign: 'center',
-      lineHeight: 21,
+      lineHeight: 20,
       fontWeight: '500',
     },
     promptsLabel: {
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '800',
       color: colors.textMuted,
       letterSpacing: 1,
-      marginBottom: 12,
+      marginBottom: 10,
     },
-    promptsWrap: { gap: 8 },
-    promptChip: {
+    promptsGrid: {
       flexDirection: 'row',
-      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    promptTile: {
+      width: '48%',
+      flexGrow: 1,
+      minHeight: 68,
       gap: 8,
       paddingVertical: 12,
-      paddingHorizontal: 14,
+      paddingHorizontal: 12,
       backgroundColor: colors.surfaceElevated,
-      borderRadius: 14,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: hairline,
     },
-    promptChipText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.white },
-
-    guestCtaBtn: {
-      marginTop: 18,
-      backgroundColor: colors.primary,
-      paddingHorizontal: 22,
-      paddingVertical: 14,
-      borderRadius: 14,
-      ...CARD_SHADOW,
-    },
-    guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: colors.background },
+    promptChipText: { fontSize: 13, fontWeight: '700', color: colors.white, lineHeight: 18 },
+    guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: '#0A0A0A' },
 
     modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
     modalSheet: {
@@ -575,7 +543,6 @@ const makeStyles = (colors, isDark) => {
       borderTopRightRadius: 28,
       paddingHorizontal: 20,
       paddingTop: 10,
-      paddingBottom: 36,
       maxHeight: '75%',
       borderWidth: 1,
       borderBottomWidth: 0,
@@ -597,7 +564,7 @@ const makeStyles = (colors, isDark) => {
       marginBottom: 4,
     },
     modalTitle: { fontSize: 22, fontWeight: '800', color: colors.white, letterSpacing: -0.4, marginBottom: 16 },
-    newChatHero: { borderRadius: 16, overflow: 'hidden', marginBottom: 16, ...CARD_SHADOW },
+    newChatHero: { borderRadius: 16, overflow: 'hidden', marginBottom: 16 },
     newChatHeroGrad: {
       flexDirection: 'row',
       alignItems: 'center',

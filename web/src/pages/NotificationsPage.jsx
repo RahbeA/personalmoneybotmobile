@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Typography, Table, Button, Space, Input, Card, Tag, Modal, Form, Select,
-  Switch, App, Tooltip, Alert, Descriptions,
+  Switch, App, Tooltip, Alert, Descriptions, Tabs, DatePicker,
 } from 'antd';
 import {
   SearchOutlined, SendOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons';
 import { api } from '../api/client';
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery';
+import NotificationAutomationsPanel from '../components/NotificationAutomationsPanel';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -21,6 +23,7 @@ const AUDIENCE_META = {
 
 const STATUS_COLORS = {
   draft: 'default',
+  scheduled: 'purple',
   sending: 'processing',
   sent: 'success',
   failed: 'error',
@@ -81,6 +84,7 @@ export default function NotificationsPage() {
         recipients: campaign.recipients,
         include_staff: campaign.include_staff,
         send_push: campaign.send_push,
+        scheduled_at: campaign.scheduled_at ? dayjs(campaign.scheduled_at) : null,
       });
     } else {
       form.setFieldsValue({
@@ -88,6 +92,7 @@ export default function NotificationsPage() {
         include_staff: false,
         send_push: true,
         recipients: [],
+        scheduled_at: null,
       });
     }
     setComposerOpen(true);
@@ -101,6 +106,7 @@ export default function NotificationsPage() {
       recipients: values.audience === 'selected' ? values.recipients : [],
       include_staff: !!values.include_staff,
       send_push: !!values.send_push,
+      scheduled_at: values.scheduled_at ? values.scheduled_at.toISOString() : null,
     };
     if (editing) {
       return api.patch(`/notifications/${editing.id}/`, payload);
@@ -110,6 +116,7 @@ export default function NotificationsPage() {
 
   async function handleSaveDraft() {
     const values = await form.validateFields();
+    values.scheduled_at = null;
     setSaving(true);
     try {
       await saveCampaign(values);
@@ -123,8 +130,28 @@ export default function NotificationsPage() {
     }
   }
 
+  async function handleSchedule() {
+    const values = await form.validateFields();
+    if (!values.scheduled_at) {
+      message.error('Pick a date and time to schedule.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveCampaign(values);
+      message.success('Campaign scheduled');
+      setComposerOpen(false);
+      refresh();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSend() {
     const values = await form.validateFields();
+    values.scheduled_at = null;
     setSaving(true);
     let campaign;
     try {
@@ -287,13 +314,13 @@ export default function NotificationsPage() {
         : <Text type="secondary">—</Text>),
     },
     {
-      title: 'Created', dataIndex: 'created_at', width: 150,
-      render: (v) => new Date(v).toLocaleString(),
+      title: 'Scheduled', dataIndex: 'scheduled_at', width: 150,
+      render: (v) => (v ? new Date(v).toLocaleString() : <Text type="secondary">—</Text>),
     },
     {
       title: 'Actions', width: 190, fixed: 'right',
       render: (_, r) => {
-        const editable = r.status === 'draft' || r.status === 'failed';
+        const editable = r.status === 'draft' || r.status === 'failed' || r.status === 'scheduled';
         return (
           <Space>
             {editable && (
@@ -305,7 +332,7 @@ export default function NotificationsPage() {
                   loading={sendingId === r.id}
                   onClick={() => sendExisting(r)}
                 >
-                  Send
+                  {r.status === 'scheduled' ? 'Send now' : 'Send'}
                 </Button>
                 <Button size="small" icon={<EditOutlined />} onClick={() => openComposer(r)} />
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => deleteDraft(r)} />
@@ -320,8 +347,16 @@ export default function NotificationsPage() {
 
   return (
     <Card className="mb-brand-card">
+      <Tabs
+        defaultActiveKey="campaigns"
+        items={[
+          {
+            key: 'campaigns',
+            label: 'Campaigns',
+            children: (
+              <>
       <div className="mb-page-header">
-        <Title level={4} className="mb-page-title">Notifications</Title>
+        <Title level={4} className="mb-page-title">Campaigns</Title>
         <Space wrap>
           <Input
             placeholder="Search campaigns"
@@ -369,6 +404,16 @@ export default function NotificationsPage() {
           ),
         }}
       />
+              </>
+            ),
+          },
+          {
+            key: 'automations',
+            label: 'Automations',
+            children: <NotificationAutomationsPanel />,
+          },
+        ]}
+      />
 
       <Modal
         open={composerOpen}
@@ -379,8 +424,9 @@ export default function NotificationsPage() {
         footer={[
           <Button key="cancel" onClick={() => setComposerOpen(false)}>Cancel</Button>,
           <Button key="draft" onClick={handleSaveDraft} loading={saving}>Save draft</Button>,
+          <Button key="schedule" onClick={handleSchedule} loading={saving}>Schedule</Button>,
           <Button key="send" type="primary" icon={<SendOutlined />} onClick={handleSend} loading={saving}>
-            Send
+            Send now
           </Button>,
         ]}
       >
@@ -437,7 +483,7 @@ export default function NotificationsPage() {
               />
             </Form.Item>
           )}
-          <Space size="large">
+          <Space size="large" wrap>
             <Form.Item name="send_push" label="OS push" valuePropName="checked" style={{ marginBottom: 0 }}>
               <Switch />
             </Form.Item>
@@ -445,6 +491,13 @@ export default function NotificationsPage() {
               <Switch />
             </Form.Item>
           </Space>
+          <Form.Item
+            name="scheduled_at"
+            label="Schedule for later (optional)"
+            tooltip="Leave empty to send manually. Scheduled campaigns need the server cron job."
+          >
+            <DatePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
         </Form>
       </Modal>
     </Card>

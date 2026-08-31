@@ -24,7 +24,7 @@ export default function PuckButton({
   width,
   height,
   borderRadius,
-  lip = 7,
+  lip = 5,
   disabled = false,
   onPress,
   children,
@@ -35,6 +35,7 @@ export default function PuckButton({
   const [pressed, setPressed] = useState(false);
   const isPressed = disabled ? false : pressed;
   const stretch = width == null;
+  const autoSize = height == null;
   const radius = borderRadius ?? (width != null && height != null
     ? Math.min(width, height) / 2
     : 18);
@@ -47,7 +48,7 @@ export default function PuckButton({
     <View
       style={[
         stretch ? styles.stretchShell : { width },
-        { height: (height || 0) + lip },
+        autoSize ? { paddingBottom: lip } : { height: height + lip },
         !onPress && style,
       ]}
     >
@@ -55,7 +56,8 @@ export default function PuckButton({
         pointerEvents="none"
         style={[
           styles.lip,
-          { height, borderRadius: radius, backgroundColor: lipColor },
+          { borderRadius: radius, backgroundColor: lipColor },
+          autoSize ? styles.lipFill : { height },
         ]}
       />
       <View
@@ -63,9 +65,9 @@ export default function PuckButton({
           styles.face,
           stretch ? styles.stretchFace : { width },
           {
-            height,
             borderRadius: radius,
             transform: [{ translateY: isPressed ? lip : 0 }],
+            ...(!autoSize ? { height } : null),
           },
         ]}
       >
@@ -74,7 +76,11 @@ export default function PuckButton({
           locations={[0, 0.42, 1]}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
-          style={[styles.grad, { borderRadius: radius }, contentStyle]}
+          style={[
+            autoSize ? styles.gradAuto : styles.grad,
+            { borderRadius: radius },
+            contentStyle,
+          ]}
         >
           {children}
         </LinearGradient>
@@ -109,6 +115,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
+  lipFill: {
+    top: 0,
+  },
   face: {
     overflow: 'hidden',
   },
@@ -116,5 +125,9 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  gradAuto: {
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
   },
 });

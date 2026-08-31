@@ -11,6 +11,7 @@ import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { useTheme } from '../context/ThemeContext';
 import { useUserProgress, getModuleIonIcon } from '../context/UserProgressContext';
 import { BrandAvatar } from '../components/brand';
+import PuckButton from '../components/PuckButton';
 import { CELEBRATIONS } from '../constants/brandCopy';
 
 function confirmExit(onLeave) {
@@ -125,6 +126,8 @@ export default function LessonIntroScreen({ navigation, route }) {
                 { icon: 'checkmark-circle-outline', text: 'True / False questions' },
                 { icon: 'radio-button-on-outline', text: 'Multiple choice questions' },
                 { icon: 'list-outline', text: 'Select all that apply' },
+                { icon: 'git-compare-outline', text: 'Match the following' },
+                { icon: 'create-outline', text: 'Fill in the blanks' },
               ].map((item) => (
                 <View key={item.text} style={styles.typeRow}>
                   <Ionicons name={item.icon} size={18} color={colors.primary} />
@@ -135,20 +138,17 @@ export default function LessonIntroScreen({ navigation, route }) {
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity
-              style={styles.startBtn}
-              activeOpacity={0.85}
+            <PuckButton
+              color={colors.primary}
+              height={56}
+              borderRadius={18}
+              lip={5}
               onPress={startLesson}
+              contentStyle={styles.startInner}
             >
-              <LinearGradient
-                colors={[colors.primary, colors.primaryDark]}
-                style={styles.startGrad}
-                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              >
-                <Text style={styles.startText}>Start Lesson</Text>
-                <Ionicons name="arrow-forward" size={20} color={colors.background} />
-              </LinearGradient>
-            </TouchableOpacity>
+              <Text style={styles.startText}>Start Lesson</Text>
+              <Ionicons name="arrow-forward" size={20} color={colors.background} />
+            </PuckButton>
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -204,10 +204,8 @@ const makeStyles = (colors) => StyleSheet.create({
   typeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
   typeText: { fontSize: 15, color: colors.white },
   footer: { paddingBottom: 16, paddingTop: 8 },
-  startBtn: { borderRadius: 18, overflow: 'hidden', minHeight: 52 },
-  startGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 10, paddingVertical: 18, paddingHorizontal: 32, borderRadius: 18,
+  startInner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
   },
   startText: { fontSize: 18, fontWeight: '800', color: colors.background },
 });

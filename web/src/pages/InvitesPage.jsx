@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Typography, Switch, InputNumber, Button, Table, Tag, Space, App, Alert,
+  Typography, InputNumber, Button, Table, Tag, Space, App, Alert,
   Card, Statistic, Row, Col, Select, Input, Modal, List,
 } from 'antd';
 import {
@@ -157,7 +157,7 @@ export default function InvitesPage() {
         <div>
           <Title level={4} className="mb-page-title">Invites</Title>
           <Text style={{ color: brand.textSecondary }}>
-            Gate account creation for the first ~1000 users. Guest explore stays open.
+            Referral codes users share after they sign up. Account creation is open — no join code required.
           </Text>
         </div>
         <Button icon={<ReloadOutlined />} onClick={() => { loadConfig(); loadList(); }}>
@@ -190,22 +190,6 @@ export default function InvitesPage() {
 
       <Card style={{ marginBottom: 20 }} loading={loading}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-            <div>
-              <Text strong>Invite-only mode</Text>
-              <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                When on, new accounts (register / Google / Apple / guest upgrade) need a valid invite.
-                Login and guest browse are never gated.
-              </Paragraph>
-            </div>
-            <Switch
-              checked={!!config?.invite_only_enabled}
-              loading={saving}
-              onChange={(checked) => saveConfig({ invite_only_enabled: checked })}
-              checkedChildren="ON"
-              unCheckedChildren="OFF"
-            />
-          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Text>Invites per user</Text>
             <InputNumber

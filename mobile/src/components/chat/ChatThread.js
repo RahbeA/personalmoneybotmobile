@@ -1,14 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
-  View, FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, useWindowDimensions,
+  View, FlatList, Keyboard, Platform, StyleSheet, useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import ChatComposer from './ChatComposer';
 import { useTheme } from '../../context/ThemeContext';
 
-// `messages` is chronological (oldest first). The list is inverted so the
-// newest message sits at the bottom and the view auto-sticks to the latest.
 export default function ChatThread({
   messages = [],
   sending = false,
@@ -22,16 +21,15 @@ export default function ChatThread({
   character = null,
   composerStyle = null,
   composerLeading = null,
-  composerMenu = null,
+  composerAccessory = null,
+  onKeyboardVisibleChange,
 }) {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const listRef = useRef(null);
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  // iPad (and iPhone apps running in iPad compatibility mode) often fail
-  // KeyboardAvoidingView padding — especially with undocked keyboards. We
-  // detect a tablet-sized viewport and pad the composer from the keyboard
-  // frame height instead.
   const isTabletLayout = Platform.OS === 'ios' && (Platform.isPad || width >= 768);
 
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -43,16 +41,18 @@ export default function ChatThread({
     const showSub = Keyboard.addListener(showEvent, (e) => {
       setKeyboardVisible(true);
       setKeyboardHeight(e?.endCoordinates?.height || 0);
+      onKeyboardVisibleChange?.(true);
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
       setKeyboardVisible(false);
       setKeyboardHeight(0);
+      onKeyboardVisibleChange?.(false);
     });
     return () => {
       showSub.remove();
       hideSub.remove();
     };
-  }, []);
+  }, [onKeyboardVisibleChange]);
 
   const data = useMemo(() => {
     const newestFirst = [...messages].reverse();
@@ -62,52 +62,64 @@ export default function ChatThread({
     return newestFirst;
   }, [messages, sending]);
 
+  const isEmpty = messages.length === 0 && !sending;
+
+  useEffect(() => {
+    if (isEmpty || !listRef.current) return;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+  }, [messages.length, sending, isEmpty]);
+
+  const bottomPad = useMemo(() => {
+    if (keyboardVisible) {
+      const lift = Math.max(0, keyboardHeight - insets.bottom);
+      return isTabletLayout ? lift : lift;
+    }
+    return bottomInset;
+  }, [keyboardVisible, keyboardHeight, insets.bottom, bottomInset, isTabletLayout]);
+
   function renderItem({ item }) {
     if (item.type === 'typing') return <TypingIndicator character={character} />;
     return <MessageBubble role={item.role} content={item.content} character={character} />;
   }
 
-  const isEmpty = data.length === 0;
-
   const listPadding = useMemo(
-    () => [styles.listContent, { paddingBottom: 8 }],
+    () => [styles.listContent, { paddingTop: 12, paddingBottom: 8 }],
     [styles.listContent],
   );
 
-  // Phone: KAV lifts the composer; drop the tab-bar inset while typing.
-  // Tablet: skip KAV and pad by the reported keyboard height so the input
-  // stays above the docked keyboard on iPad Air (Guideline 4).
-  const composerBottomPad = keyboardVisible
-    ? (isTabletLayout ? Math.max(keyboardHeight, 0) : 0)
-    : bottomInset;
+  const keyboardDismiss = Platform.OS === 'ios' ? 'interactive' : 'on-drag';
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' && !isTabletLayout ? 'padding' : undefined}
-      keyboardVerticalOffset={isTabletLayout ? 0 : keyboardVerticalOffset}
-    >
+    <View style={styles.flex}>
       <View style={styles.flex}>
         {isEmpty && emptyComponent ? (
           <View style={styles.emptyWrap}>{emptyComponent}</View>
         ) : (
           <FlatList
+            ref={listRef}
             data={data}
             inverted
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
             contentContainerStyle={listPadding}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            keyboardDismissMode={keyboardDismiss}
             showsVerticalScrollIndicator={false}
+            maintainVisibleContentPosition={{
+              minIndexForVisible: 0,
+              autoscrollToTopThreshold: 24,
+            }}
           />
         )}
         {footer}
       </View>
+
       {onSend && (
-        <View style={{ paddingBottom: composerBottomPad }}>
+        <View style={[styles.composerDock, { paddingBottom: bottomPad }]}>
+          {composerAccessory}
           <View style={composerStyle}>
-            {composerMenu}
             <ChatComposer
               onSend={onSend}
               disabled={composerDisabled}
@@ -118,12 +130,15 @@ export default function ChatThread({
           </View>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const makeStyles = (colors) => StyleSheet.create({
   flex: { flex: 1 },
-  listContent: { paddingHorizontal: 14, paddingVertical: 12 },
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  listContent: { paddingHorizontal: 16 },
+  emptyWrap: { flex: 1, minHeight: 0 },
+  composerDock: {
+    backgroundColor: 'transparent',
+  },
 });

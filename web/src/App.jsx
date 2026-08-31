@@ -14,6 +14,8 @@ import AIInspectorPage from './pages/AIInspectorPage';
 import BadgesPage from './pages/BadgesPage';
 import DailyRewardsPage from './pages/DailyRewardsPage';
 import InvitesPage from './pages/InvitesPage';
+import TipsPage from './pages/TipsPage';
+import FeedPage from './pages/FeedPage';
 
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
 
@@ -41,8 +43,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="courses" element={<CoursesPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
-          <Route
-            path="characters"
+          <Route path="characters"
             element={(
               <Suspense fallback={<PageLoader />}>
                 <CharactersPage />
@@ -50,6 +51,8 @@ export default function App() {
             )}
           />
           <Route path="badges" element={<BadgesPage />} />
+          <Route path="tips" element={<TipsPage />} />
+          <Route path="feed" element={<FeedPage />} />
           <Route path="daily-rewards" element={<DailyRewardsPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="invites" element={<InvitesPage />} />

@@ -14,6 +14,8 @@ import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { BrandLoader, BrandFeedback, BrandEmptyState } from '../components/brand';
+import AnimatedProgressBar from '../components/AnimatedProgressBar';
+import PuckButton from '../components/PuckButton';
 import { LOADER_MESSAGES } from '../constants/brandCopy';
 
 const MAX_LIVES = 3;
@@ -70,24 +72,24 @@ function normalizeFillSelection(selected, slotCount) {
   return Array(slotCount).fill(null);
 }
 
-function ProgressBar({ styles, current, total }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const progress = total > 0 ? (current / total) : 0;
+function puckTone(colors, tone) {
+  if (tone === 'correct' || tone === 'selected') return colors.primary;
+  if (tone === 'wrong') return colors.error;
+  return colors.surfaceElevated;
+}
 
-  useEffect(() => {
-    Animated.timing(anim, { toValue: progress, duration: 300, useNativeDriver: false }).start();
-  }, [progress]);
+function puckInk(colors, tone) {
+  if (tone === 'correct' || tone === 'selected') return colors.background;
+  return colors.white;
+}
 
-  return (
-    <View style={styles.progressTrack}>
-      <Animated.View
-        style={[
-          styles.progressFill,
-          { width: anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
-        ]}
-      />
-    </View>
-  );
+function answerTone({ revealed, isCorrect, isWrong, isSelected }) {
+  if (revealed) {
+    if (isCorrect) return 'correct';
+    if (isWrong) return 'wrong';
+    return 'idle';
+  }
+  return isSelected ? 'selected' : 'idle';
 }
 
 function Hearts({ styles, colors, lives }) {
@@ -121,28 +123,32 @@ function TrueFalseQuestion({ styles, colors, answers, selected, onSelect, reveal
     <View style={styles.tfRow}>
       {answers.map((ans) => {
         const isSelected = selected === ans.id;
-        let cardStyle = styles.tfCard;
-        if (revealed) {
-          if (ans.is_correct) cardStyle = styles.tfCardCorrect;
-          else if (isSelected && !ans.is_correct) cardStyle = styles.tfCardWrong;
-        } else if (isSelected) {
-          cardStyle = styles.tfCardSelected;
-        }
+        const tone = answerTone({
+          revealed,
+          isCorrect: ans.is_correct,
+          isWrong: isSelected && !ans.is_correct,
+          isSelected,
+        });
+        const ink = puckInk(colors, tone);
         return (
-          <TouchableOpacity
+          <PuckButton
             key={ans.id}
-            style={[styles.tfCard, cardStyle]}
-            onPress={() => !revealed && onSelect(ans.id)}
-            activeOpacity={0.8}
+            color={puckTone(colors, tone)}
+            height={92}
+            borderRadius={18}
+            lip={5}
+            onPress={revealed ? undefined : () => onSelect(ans.id)}
+            style={styles.tfPuck}
+            contentStyle={styles.tfInner}
           >
-            <Text style={styles.tfText}>{ans.text}</Text>
+            <Text style={[styles.tfText, { color: ink }]}>{ans.text}</Text>
             {revealed && ans.is_correct && (
-              <Ionicons name="checkmark-circle" size={22} color={colors.primary} style={{ marginTop: 6 }} />
+              <Ionicons name="checkmark-circle" size={22} color={ink} style={{ marginTop: 6 }} />
             )}
             {revealed && isSelected && !ans.is_correct && (
-              <Ionicons name="close-circle" size={22} color={colors.error} style={{ marginTop: 6 }} />
+              <Ionicons name="close-circle" size={22} color={ink} style={{ marginTop: 6 }} />
             )}
-          </TouchableOpacity>
+          </PuckButton>
         );
       })}
     </View>
@@ -154,34 +160,35 @@ function MCQQuestion({ styles, colors, answers, selected, onSelect, revealed }) 
     <View style={styles.mcqList}>
       {answers.map((ans, idx) => {
         const isSelected = selected === ans.id;
-        let cardStyle = null;
-        let textStyle = null;
-        let icon = null;
-        if (revealed) {
-          if (ans.is_correct) { cardStyle = styles.ansCorrect; textStyle = styles.ansTextCorrect; icon = 'checkmark-circle'; }
-          else if (isSelected) { cardStyle = styles.ansWrong; textStyle = styles.ansTextWrong; icon = 'close-circle'; }
-        } else if (isSelected) {
-          cardStyle = styles.ansSelected;
-        }
+        const tone = answerTone({
+          revealed,
+          isCorrect: ans.is_correct,
+          isWrong: isSelected && !ans.is_correct,
+          isSelected,
+        });
+        const ink = puckInk(colors, tone);
+        const icon = revealed && ans.is_correct
+          ? 'checkmark-circle'
+          : revealed && isSelected
+            ? 'close-circle'
+            : null;
         return (
-          <TouchableOpacity
+          <PuckButton
             key={ans.id}
-            style={[styles.ansCard, cardStyle]}
-            onPress={() => !revealed && onSelect(ans.id)}
-            activeOpacity={0.8}
+            color={puckTone(colors, tone)}
+            borderRadius={16}
+            lip={5}
+            onPress={revealed ? undefined : () => onSelect(ans.id)}
+            contentStyle={styles.ansInner}
           >
-            <View style={[styles.ansIndex, isSelected && !revealed && styles.ansIndexSelected]}>
-              <Text style={styles.ansIndexText}>{['A', 'B', 'C', 'D'][idx]}</Text>
+            <View style={[styles.ansIndex, (tone === 'selected' || tone === 'correct') && styles.ansIndexOn]}>
+              <Text style={[styles.ansIndexText, { color: tone === 'idle' ? colors.white : colors.background }]}>
+                {['A', 'B', 'C', 'D'][idx]}
+              </Text>
             </View>
-            <Text style={[styles.ansText, textStyle]} numberOfLines={3}>{ans.text}</Text>
-            {revealed && icon && (
-              <Ionicons
-                name={icon}
-                size={20}
-                color={ans.is_correct ? colors.primary : colors.error}
-              />
-            )}
-          </TouchableOpacity>
+            <Text style={[styles.ansText, { color: ink }]} numberOfLines={3}>{ans.text}</Text>
+            {icon ? <Ionicons name={icon} size={20} color={ink} /> : null}
+          </PuckButton>
         );
       })}
     </View>
@@ -194,30 +201,35 @@ function SelectAllQuestion({ styles, colors, answers, selected, onToggle, reveal
     <View style={styles.mcqList}>
       {answers.map((ans) => {
         const isSelected = selectedIds.includes(ans.id);
-        let cardStyle = null;
-        let textStyle = null;
-        let icon = null;
-        if (revealed) {
-          if (ans.is_correct) { cardStyle = styles.ansCorrect; textStyle = styles.ansTextCorrect; icon = 'checkmark-circle'; }
-          else if (isSelected) { cardStyle = styles.ansWrong; textStyle = styles.ansTextWrong; icon = 'close-circle'; }
-        } else if (isSelected) {
-          cardStyle = styles.ansSelected;
-        }
+        const tone = answerTone({
+          revealed,
+          isCorrect: ans.is_correct,
+          isWrong: isSelected && !ans.is_correct,
+          isSelected,
+        });
+        const ink = puckInk(colors, tone);
+        const icon = revealed && ans.is_correct
+          ? 'checkmark-circle'
+          : revealed && isSelected
+            ? 'close-circle'
+            : null;
         return (
-          <TouchableOpacity
+          <PuckButton
             key={ans.id}
-            style={[styles.ansCard, cardStyle]}
-            onPress={() => !revealed && onToggle(ans.id)}
-            activeOpacity={0.8}
+            color={puckTone(colors, tone)}
+            borderRadius={16}
+            lip={5}
+            onPress={revealed ? undefined : () => onToggle(ans.id)}
+            contentStyle={styles.ansInner}
           >
-            <View style={[styles.checkbox, isSelected && !revealed && styles.checkboxSelected]}>
-              {isSelected && <Ionicons name="checkmark" size={14} color={revealed ? colors.textMuted : colors.background} />}
+            <View style={[styles.checkbox, isSelected && styles.checkboxOn]}>
+              {isSelected ? (
+                <Ionicons name="checkmark" size={14} color={tone === 'idle' ? colors.white : colors.background} />
+              ) : null}
             </View>
-            <Text style={[styles.ansText, textStyle]} numberOfLines={3}>{ans.text}</Text>
-            {revealed && icon && (
-              <Ionicons name={icon} size={20} color={ans.is_correct ? colors.primary : colors.error} />
-            )}
-          </TouchableOpacity>
+            <Text style={[styles.ansText, { color: ink }]} numberOfLines={3}>{ans.text}</Text>
+            {icon ? <Ionicons name={icon} size={20} color={ink} /> : null}
+          </PuckButton>
         );
       })}
     </View>
@@ -231,15 +243,17 @@ function WordBank({ styles, colors, words, onPick, revealed }) {
       <Text style={styles.wordBankLabel}>Word bank</Text>
       <View style={styles.wordBank}>
         {words.map((word, idx) => (
-          <TouchableOpacity
+          <PuckButton
             key={`${word}-${idx}`}
-            style={styles.wordChip}
-            onPress={() => !revealed && onPick(word)}
-            disabled={revealed}
-            activeOpacity={0.75}
+            color={colors.surfaceElevated}
+            borderRadius={20}
+            lip={3}
+            onPress={revealed ? undefined : () => onPick(word)}
+            style={styles.wordChipPuck}
+            contentStyle={styles.wordChipInner}
           >
             <Text style={styles.wordChipText}>{word}</Text>
-          </TouchableOpacity>
+          </PuckButton>
         ))}
       </View>
     </View>
@@ -288,31 +302,38 @@ function MatchQuestion({ styles, colors, answers, selected, onChange, revealed }
         return (
           <View key={`${pair.left}-${index}`} style={styles.matchRow}>
             <Text style={styles.matchLeft} numberOfLines={2}>{pair.left}</Text>
-            <TouchableOpacity
-              style={[
-                styles.matchSlot,
-                assigned && !revealed && styles.matchSlotFilled,
-                isActive && styles.matchSlotActive,
-                isCorrect && styles.matchSlotCorrect,
-                isWrong && styles.matchSlotWrong,
-              ]}
-              onPress={() => {
-                if (revealed) return;
+            <PuckButton
+              color={puckTone(colors, answerTone({
+                revealed,
+                isCorrect,
+                isWrong,
+                isSelected: !!(assigned || isActive),
+              }))}
+              height={44}
+              borderRadius={12}
+              lip={3}
+              onPress={revealed ? undefined : () => {
                 if (assigned) clearSlot(index);
                 else setActiveSlot(index);
               }}
-              activeOpacity={0.8}
+              style={styles.matchSlotPuck}
+              contentStyle={styles.matchSlotInner}
             >
-              <Text style={[styles.matchSlotText, !assigned && styles.matchSlotPlaceholder]}>
+              <Text style={[
+                styles.matchSlotText,
+                { color: assigned || revealed || isActive ? puckInk(colors, answerTone({
+                  revealed, isCorrect, isWrong, isSelected: !!(assigned || isActive),
+                })) : colors.textMuted },
+              ]}>
                 {assigned || 'Tap to match'}
               </Text>
               {revealed && isCorrect && (
-                <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+                <Ionicons name="checkmark-circle" size={18} color={puckInk(colors, 'correct')} />
               )}
               {revealed && isWrong && (
-                <Ionicons name="close-circle" size={18} color={colors.error} />
+                <Ionicons name="close-circle" size={18} color={puckInk(colors, 'wrong')} />
               )}
-            </TouchableOpacity>
+            </PuckButton>
           </View>
         );
       })}
@@ -366,30 +387,41 @@ function FillBlankQuestion({ styles, colors, question, selected, onChange, revea
           <React.Fragment key={`part-${index}`}>
             {part ? <Text style={styles.fillText}>{part}</Text> : null}
             {index < parts.length - 1 && index < slotCount ? (
-              <TouchableOpacity
-                onPress={() => {
-                  if (revealed) return;
+              <PuckButton
+                color={puckTone(colors, answerTone({
+                  revealed,
+                  isCorrect: !!filled[index] && filled[index] === correctWords[index],
+                  isWrong: !!filled[index] && filled[index] !== correctWords[index],
+                  isSelected: !!(filled[index] || (activeBlank === index && !filled[index])),
+                }))}
+                height={36}
+                borderRadius={10}
+                lip={3}
+                onPress={revealed ? undefined : () => {
                   if (filled[index]) clearBlank(index);
                   else setActiveBlank(index);
                 }}
-                activeOpacity={0.8}
-                style={[
-                  styles.blankPill,
-                  filled[index] && !revealed && styles.blankPillFilled,
-                  !revealed && activeBlank === index && !filled[index] && styles.blankPillActive,
-                  revealed && filled[index] && filled[index] === correctWords[index] && styles.blankPillCorrect,
-                  revealed && filled[index] && filled[index] !== correctWords[index] && styles.blankPillWrong,
-                ]}
+                style={styles.blankPuck}
+                contentStyle={styles.blankInner}
               >
                 <Text
                   style={[
                     styles.blankPillText,
-                    !filled[index] && styles.blankPillPlaceholder,
+                    {
+                      color: filled[index]
+                        ? puckInk(colors, answerTone({
+                          revealed,
+                          isCorrect: filled[index] === correctWords[index],
+                          isWrong: filled[index] !== correctWords[index],
+                          isSelected: true,
+                        }))
+                        : colors.textMuted,
+                    },
                   ]}
                 >
                   {filled[index] || '___'}
                 </Text>
-              </TouchableOpacity>
+              </PuckButton>
             ) : null}
           </React.Fragment>
         ))}
@@ -578,9 +610,16 @@ export default function QuestionFlowScreen({ navigation, route }) {
             />
           </View>
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.ctaBtn} onPress={exitToCourses} activeOpacity={0.85}>
+            <PuckButton
+              color={colors.primary}
+              height={56}
+              borderRadius={16}
+              lip={5}
+              onPress={exitToCourses}
+              contentStyle={styles.ctaInner}
+            >
               <Text style={styles.ctaText}>Back to Lessons</Text>
-            </TouchableOpacity>
+            </PuckButton>
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -604,7 +643,13 @@ export default function QuestionFlowScreen({ navigation, route }) {
           >
             <Ionicons name="close" size={24} color={colors.textSecondary} />
           </TouchableOpacity>
-          <ProgressBar styles={styles} current={currentIdx} total={questions.length} />
+          <AnimatedProgressBar
+            progress={questions.length > 0 ? currentIdx / questions.length : 0}
+            height={8}
+            trackColor={colors.border}
+            fillColor={colors.primary}
+            style={styles.progressTrack}
+          />
           <Hearts styles={styles} colors={colors} lives={lives} />
         </View>
 
@@ -709,22 +754,32 @@ export default function QuestionFlowScreen({ navigation, route }) {
           {/* Footer CTA */}
           <View style={styles.footer}>
             {!revealed ? (
-              <TouchableOpacity
-                style={[styles.ctaBtn, !hasSelection && styles.ctaBtnDisabled]}
-                onPress={checkAnswer}
+              <PuckButton
+                color={hasSelection ? colors.primary : colors.surfaceElevated}
+                height={56}
+                borderRadius={16}
+                lip={5}
                 disabled={!hasSelection}
-                activeOpacity={0.85}
+                onPress={hasSelection ? checkAnswer : undefined}
+                contentStyle={styles.ctaInner}
               >
                 <Text style={[styles.ctaText, !hasSelection && styles.ctaTextDisabled]}>
                   {isSelectAll || isMatch || isFillBlank ? 'Check Answers' : 'Check Answer'}
                 </Text>
-              </TouchableOpacity>
+              </PuckButton>
             ) : (
-              <TouchableOpacity style={styles.ctaBtn} onPress={nextQuestion} activeOpacity={0.85}>
+              <PuckButton
+                color={colors.primary}
+                height={56}
+                borderRadius={16}
+                lip={5}
+                onPress={nextQuestion}
+                contentStyle={styles.ctaInner}
+              >
                 <Text style={styles.ctaText}>
                   {currentIdx < questions.length - 1 ? 'Continue' : 'Finish Lesson'}
                 </Text>
-              </TouchableOpacity>
+              </PuckButton>
             )}
           </View>
         </Animated.View>
@@ -745,8 +800,7 @@ const makeStyles = (colors) => StyleSheet.create({
   loaderWrap: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, gap: 12 },
   exitBtn: { padding: 4 },
-  progressTrack: { flex: 1, height: 8, backgroundColor: colors.border, borderRadius: 4, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 4 },
+  progressTrack: { flex: 1 },
   hearts: { flexDirection: 'row', gap: 2 },
   content: { flex: 1, borderRadius: 0 },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -760,38 +814,26 @@ const makeStyles = (colors) => StyleSheet.create({
   typeBadgeText: { fontSize: 13, fontWeight: '600', color: colors.primary },
   prompt: { fontSize: 22, fontWeight: '700', color: colors.white, lineHeight: 32, marginBottom: 28 },
   tfRow: { flexDirection: 'row', gap: 12 },
-  tfCard: {
-    flex: 1, paddingVertical: 20, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: colors.surfaceElevated, borderRadius: 18,
-    borderWidth: 2, borderColor: colors.border,
-  },
-  tfCardSelected: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.1)' },
-  tfCardCorrect: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.15)' },
-  tfCardWrong: { borderColor: colors.error, backgroundColor: 'rgba(255,77,77,0.1)' },
+  tfPuck: { flex: 1 },
+  tfInner: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   tfText: { fontSize: 17, fontWeight: '700', color: colors.white },
   mcqList: { gap: 12 },
-  ansCard: {
+  ansInner: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: colors.surfaceElevated, borderRadius: 16,
-    padding: 16, borderWidth: 2, borderColor: colors.border,
+    paddingVertical: 14, paddingHorizontal: 16,
   },
-  ansSelected: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.08)' },
-  ansCorrect: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  ansWrong: { borderColor: colors.error, backgroundColor: 'rgba(255,77,77,0.08)' },
   ansIndex: {
-    width: 32, height: 32, borderRadius: 10, backgroundColor: colors.border,
+    width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center', justifyContent: 'center',
   },
-  ansIndexSelected: { backgroundColor: colors.primary },
+  ansIndexOn: { backgroundColor: 'rgba(0,0,0,0.18)' },
   ansIndexText: { fontSize: 13, fontWeight: '700', color: colors.white },
   ansText: { flex: 1, fontSize: 15, color: colors.white, lineHeight: 20 },
-  ansTextCorrect: { color: colors.primary },
-  ansTextWrong: { color: colors.error },
   checkbox: {
-    width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: colors.border,
+    width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: 'rgba(255,255,255,0.28)',
     alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent',
   },
-  checkboxSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkboxOn: { backgroundColor: 'rgba(0,0,0,0.18)', borderColor: 'rgba(0,0,0,0.18)' },
   explanation: {
     flexDirection: 'row', gap: 10, padding: 16, borderRadius: 16, marginTop: 20,
     alignItems: 'flex-start', borderWidth: 1,
@@ -801,11 +843,7 @@ const makeStyles = (colors) => StyleSheet.create({
   explanationText: { fontSize: 14, fontWeight: '700', flex: 1, lineHeight: 20 },
   explanationBody: { fontWeight: '400', color: colors.offWhite },
   footer: { paddingHorizontal: 20, paddingBottom: 16 },
-  ctaBtn: {
-    backgroundColor: colors.primary, borderRadius: 16,
-    paddingVertical: 18, alignItems: 'center',
-  },
-  ctaBtnDisabled: { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border },
+  ctaInner: { alignItems: 'center', justifyContent: 'center' },
   ctaText: { fontSize: 17, fontWeight: '800', color: colors.background },
   ctaTextDisabled: { color: colors.textMuted },
   fillHint: { fontSize: 15, color: colors.textSecondary, marginBottom: 16, lineHeight: 22 },
@@ -816,39 +854,19 @@ const makeStyles = (colors) => StyleSheet.create({
     padding: 14, borderWidth: 1, borderColor: colors.border,
   },
   matchLeft: { flex: 1, fontSize: 16, fontWeight: '600', color: colors.white },
-  matchSlot: {
-    minWidth: 130, maxWidth: '52%', minHeight: 44, borderRadius: 12,
-    borderWidth: 2, borderColor: colors.border, borderStyle: 'dashed',
-    paddingHorizontal: 10, paddingVertical: 8,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-  },
-  matchSlotFilled: { borderStyle: 'solid', borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.08)' },
-  matchSlotActive: { borderColor: colors.primary, borderStyle: 'solid' },
-  matchSlotCorrect: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  matchSlotWrong: { borderColor: colors.error, backgroundColor: 'rgba(255,77,77,0.08)' },
+  matchSlotPuck: { minWidth: 130, maxWidth: '52%' },
+  matchSlotInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10 },
   matchSlotText: { fontSize: 14, fontWeight: '600', color: colors.white, textAlign: 'center', flexShrink: 1 },
-  matchSlotPlaceholder: { color: colors.textMuted, fontWeight: '500' },
   fillWrap: { gap: 20 },
   fillSentence: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
   fillText: { fontSize: 20, fontWeight: '600', color: colors.white, lineHeight: 32 },
-  blankPill: {
-    minWidth: 72, minHeight: 36, borderRadius: 10, marginHorizontal: 4, marginVertical: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderWidth: 2, borderColor: colors.border,
-    borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center',
-  },
-  blankPillFilled: { borderStyle: 'solid', borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.08)' },
-  blankPillActive: { borderColor: colors.primary, borderStyle: 'solid' },
-  blankPillCorrect: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  blankPillWrong: { borderColor: colors.error, backgroundColor: 'rgba(255,77,77,0.08)' },
+  blankPuck: { minWidth: 72, marginHorizontal: 4, marginVertical: 4 },
+  blankInner: { paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
   blankPillText: { fontSize: 16, fontWeight: '700', color: colors.white },
-  blankPillPlaceholder: { color: colors.textMuted, fontWeight: '500' },
   wordBankWrap: { marginTop: 8, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.border },
   wordBankLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 10 },
   wordBank: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  wordChip: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderWidth: 1, borderColor: colors.border,
-  },
+  wordChipPuck: { alignSelf: 'flex-start' },
+  wordChipInner: { paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   wordChipText: { fontSize: 15, fontWeight: '600', color: colors.white },
 });

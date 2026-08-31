@@ -11,6 +11,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../context/NotificationsContext';
 import { BrandLoader, BrandEmptyState } from '../../components/brand';
 import { useTabBarInset } from '../../navigation/tabBarLayout';
+import { handleNotificationNavigation } from '../../navigation/rootNavigation';
 
 const KIND_META = {
   friend_request: { icon: 'person-add', tint: '#3DDC5F' },
@@ -63,13 +64,10 @@ export default function NotificationsScreen({ navigation }) {
 
   const handlePress = (item) => {
     if (!item.is_read) markRead(item.id);
-    if (item.kind === 'friend_request') {
-      navigation.navigate('FriendRequests');
-    } else if (item.kind === 'friend_accepted' || item.kind === 'friend_nudge') {
-      navigation.navigate('MyFriends');
-    } else if (item.kind === 'invite_reward') {
-      navigation.navigate('MyInvites');
-    }
+    handleNotificationNavigation({
+      ...(item.data || {}),
+      kind: item.kind || item.data?.kind,
+    });
   };
 
   return (
@@ -107,7 +105,7 @@ export default function NotificationsScreen({ navigation }) {
             {notifications.length === 0 ? (
               <BrandEmptyState
                 title="You're all caught up"
-                body="Friend requests and updates from your crew will show up here."
+                body="Friend requests, admin campaigns, and updates from your crew will show up here."
               />
             ) : (
               notifications.map((item) => {

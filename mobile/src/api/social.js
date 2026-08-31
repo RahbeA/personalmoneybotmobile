@@ -109,4 +109,29 @@ export const socialApi = {
 
   getChallengeLeaderboard: (token, challengeId) =>
     apiRequest(`/social/challenges/${challengeId}/leaderboard/`, { token }),
+
+  registerPhoneHash: (token, phoneHash) =>
+    apiRequest('/social/contacts/register/', {
+      method: 'POST',
+      token,
+      body: { phone_hash: phoneHash },
+    }),
+
+  matchContacts: (token, hashes) =>
+    apiRequest('/social/contacts/match/', {
+      method: 'POST',
+      token,
+      body: { hashes },
+    }),
+
+  getFeed: (token) => apiRequest('/social/feed/', { token }),
+
+  getMyFeed: (token) => apiRequest('/social/feed/mine/', { token }),
+
+  createFeedPost: (token, formData) =>
+    apiRequest('/social/feed/', {
+      method: 'POST',
+      token,
+      body: formData,
+    }),
 };

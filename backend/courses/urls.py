@@ -13,4 +13,6 @@ urlpatterns = [
     path('onboarding/submit/', views.onboarding_submit, name='onboarding-submit'),
     path('goals/', views.update_goals, name='update-goals'),
     path('streak-goal/', views.update_streak_goal, name='update-streak-goal'),
+    path('personality/', views.update_personality, name='update-personality'),
+    path('money-tip/', views.todays_money_tip, name='money-tip'),
 ]

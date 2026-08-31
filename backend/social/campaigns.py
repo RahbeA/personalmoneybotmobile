@@ -65,6 +65,7 @@ def send_campaign(campaign):
             raise ValueError('This campaign is already being sent.')
         if locked.status not in (
             NotificationCampaign.STATUS_DRAFT,
+            NotificationCampaign.STATUS_SCHEDULED,
             NotificationCampaign.STATUS_FAILED,
         ):
             raise ValueError('This campaign cannot be sent from its current state.')

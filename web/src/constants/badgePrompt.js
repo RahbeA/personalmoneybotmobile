@@ -37,6 +37,7 @@ export const BADGE_METRICS = [
   { value: 'xp', label: 'Total XP' },
   { value: 'onboarding_score', label: 'Onboarding score' },
   { value: 'characters_owned', label: 'Characters owned' },
+  { value: 'friends_count', label: 'Accepted friends' },
   { value: 'questions_correct', label: 'Questions answered correctly' },
   { value: 'perfect_lessons', label: 'Perfect lessons (0 mistakes)' },
 ];

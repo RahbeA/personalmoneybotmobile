@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Animated, Easing,
+  View, Text, StyleSheet, TouchableOpacity, Animated, Easing, ScrollView,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -9,6 +9,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import BadgeIcon from '../components/BadgeIcon';
+import PuckButton from '../components/PuckButton';
+
+const EARNABLE_METRICS = new Set([
+  'lessons_completed',
+  'modules_completed',
+  'module_completed',
+  'streak_days',
+  'daily_claim_streak',
+  'daily_reward_day',
+  'bot_bucks',
+  'xp',
+  'onboarding_score',
+  'characters_owned',
+  'friends_count',
+  'questions_correct',
+  'perfect_lessons',
+]);
 
 const METRIC_LABELS = {
   lessons_completed: 'lessons completed',
@@ -21,9 +38,35 @@ const METRIC_LABELS = {
   xp: 'XP',
   onboarding_score: 'onboarding score',
   characters_owned: 'characters owned',
+  friends_count: 'friends',
   questions_correct: 'questions correct',
   perfect_lessons: 'perfect lessons',
 };
+
+function formatRequirement(badge) {
+  const label = METRIC_LABELS[badge.metric] || badge.metric?.replace(/_/g, ' ');
+  if (!badge.metric) return null;
+  return `Hit ${badge.threshold ?? 1} ${label}`;
+}
+
+function howToEarn(badge) {
+  const description = (badge?.description || '').trim();
+  const metricLine = formatRequirement(badge);
+  const unknownMetric = badge?.metric && !EARNABLE_METRICS.has(badge.metric);
+  const missingModule = badge?.metric === 'module_completed' && !badge.module_id;
+  const uneearnable = !badge?.metric || unknownMetric || missingModule;
+
+  let caveat = null;
+  if (unknownMetric) {
+    caveat = 'This catalog badge is not wired to a live metric, so it cannot be earned in the app yet.';
+  } else if (missingModule) {
+    caveat = 'This module badge has no module assigned in admin, so it cannot be earned yet.';
+  } else if (!badge?.metric) {
+    caveat = 'This badge has no earn rule in the catalog.';
+  }
+
+  return { description, metricLine, uneearnable, caveat };
+}
 
 function ConfettiBurst({ accent, active }) {
   const palette = [accent, '#F5B72B', '#56C8E8', '#A66BFF', '#FF6B35', '#FFD700'];
@@ -92,11 +135,6 @@ function ConfettiBurst({ accent, active }) {
   );
 }
 
-function formatRequirement(badge) {
-  const label = METRIC_LABELS[badge.metric] || badge.metric?.replace(/_/g, ' ');
-  return `Earn at ${badge.threshold} ${label}`;
-}
-
 export default function BadgeRevealScreen({ navigation, route }) {
   const {
     badgeKey,
@@ -105,7 +143,10 @@ export default function BadgeRevealScreen({ navigation, route }) {
     next,
   } = route.params || {};
 
-  const { getBadgeMeta, badges, xp, streakDays, lessonsCompleted, botBucks } = useUserProgress();
+  const {
+    getBadgeMeta, badges, xp, streakDays, lessonsCompleted, botBucks,
+    onboardingScore, characters, dailyReward,
+  } = useUserProgress();
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
@@ -170,6 +211,7 @@ export default function BadgeRevealScreen({ navigation, route }) {
     }
   }
 
+  const earn = howToEarn(badge);
   const progressHint = (() => {
     if (isEarned || !badge.metric) return null;
     const current = {
@@ -177,11 +219,14 @@ export default function BadgeRevealScreen({ navigation, route }) {
       streak_days: streakDays,
       bot_bucks: botBucks,
       xp,
+      onboarding_score: onboardingScore,
+      characters_owned: characters?.length,
+      daily_reward_day: dailyReward?.current_day,
     }[badge.metric];
     if (typeof current === 'number' && badge.threshold) {
       return `${Math.min(current, badge.threshold)} / ${badge.threshold}`;
     }
-    return formatRequirement(badge);
+    return earn.metricLine;
   })();
 
   const headline = mode === 'earned'
@@ -215,6 +260,12 @@ export default function BadgeRevealScreen({ navigation, route }) {
             },
           ]}
         >
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.contentInner}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
           <Text style={styles.eyebrow}>{subline}</Text>
           <Text style={styles.headline}>{headline}</Text>
 
@@ -300,14 +351,28 @@ export default function BadgeRevealScreen({ navigation, route }) {
             <Text style={[styles.badgeTitle, { color: accent }]}>{badge.label || badge.name}</Text>
           )}
 
-          {!!badge.description && (
+          {!!badge.description && isEarned && (
             <Text style={styles.description}>{badge.description}</Text>
           )}
 
-          {!isEarned && progressHint && (
-            <View style={[styles.progressChip, { borderColor: accent + '33' }]}>
-              <Ionicons name="flag-outline" size={14} color={accent} />
-              <Text style={[styles.progressText, { color: accent }]}>{progressHint}</Text>
+          {!isEarned && (
+            <View style={[styles.howCard, { borderColor: accent + '33' }]}>
+              <Text style={[styles.howEyebrow, { color: accent }]}>HOW TO EARN</Text>
+              <Text style={styles.howBody}>
+                {earn.description || earn.metricLine || 'Keep using MoneyBot to unlock this one.'}
+              </Text>
+              {!!earn.description && !!earn.metricLine && (
+                <Text style={styles.howMetric}>{earn.metricLine}</Text>
+              )}
+              {earn.uneearnable && !!earn.caveat && (
+                <Text style={styles.howCaveat}>{earn.caveat}</Text>
+              )}
+              {!!progressHint && !earn.uneearnable && (
+                <View style={[styles.progressChip, { borderColor: accent + '33', marginTop: 12 }]}>
+                  <Ionicons name="flag-outline" size={14} color={accent} />
+                  <Text style={[styles.progressText, { color: accent }]}>{progressHint}</Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -317,22 +382,19 @@ export default function BadgeRevealScreen({ navigation, route }) {
               <Text style={[styles.nameChipText, { color: accent }]}>{badge.label || badge.name}</Text>
             </View>
           )}
+          </ScrollView>
         </Animated.View>
 
         <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <TouchableOpacity style={styles.ctaBtn} onPress={handleClose} activeOpacity={0.85}>
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.ctaGrad}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.ctaText}>
-                {mode === 'earned' ? 'Nice!' : 'Close'}
-              </Text>
-              <Ionicons name="arrow-forward" size={20} color={colors.background} />
-            </LinearGradient>
-          </TouchableOpacity>
+          <PuckButton
+            color={colors.primary}
+            onPress={handleClose}
+            contentStyle={styles.ctaContent}
+          >
+            <Text style={styles.ctaText}>
+              {mode === 'earned' ? 'Nice!' : isEarned ? 'Close' : 'Got it'}
+            </Text>
+          </PuckButton>
         </Animated.View>
       </SafeAreaView>
     </LinearGradient>
@@ -354,7 +416,14 @@ const makeStyles = (colors, bottomInset) => StyleSheet.create({
     borderColor: colors.border,
     marginTop: 4,
   },
-  content: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 24 },
+  content: { flex: 1, paddingBottom: 24 },
+  flex: { flex: 1 },
+  contentInner: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 12,
+  },
   eyebrow: {
     fontSize: 13,
     fontWeight: '700',
@@ -428,6 +497,44 @@ const makeStyles = (colors, bottomInset) => StyleSheet.create({
     paddingHorizontal: 12,
     marginBottom: 16,
   },
+  howCard: {
+    alignSelf: 'stretch',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    marginTop: 4,
+  },
+  howEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.3,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  howBody: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.white,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  howMetric: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  howCaveat: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 10,
+    lineHeight: 18,
+  },
   progressChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -451,14 +558,10 @@ const makeStyles = (colors, bottomInset) => StyleSheet.create({
   },
   nameChipText: { fontSize: 17, fontWeight: '800' },
   footer: { paddingBottom: Math.max(bottomInset, 16) },
-  ctaBtn: { borderRadius: 18, overflow: 'hidden' },
-  ctaGrad: {
-    flexDirection: 'row',
+  ctaContent: {
+    paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 18,
-    borderRadius: 18,
   },
   ctaText: { fontSize: 17, fontWeight: '800', color: colors.background },
 });

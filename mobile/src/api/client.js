@@ -39,6 +39,7 @@ export async function apiRequest(
   { method = 'GET', token, body, headers = {}, skipUnauthorizedHandler = false } = {},
 ) {
   const url = `${API_BASE_URL}${endpoint}`;
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
   if (__DEV__) {
     // eslint-disable-next-line no-console
@@ -48,11 +49,11 @@ export async function apiRequest(
   const response = await fetch(url, {
     method,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Token ${token}` } : {}),
       ...headers,
     },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(body !== undefined ? { body: isFormData ? body : JSON.stringify(body) } : {}),
   });
 
   if (__DEV__) {

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -34,14 +34,19 @@ export default function ChatComposer({
         placeholderTextColor={colors.textMuted}
         multiline
         maxLength={1000}
+        blurOnSubmit={false}
+        returnKeyType="default"
+        textAlignVertical="center"
       />
       <TouchableOpacity
         style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
         onPress={handleSend}
         disabled={!canSend}
-        activeOpacity={0.8}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Send message"
       >
-        <Ionicons name="arrow-up" size={20} color={colors.background} />
+        <Ionicons name="arrow-up" size={20} color={canSend ? colors.background : colors.textMuted} />
       </TouchableOpacity>
     </View>
   );
@@ -51,9 +56,9 @@ const makeStyles = (colors, embedded) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: embedded ? 8 : 12,
-    paddingVertical: embedded ? 6 : 8,
-    gap: 8,
+    paddingHorizontal: embedded ? 10 : 12,
+    paddingVertical: embedded ? 8 : 10,
+    gap: 10,
     borderTopWidth: embedded ? 0 : 1,
     borderTopColor: colors.border,
     backgroundColor: embedded ? 'transparent' : colors.surface,
@@ -63,13 +68,14 @@ const makeStyles = (colors, embedded) => StyleSheet.create({
     maxHeight: 120,
     minHeight: 44,
     paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 10,
     borderRadius: 22,
     backgroundColor: colors.inputBg,
     borderWidth: 1,
     borderColor: colors.border,
     color: colors.white,
-    fontSize: 15,
+    fontSize: 16,
+    lineHeight: 22,
   },
   sendBtn: {
     width: 44,
@@ -79,5 +85,10 @@ const makeStyles = (colors, embedded) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtnDisabled: { backgroundColor: colors.textMuted, opacity: 0.5 },
+  sendBtnDisabled: {
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    opacity: 1,
+  },
 });

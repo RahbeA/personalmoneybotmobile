@@ -13,20 +13,6 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [inviteOnlyEnabled, setInviteOnlyEnabled] = useState(true);
-
-  const refreshInviteStatus = useCallback(async () => {
-    try {
-      const data = await authApi.getInviteStatus();
-      setInviteOnlyEnabled(!!data?.invite_only_enabled);
-      return !!data?.invite_only_enabled;
-    } catch {
-      // Fail closed while invite-only is the default for the first cohort.
-      setInviteOnlyEnabled(true);
-      return true;
-    }
-  }, []);
-
   const clearSession = useCallback(async () => {
     let userId = null;
     try {
@@ -72,7 +58,6 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     restoreSession();
-    refreshInviteStatus();
   }, []);
 
   async function persistSession(data) {
@@ -138,23 +123,22 @@ export function AuthProvider({ children }) {
   // backend upgrades that same account in place (keeping the guest's progress).
   const upgradeToken = () => (user?.is_guest ? token : undefined);
 
-  async function register(email, password, name, inviteCode) {
-    const data = await authApi.register(email, password, name, upgradeToken(), inviteCode);
+  async function register(email, password, name) {
+    const data = await authApi.register(email, password, name, upgradeToken());
     await persistSession(data);
     return data;
   }
 
-  async function googleSignIn(idToken, inviteCode) {
-    const data = await authApi.google(idToken, upgradeToken(), inviteCode);
+  async function googleSignIn(idToken) {
+    const data = await authApi.google(idToken, upgradeToken());
     await persistSession(data);
     return data;
   }
 
-  async function appleSignIn({ identityToken, email, fullName }, inviteCode) {
+  async function appleSignIn({ identityToken, email, fullName }) {
     const data = await authApi.apple(
       { identityToken, email, fullName },
       upgradeToken(),
-      inviteCode,
     );
     await persistSession(data);
     return data;
@@ -195,8 +179,6 @@ export function AuthProvider({ children }) {
         token,
         loading,
         isGuest: !!user?.is_guest,
-        inviteOnlyEnabled,
-        refreshInviteStatus,
         login,
         register,
         guestSignIn,

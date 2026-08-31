@@ -17,82 +17,124 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../context/NotificationsContext';
-import { getRankMeta } from '../../context/UserProgressContext';
 import { coursesApi } from '../../api/courses';
 import { socialApi } from '../../api/social';
 import { cacheKeys, fetchWithCache, TTL } from '../../utils/apiCache';
 import { BrandAvatar, BrandLoader } from '../../components/brand';
+import PuckButton from '../../components/PuckButton';
 import UserProfileSheet from '../../components/social/UserProfileSheet';
 import { useTabBarInset } from '../../navigation/tabBarLayout';
+import { useTabReselect } from '../../navigation/tabReselect';
 import { requireAccount } from '../../utils/requireAccount';
 
 const TOP_N = 10;
 const SEARCH_DEBOUNCE_MS = 350;
+
+const PODIUM = {
+  1: { color: '#F5B72B', height: 96, avatar: 64, icon: 'trophy' },
+  2: { color: '#C5D0DA', height: 72, avatar: 52, icon: 'medal' },
+  3: { color: '#D4924A', height: 60, avatar: 48, icon: 'medal' },
+};
 
 function formatDisplayName(name) {
   if (!name) return 'Learner';
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
-const PODIUM_META = {
-  1: { icon: 'trophy', color: '#F5B72B', bg: 'rgba(245,183,43,0.18)' },
-  2: { icon: 'medal', color: '#AEB9C4', bg: 'rgba(174,185,196,0.18)' },
-  3: { icon: 'medal', color: '#CD7F32', bg: 'rgba(205,127,50,0.18)' },
-};
+function ptsOf(entry) {
+  return entry?.literacy_points ?? entry?.xp ?? 0;
+}
 
-function RankBadge({ rank, styles }) {
-  const podium = PODIUM_META[rank];
-  if (podium) {
+function HubButton({ icon, label, count, alert, onPress, styles, colors }) {
+  return (
+    <PuckButton
+      color={colors.surfaceElevated}
+      height={78}
+      borderRadius={14}
+      lip={5}
+      onPress={onPress}
+      style={styles.hubPuck}
+      contentStyle={styles.hubInner}
+    >
+      <View style={styles.hubIcon}>
+        <Ionicons name={icon} size={18} color={colors.primary} />
+        {alert ? <View style={styles.hubAlert} /> : null}
+      </View>
+      <Text style={styles.hubLabel} numberOfLines={1}>{label}</Text>
+      {count > 0 ? <Text style={styles.hubCount}>{count}</Text> : null}
+    </PuckButton>
+  );
+}
+
+function PodiumSlot({ entry, place, onPress, styles }) {
+  const meta = PODIUM[place];
+  if (!entry) {
     return (
-      <View style={[styles.podiumBadge, { backgroundColor: podium.bg }]}>
-        <Ionicons name={podium.icon} size={18} color={podium.color} />
+      <View style={[styles.podiumSlot, place === 1 && styles.podiumSlotFirst]}>
+        <View style={[styles.podiumAvatarRing, { borderColor: meta.color, width: meta.avatar + 8, height: meta.avatar + 8, borderRadius: (meta.avatar + 8) / 2 }]}>
+          <View style={[styles.podiumGhost, { width: meta.avatar, height: meta.avatar, borderRadius: meta.avatar / 2 }]} />
+        </View>
+        <View style={[styles.podiumColumn, { height: meta.height, backgroundColor: `${meta.color}22`, borderColor: `${meta.color}55` }]}>
+          <Ionicons name={meta.icon} size={18} color={meta.color} />
+          <Text style={[styles.podiumPlace, { color: meta.color }]}>#{place}</Text>
+        </View>
       </View>
     );
   }
-  return <Text style={styles.rankNum}>#{rank}</Text>;
-}
-
-function LeaderboardRow({ entry, styles, colors, highlighted = false, inset = true, onPress }) {
-  const rankMeta = getRankMeta(entry.rank_tier?.key);
-  const isTopThree = entry.rank <= 3;
 
   return (
     <TouchableOpacity
-      style={[styles.row, inset && styles.rowInset, highlighted && styles.rowHighlighted, isTopThree && styles.rowTopThree]}
-      activeOpacity={0.88}
+      style={[styles.podiumSlot, place === 1 && styles.podiumSlotFirst]}
       onPress={onPress}
-      disabled={!onPress}
+      activeOpacity={0.88}
     >
-      <View style={styles.rankCol}>
-        <RankBadge rank={entry.rank} styles={styles} />
-      </View>
-      <BrandAvatar character={entry.equipped_character} size={40} autoRotate={!!entry.equipped_character} />
-      <View style={styles.rowBody}>
-        <View style={styles.nameRow}>
-          <Text style={styles.rowName} numberOfLines={1}>
-            {formatDisplayName(entry.display_name)}
-          </Text>
-          {entry.is_me && (
-            <View style={styles.youChip}>
-              <Text style={styles.youChipText}>You</Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.rowMeta}>
-          <View style={styles.tierChip}>
-            <Ionicons name={rankMeta.ionIcon} size={11} color={rankMeta.color} />
-            <Text style={[styles.tierText, { color: rankMeta.color }]}>{entry.rank_tier?.label}</Text>
+      <View style={[styles.podiumAvatarRing, { borderColor: meta.color, width: meta.avatar + 8, height: meta.avatar + 8, borderRadius: (meta.avatar + 8) / 2 }]}>
+        <BrandAvatar
+          character={entry.equipped_character}
+          size={meta.avatar}
+          autoRotate={place === 1}
+        />
+        {entry.is_me ? (
+          <View style={styles.podiumYou}>
+            <Text style={styles.podiumYouText}>YOU</Text>
           </View>
-          <Text style={styles.rowXp}>{entry.literacy_points?.toLocaleString() ?? entry.xp.toLocaleString()} pts</Text>
-          {entry.streak_days > 0 && (
-            <View style={styles.streakChip}>
-              <Ionicons name="flame" size={11} color={colors.streak} />
-              <Text style={styles.streakText}>{entry.streak_days}</Text>
-            </View>
-          )}
-        </View>
+        ) : null}
       </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+      <Text style={styles.podiumName} numberOfLines={1}>
+        {formatDisplayName(entry.display_name)}
+      </Text>
+      <Text style={styles.podiumPts}>{ptsOf(entry).toLocaleString()} pts</Text>
+      <View style={[styles.podiumColumn, { height: meta.height, backgroundColor: `${meta.color}22`, borderColor: `${meta.color}66` }]}>
+        <Ionicons name={meta.icon} size={place === 1 ? 22 : 18} color={meta.color} />
+        <Text style={[styles.podiumPlace, { color: meta.color }]}>#{place}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function PackRow({ entry, colors, styles, onPress }) {
+  return (
+    <TouchableOpacity
+      style={[styles.packRow, entry.is_me && styles.packRowMe]}
+      onPress={onPress}
+      activeOpacity={0.88}
+    >
+      <Text style={styles.packRank}>#{entry.rank}</Text>
+      <BrandAvatar
+        character={entry.equipped_character}
+        size={36}
+        autoRotate={false}
+      />
+      <Text style={styles.packName} numberOfLines={1}>
+        {formatDisplayName(entry.display_name)}
+      </Text>
+      {entry.streak_days > 0 ? (
+        <View style={styles.packStreak}>
+          <Ionicons name="flame" size={11} color={colors.streak} />
+          <Text style={styles.packStreakText}>{entry.streak_days}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.packPts}>{ptsOf(entry).toLocaleString()}</Text>
     </TouchableOpacity>
   );
 }
@@ -101,7 +143,7 @@ export default function FriendsScreen({ navigation }) {
   const { token, isGuest } = useAuth();
   const { colors, isDark } = useTheme();
   const { unreadCount } = useNotifications();
-  const tabBarInset = useTabBarInset(24);
+  const tabBarInset = useTabBarInset(18);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
 
   const [top, setTop] = useState([]);
@@ -122,6 +164,11 @@ export default function FriendsScreen({ navigation }) {
   const hasLoadedRef = useRef(false);
   const searchTimer = useRef(null);
   const fetchId = useRef(0);
+  const scrollRef = useRef(null);
+
+  useTabReselect('SocialTab', () => {
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  });
 
   const loadSocialChrome = useCallback(async () => {
     if (!token || isGuest) {
@@ -244,49 +291,85 @@ export default function FriendsScreen({ navigation }) {
     navigation.navigate(route, params);
   }
 
+  const first = top.find((e) => e.rank === 1) || top[0];
+  const second = top.find((e) => e.rank === 2) || top[1];
+  const third = top.find((e) => e.rank === 3) || top[2];
+  const thePack = top.filter((e) => e.rank > 3);
   const inTop = me && me.rank <= TOP_N;
 
-  // Guests can open the tab, but ranking and friends need a real account
-  // (Apple 5.1.1(v) allows gating account-based features).
+  const header = (
+    <View style={styles.header}>
+      <Text style={styles.title}>Leaderboard</Text>
+      <View style={styles.headerActions}>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={() => goSocial('view notifications', 'Notifications')}
+          activeOpacity={0.85}
+          accessibilityLabel="Notifications"
+        >
+          <Ionicons name="notifications-outline" size={18} color={colors.white} />
+          {unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={() => goSocial('manage friend requests', 'FriendRequests')}
+          activeOpacity={0.85}
+          accessibilityLabel="Friend requests"
+        >
+          <Ionicons name="person-add-outline" size={18} color={colors.white} />
+          {pendingCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const hub = (
+    <View style={styles.hubRow}>
+      <HubButton icon="people" label="Friends" count={friendCount} onPress={() => goSocial('view friends', 'MyFriends')} styles={styles} colors={colors} />
+      <HubButton icon="people-circle" label="Groups" count={groupCount} alert={inviteCount > 0} onPress={() => goSocial('view groups', 'Groups')} styles={styles} colors={colors} />
+      <HubButton icon="newspaper" label="Feed" onPress={() => navigation.navigate('Feed')} styles={styles} colors={colors} />
+      <HubButton icon="share-social" label="Contacts" onPress={() => goSocial('invite from contacts', 'ContactInvite')} styles={styles} colors={colors} />
+    </View>
+  );
+
   if (isGuest) {
     return (
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <SafeAreaView style={styles.safe} edges={['top']}>
-          <View style={styles.listHeader}>
-            <View style={styles.heroHeaderLeft}>
-              <Text style={styles.heroEyebrow}>COMMUNITY</Text>
-              <Text style={styles.title}>Leaderboard</Text>
-              <Text style={styles.heroSub}>Compete with friends as you learn</Text>
-            </View>
-          </View>
-
-          <View style={styles.guestLockCard}>
+          {header}
+          <View style={styles.guestCard}>
             <LinearGradient
-              colors={['rgba(61,220,95,0.16)', 'rgba(61,220,95,0.02)', 'transparent']}
-              style={styles.guestLockGlow}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+              colors={['rgba(245,183,43,0.18)', 'rgba(61,220,95,0.06)', 'transparent']}
+              style={StyleSheet.absoluteFill}
             />
-            <View style={styles.guestLockIcon}>
-              <Ionicons name="trophy" size={30} color={colors.primary} />
+            <View style={styles.guestIcon}>
+              <Ionicons name="trophy" size={28} color="#F5B72B" />
             </View>
-            <Text style={styles.guestLockTitle}>Create an account to compete</Text>
-            <Text style={styles.guestLockBody}>
-              The leaderboard ranks your literacy score against other learners.
-              Create a free account to get ranked, add friends, and join groups —
-              lessons stay available without signing up.
+            <Text style={styles.guestTitle}>Get ranked</Text>
+            <Text style={styles.guestBody}>
+              Literacy score vs other learners. Friends, groups, and the podium need a free account. Lessons stay open either way.
             </Text>
-            <TouchableOpacity
-              style={styles.guestCtaBtn}
-              activeOpacity={0.9}
+            <PuckButton
+              color={colors.primary}
+              height={52}
+              borderRadius={16}
+              lip={5}
               onPress={() => {
                 const rootNav = navigation?.getParent?.() ?? navigation;
                 rootNav?.navigate?.('AuthUpgrade', { mode: 'register' });
               }}
             >
-              <Text style={styles.guestCtaBtnText}>Create free account</Text>
-            </TouchableOpacity>
+              <Text style={styles.guestCta}>Create free account</Text>
+            </PuckButton>
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -297,7 +380,7 @@ export default function FriendsScreen({ navigation }) {
     return (
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
-        <BrandLoader message="Loading leaderboard…" />
+        <BrandLoader message="Loading the board…" />
       </LinearGradient>
     );
   }
@@ -306,9 +389,12 @@ export default function FriendsScreen({ navigation }) {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
+        {header}
         <ScrollView
-          contentContainerStyle={styles.listContent}
+          ref={scrollRef}
+          contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           refreshControl={(
             <RefreshControl
               refreshing={refreshing}
@@ -321,226 +407,148 @@ export default function FriendsScreen({ navigation }) {
             />
           )}
         >
-          <View style={styles.listHeader}>
-            <View style={styles.heroHeader}>
-              <View style={styles.heroHeaderLeft}>
-                <Text style={styles.heroEyebrow}>COMMUNITY</Text>
-                <Text style={styles.title}>Leaderboard</Text>
-                <Text style={styles.heroSub}>
-                  {search
-                    ? 'Find friends and see where they rank'
-                    : `Top ${TOP_N} by literacy score · tap anyone to connect`}
-                </Text>
-              </View>
-              <View style={styles.headerActions}>
-                <TouchableOpacity
-                  style={styles.headerBtn}
-                  onPress={() => goSocial('view notifications', 'Notifications')}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Notifications"
-                >
-                  <Ionicons name="notifications-outline" size={20} color={colors.white} />
-                  {unreadCount > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.headerBtn}
-                  onPress={() => goSocial('manage friend requests', 'FriendRequests')}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Friend requests"
-                >
-                  <Ionicons name="person-add-outline" size={20} color={colors.white} />
-                  {pendingCount > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
+          {hub}
 
-            <View style={styles.quickRow}>
-              <TouchableOpacity
-                style={styles.quickChip}
-                activeOpacity={0.85}
-                onPress={() => goSocial('view friends', 'MyFriends')}
-              >
-                <Ionicons name="people" size={16} color={colors.primary} />
-                <Text style={styles.quickChipText}>
-                  Friends{friendCount > 0 ? ` · ${friendCount}` : ''}
-                </Text>
+          {pendingCount > 0 && !search ? (
+            <TouchableOpacity
+              style={styles.pendingBanner}
+              activeOpacity={0.88}
+              onPress={() => navigation.navigate('FriendRequests')}
+            >
+              <Ionicons name="mail-unread" size={16} color={colors.primary} />
+              <Text style={styles.pendingText}>
+                {pendingCount} friend request{pendingCount !== 1 ? 's' : ''}
+              </Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={styles.searchWrap}>
+            <Ionicons name="search" size={16} color={colors.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search learners"
+              placeholderTextColor={colors.textMuted}
+              value={searchInput}
+              onChangeText={handleSearchChange}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {searching ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : searchInput ? (
+              <TouchableOpacity onPress={clearSearch} hitSlop={10}>
+                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickChip}
-                activeOpacity={0.85}
-                onPress={() => goSocial('view groups', 'Groups')}
-              >
-                <Ionicons name="people-circle" size={16} color={colors.primary} />
-                <Text style={styles.quickChipText}>
-                  Groups{groupCount > 0 ? ` · ${groupCount}` : ''}
-                </Text>
-                {inviteCount > 0 && <View style={styles.quickDot} />}
+            ) : null}
+          </View>
+
+          {error && top.length === 0 && !search ? (
+            <View style={styles.empty}>
+              <Ionicons name="cloud-offline" size={32} color={colors.textMuted} />
+              <Text style={styles.emptyTitle}>Couldn't load the board</Text>
+              <Text style={styles.emptyBody}>{error}</Text>
+              <TouchableOpacity style={styles.retry} onPress={() => fetchLeaderboard({ force: true })}>
+                <Text style={styles.retryText}>Try again</Text>
               </TouchableOpacity>
             </View>
-
-            {pendingCount > 0 && !search && (
-              <TouchableOpacity
-                style={styles.pendingBanner}
-                activeOpacity={0.88}
-                onPress={() => navigation.navigate('FriendRequests')}
-              >
-                <Ionicons name="mail-unread" size={18} color={colors.primary} />
-                <Text style={styles.pendingBannerText}>
-                  {pendingCount} friend request{pendingCount !== 1 ? 's' : ''} waiting
-                </Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.primary} />
-              </TouchableOpacity>
-            )}
-
-            <View style={styles.searchWrap}>
-              <Ionicons name="search" size={18} color={colors.textMuted} style={styles.searchIcon} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search friends by name or email"
-                placeholderTextColor={colors.textMuted}
-                value={searchInput}
-                onChangeText={handleSearchChange}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-              />
-              {searching ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : !!searchInput && (
-                <TouchableOpacity
-                  onPress={clearSearch}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close-circle" size={18} color={colors.textMuted} />
-                </TouchableOpacity>
+          ) : search ? (
+            <View>
+              <Text style={styles.sectionLabel}>Results</Text>
+              {searching && matches.length === 0 ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+              ) : matches.length === 0 ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>No matches</Text>
+                  <Text style={styles.emptyBody}>Try a different name or email.</Text>
+                </View>
+              ) : (
+                matches.map((entry) => (
+                  <PackRow
+                    key={entry.user_id}
+                    entry={entry}
+                    colors={colors}
+                    styles={styles}
+                    onPress={() => openProfile(entry)}
+                  />
+                ))
               )}
             </View>
-
-            {me && !search && (
-              <View style={styles.myRankCard}>
+          ) : (
+            <>
+              <View style={styles.podiumCard}>
                 <LinearGradient
-                  colors={['rgba(61,220,95,0.20)', 'rgba(61,220,95,0.04)']}
-                  style={styles.myRankGlow}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
+                  colors={['rgba(245,183,43,0.14)', 'rgba(61,220,95,0.05)', 'transparent']}
+                  style={StyleSheet.absoluteFill}
                 />
-                <Text style={styles.myRankLabel}>Your rank</Text>
-                <View style={styles.myRankRow}>
-                  <Text style={styles.myRankNum}>#{me.rank}</Text>
-                  <View style={styles.myRankBody}>
-                    <Text style={styles.myRankName} numberOfLines={1}>
-                      {formatDisplayName(me.display_name)}
-                    </Text>
-                    <Text style={styles.myRankMeta}>
-                      {(me.literacy_points ?? me.xp ?? 0).toLocaleString()} pts
-                      {totalCount > 0 ? ` · of ${totalCount.toLocaleString()} learners` : ''}
-                    </Text>
-                  </View>
-                  {inTop ? (
-                    <View style={styles.inTopPill}>
-                      <Ionicons name="trophy" size={12} color={colors.background} />
-                      <Text style={styles.inTopPillText}>Top {TOP_N}</Text>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.viewMeBtn}
-                      onPress={() => openProfile(me)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.viewMeBtnText}>You</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {!inTop && (
-                  <Text style={styles.myRankHint}>
-                    Keep learning to climb into the Top {TOP_N}.
-                  </Text>
-                )}
-              </View>
-            )}
-
-            {error && top.length === 0 && !search ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="cloud-offline" size={36} color={colors.textMuted} />
-                <Text style={styles.emptyTitle}>Couldn't load leaderboard</Text>
-                <Text style={styles.emptyText}>{error}</Text>
-                <TouchableOpacity
-                  style={styles.retryBtn}
-                  onPress={() => fetchLeaderboard({ force: true })}
-                >
-                  <Text style={styles.retryBtnText}>Try again</Text>
-                </TouchableOpacity>
-              </View>
-            ) : search ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Results</Text>
-                {searching && matches.length === 0 ? (
-                  <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
-                ) : matches.length === 0 ? (
-                  <View style={styles.emptyWrap}>
-                    <Ionicons name="search-outline" size={36} color={colors.textMuted} />
-                    <Text style={styles.emptyTitle}>No matches</Text>
-                    <Text style={styles.emptyText}>Try a different name or email.</Text>
-                  </View>
-                ) : (
-                  matches.map((entry) => (
-                    <LeaderboardRow
-                      key={entry.user_id}
-                      entry={entry}
-                      styles={styles}
-                      colors={colors}
-                      highlighted={entry.is_me}
-                      inset={false}
-                      onPress={() => openProfile(entry)}
-                    />
-                  ))
-                )}
-              </View>
-            ) : (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Top {TOP_N}</Text>
+                <Text style={styles.podiumKicker}>THIS WEEK&apos;S PODIUM</Text>
                 {top.length === 0 ? (
-                  <View style={styles.emptyWrap}>
-                    <Ionicons name="people-outline" size={36} color={colors.textMuted} />
+                  <View style={styles.empty}>
                     <Text style={styles.emptyTitle}>No learners yet</Text>
-                    <Text style={styles.emptyText}>Complete a lesson to appear on the board.</Text>
+                    <Text style={styles.emptyBody}>Finish a lesson to take a spot.</Text>
                   </View>
                 ) : (
-                  <LinearGradient
-                    colors={['rgba(61,220,95,0.14)', 'rgba(61,220,95,0.03)']}
-                    style={styles.topCard}
-                  >
-                    {top.map((entry) => (
-                      <LeaderboardRow
+                  <View style={styles.podiumRow}>
+                    <PodiumSlot entry={second} place={2} onPress={() => openProfile(second)} styles={styles} />
+                    <PodiumSlot entry={first} place={1} onPress={() => openProfile(first)} styles={styles} />
+                    <PodiumSlot entry={third} place={3} onPress={() => openProfile(third)} styles={styles} />
+                  </View>
+                )}
+              </View>
+
+              {thePack.length > 0 ? (
+                <View>
+                  <Text style={styles.sectionLabel}>The pack</Text>
+                  <View style={styles.packCard}>
+                    {thePack.map((entry) => (
+                      <PackRow
                         key={entry.user_id}
                         entry={entry}
-                        styles={styles}
                         colors={colors}
-                        highlighted={entry.is_me}
-                        inset={false}
+                        styles={styles}
                         onPress={() => openProfile(entry)}
                       />
                     ))}
-                  </LinearGradient>
-                )}
-              </View>
-            )}
+                  </View>
+                </View>
+              ) : null}
 
-            {!search && totalCount > TOP_N && (
-              <Text style={styles.footerMeta}>
-                Showing Top {TOP_N} of {totalCount.toLocaleString()} learners
-              </Text>
-            )}
-          </View>
+              {totalCount > TOP_N ? (
+                <Text style={styles.footerMeta}>
+                  Top {TOP_N} of {totalCount.toLocaleString()}
+                </Text>
+              ) : null}
+            </>
+          )}
         </ScrollView>
+
+        {me && !search ? (
+          <TouchableOpacity
+            style={styles.youBar}
+            activeOpacity={0.88}
+            onPress={() => openProfile(me)}
+          >
+            <View style={styles.youBarLeft}>
+              <Text style={styles.youBarKicker}>YOU</Text>
+              <Text style={styles.youBarRank}>#{me.rank}</Text>
+            </View>
+            <View style={styles.youBarMid}>
+              <Text style={styles.youBarName} numberOfLines={1}>
+                {formatDisplayName(me.display_name)}
+              </Text>
+              <Text style={styles.youBarMeta}>
+                {ptsOf(me).toLocaleString()} pts
+                {totalCount ? ` · ${totalCount.toLocaleString()} learners` : ''}
+              </Text>
+            </View>
+            <View style={[styles.youBarPill, !inTop && styles.youBarPillMuted]}>
+              <Text style={[styles.youBarPillText, !inTop && styles.youBarPillTextMuted]}>
+                {inTop ? `Top ${TOP_N}` : 'Climb'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
       </SafeAreaView>
 
       <UserProfileSheet
@@ -560,36 +568,27 @@ export default function FriendsScreen({ navigation }) {
 const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  listContent: { paddingBottom: tabBarInset },
-  listHeader: { paddingHorizontal: 20, paddingTop: 4 },
+  scroll: { paddingHorizontal: 16, paddingBottom: 88 },
 
-  heroHeader: {
+  header: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  heroHeaderLeft: { flex: 1, marginRight: 12 },
-  heroEyebrow: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
-    letterSpacing: 1,
-    marginBottom: 4,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 10,
   },
   title: {
-    fontSize: 30,
+    fontSize: 26,
     fontWeight: '800',
     color: colors.white,
-    letterSpacing: -0.8,
-    marginBottom: 4,
+    letterSpacing: -0.7,
   },
-  heroSub: { fontSize: 13, color: colors.textSecondary, fontWeight: '500', lineHeight: 18 },
-  headerActions: { flexDirection: 'row', gap: 8, paddingTop: 4 },
+  headerActions: { flexDirection: 'row', gap: 8 },
   headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
@@ -600,260 +599,247 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     position: 'absolute',
     top: -3,
     right: -3,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 3,
     borderWidth: 2,
     borderColor: colors.background,
   },
-  badgeText: { fontSize: 10, fontWeight: '800', color: colors.background },
+  badgeText: { fontSize: 9, fontWeight: '800', color: colors.background },
 
-  quickRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  quickChip: {
-    flex: 1,
-    flexDirection: 'row',
+  hubRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  hubPuck: { flex: 1 },
+  hubInner: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: 4,
+    paddingHorizontal: 4,
   },
-  quickChipText: { fontSize: 13, fontWeight: '700', color: colors.white },
-  quickDot: {
+  hubIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: colors.primaryTint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubAlert: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
     width: 7,
     height: 7,
     borderRadius: 4,
     backgroundColor: colors.primary,
   },
+  hubLabel: { fontSize: 11, fontWeight: '700', color: colors.white },
+  hubCount: { fontSize: 10, fontWeight: '800', color: colors.textMuted, marginTop: -2 },
 
   pendingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     backgroundColor: colors.primaryTint,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: colors.primaryTintStrong,
   },
-  pendingBannerText: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.primary },
+  pendingText: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.primary },
 
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
     backgroundColor: colors.surfaceElevated,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     marginBottom: 16,
-    gap: 10,
+    height: 42,
   },
-  searchIcon: { marginRight: -2 },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
+  searchInput: { flex: 1, fontSize: 15, color: colors.white, paddingVertical: 0 },
+
+  podiumCard: {
+    borderRadius: 24,
+    paddingTop: 14,
+    paddingHorizontal: 8,
+    paddingBottom: 6,
+    marginBottom: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(245,183,43,0.22)',
+    overflow: 'hidden',
+  },
+  podiumKicker: {
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    color: '#F5B72B',
+    marginBottom: 12,
+  },
+  podiumRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  podiumSlot: { flex: 1, alignItems: 'center', minWidth: 0 },
+  podiumSlotFirst: { marginBottom: 8 },
+  podiumAvatarRing: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    marginBottom: 6,
+    backgroundColor: colors.surfaceElevated,
+  },
+  podiumGhost: { backgroundColor: colors.surfaceElevated },
+  podiumYou: {
+    position: 'absolute',
+    bottom: -6,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  podiumYouText: { fontSize: 8, fontWeight: '900', color: '#0A0A0A', letterSpacing: 0.4 },
+  podiumName: {
+    fontSize: 12,
+    fontWeight: '800',
     color: colors.white,
-    paddingVertical: 13,
+    maxWidth: 96,
+    textAlign: 'center',
+  },
+  podiumPts: { fontSize: 11, fontWeight: '700', color: colors.textSecondary, marginBottom: 8 },
+  podiumColumn: {
+    width: '88%',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  podiumPlace: { fontSize: 13, fontWeight: '900', letterSpacing: -0.3 },
+
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textMuted,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  packCard: {
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  packRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  packRowMe: { backgroundColor: colors.primaryTint },
+  packRank: { width: 28, fontSize: 13, fontWeight: '800', color: colors.textMuted },
+  packName: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.white },
+  packStreak: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  packStreakText: { fontSize: 11, fontWeight: '700', color: colors.streak },
+  packPts: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, minWidth: 40, textAlign: 'right' },
+
+  footerMeta: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 8,
+    marginBottom: 4,
   },
 
-  myRankCard: {
+  youBar: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: tabBarInset,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 18,
-    padding: 16,
-    marginBottom: 18,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.primaryTintStrong,
-    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
-  myRankGlow: { ...StyleSheet.absoluteFillObject, borderRadius: 18 },
-  myRankLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: 10,
-  },
-  myRankRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  myRankNum: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.white,
-    letterSpacing: -0.8,
-    minWidth: 56,
-  },
-  myRankBody: { flex: 1, minWidth: 0 },
-  myRankName: { fontSize: 16, fontWeight: '700', color: colors.white },
-  myRankMeta: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
-  myRankHint: {
-    marginTop: 10,
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textMuted,
-  },
-  inTopPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+  youBarLeft: { alignItems: 'flex-start' },
+  youBarKicker: { fontSize: 9, fontWeight: '900', color: colors.primary, letterSpacing: 1 },
+  youBarRank: { fontSize: 20, fontWeight: '800', color: colors.white, letterSpacing: -0.6 },
+  youBarMid: { flex: 1, minWidth: 0 },
+  youBarName: { fontSize: 14, fontWeight: '800', color: colors.white },
+  youBarMeta: { fontSize: 11, fontWeight: '600', color: colors.textSecondary, marginTop: 1 },
+  youBarPill: {
     backgroundColor: colors.primary,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 10,
   },
-  inTopPillText: { fontSize: 11, fontWeight: '800', color: colors.background },
-  viewMeBtn: {
-    backgroundColor: colors.primaryTint,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.primaryTintStrong,
-  },
-  viewMeBtnText: { fontSize: 12, fontWeight: '800', color: colors.primary },
+  youBarPillMuted: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  youBarPillText: { fontSize: 11, fontWeight: '800', color: '#0A0A0A' },
+  youBarPillTextMuted: { color: colors.white },
 
-  guestLockCard: {
-    alignItems: 'center',
-    marginHorizontal: 20,
-    marginTop: 8,
-    paddingVertical: 32,
-    paddingHorizontal: 24,
+  guestCard: {
+    margin: 16,
+    padding: 24,
     borderRadius: 24,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: colors.primaryTintStrong,
-    overflow: 'hidden',
-  },
-  guestLockGlow: { ...StyleSheet.absoluteFillObject, borderRadius: 24 },
-  guestLockIcon: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primaryTint,
-    borderWidth: 1,
-    borderColor: colors.primaryTintStrong,
-    marginBottom: 16,
-  },
-  guestLockTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.white,
-    letterSpacing: -0.3,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  guestLockBody: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 21,
-    fontWeight: '500',
-  },
-  guestCtaBtn: {
-    marginTop: 20,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 14,
-  },
-  guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: colors.background },
-
-  section: { marginBottom: 12 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  topCard: {
-    borderRadius: 18,
-    paddingVertical: 4,
-    paddingHorizontal: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.22)',
-    gap: 2,
-  },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
     borderColor: colors.border,
+    alignItems: 'center',
+    overflow: 'hidden',
+    gap: 10,
   },
-  rowInset: { marginHorizontal: 20 },
-  rowHighlighted: {
-    borderColor: colors.primary + '88',
-    backgroundColor: colors.primaryTint,
-  },
-  rowTopThree: {
-    backgroundColor: colors.surface,
-  },
-  rankCol: { width: 36, alignItems: 'center' },
-  rankNum: { fontSize: 14, fontWeight: '800', color: colors.textMuted },
-  podiumBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  guestIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(245,183,43,0.16)',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 4,
   },
-  rowBody: { flex: 1, minWidth: 0, gap: 4 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowName: { fontSize: 15, fontWeight: '700', color: colors.white, flexShrink: 1 },
-  youChip: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  youChipText: { fontSize: 10, fontWeight: '800', color: colors.background },
-  rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  tierChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  tierText: { fontSize: 11, fontWeight: '600' },
-  rowXp: { fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
-  streakChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  streakText: { fontSize: 11, color: colors.streak, fontWeight: '600' },
+  guestTitle: { fontSize: 22, fontWeight: '800', color: colors.white, letterSpacing: -0.4 },
+  guestBody: { fontSize: 14, lineHeight: 20, color: colors.textSecondary, textAlign: 'center', fontWeight: '500', marginBottom: 8 },
+  guestCta: { fontSize: 15, fontWeight: '800', color: '#0A0A0A' },
 
-  emptyWrap: {
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 40,
-    gap: 8,
-  },
-  emptyTitle: { fontSize: 17, fontWeight: '700', color: colors.white, marginTop: 8 },
-  emptyText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center' },
-  retryBtn: {
-    marginTop: 12,
+  empty: { alignItems: 'center', paddingVertical: 28, gap: 6 },
+  emptyTitle: { fontSize: 16, fontWeight: '800', color: colors.white },
+  emptyBody: { fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
+  retry: {
+    marginTop: 8,
     backgroundColor: colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
-  retryBtnText: { fontSize: 14, fontWeight: '700', color: colors.background },
-  footerMeta: {
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 8,
-  },
+  retryText: { fontSize: 13, fontWeight: '800', color: '#0A0A0A' },
 });

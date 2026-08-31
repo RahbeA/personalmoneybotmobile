@@ -58,4 +58,13 @@ export const coursesApi = {
       token,
       body: { goals },
     }),
+
+  updatePersonality: (token, personality) =>
+    apiRequest('/courses/personality/', {
+      method: 'PATCH',
+      token,
+      body: { chat_personality: personality },
+    }),
+
+  getMoneyTip: (token) => apiRequest('/courses/money-tip/', { token }),
 };

@@ -27,4 +27,8 @@ urlpatterns = [
     path('notifications/read-all/', views.mark_all_notifications_read, name='social-notifications-read-all'),
     path('notifications/<int:notification_id>/read/', views.mark_notification_read, name='social-notification-read'),
     path('notifications/push-token/', views.push_token, name='social-push-token'),
+    path('contacts/register/', views.register_phone_hash, name='social-contacts-register'),
+    path('contacts/match/', views.match_contacts, name='social-contacts-match'),
+    path('feed/', views.feed_list_create, name='social-feed'),
+    path('feed/mine/', views.feed_mine, name='social-feed-mine'),
 ]

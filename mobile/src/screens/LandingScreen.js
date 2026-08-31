@@ -25,7 +25,7 @@ const CONTENT_MAX_WIDTH = 420;
 
 export default function LandingScreen({ navigation }) {
   const { colors, isDark } = useTheme();
-  const { guestSignIn, inviteOnlyEnabled } = useAuth();
+  const { guestSignIn } = useAuth();
   const { height: windowHeight } = useWindowDimensions();
   const [guestLoading, setGuestLoading] = useState(false);
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -146,9 +146,7 @@ export default function LandingScreen({ navigation }) {
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                   >
-                    <Text style={styles.primaryButtonText}>
-                      {inviteOnlyEnabled ? 'Have an invite? Enter code' : 'Get Started'}
-                    </Text>
+                    <Text style={styles.primaryButtonText}>Get Started</Text>
                   </LinearGradient>
                 </TouchableOpacity>
 

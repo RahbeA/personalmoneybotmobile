@@ -440,6 +440,7 @@ def _build_user_stats(request, today=None):
     )
     from .badges import badge_catalog_for_request
     from .daily_rewards import daily_reward_status
+    from .tips import pick_money_tip, serialize_tip
 
     return {
         **UserStatsSerializer(stats, context={'request': request, 'client_today': today}).data,
@@ -447,6 +448,7 @@ def _build_user_stats(request, today=None):
         'lessons_completed': len(completed_lesson_ids),
         'badge_catalog': badge_catalog_for_request(request),
         'daily_reward': daily_reward_status(stats, today),
+        'money_tip': serialize_tip(pick_money_tip(stats)),
     }
 
 
@@ -462,8 +464,18 @@ def user_stats(request):
     # for up to the TTL. Recompute it every request so the card reflects the
     # correct claimable state (DEV-459).
     from .daily_rewards import daily_reward_status
+    from .tips import pick_money_tip, serialize_tip
+
     stats = get_or_create_stats(request.user)
-    data = {**data, 'daily_reward': daily_reward_status(stats, today)}
+    tip = pick_money_tip(stats)
+    if tip and stats.last_money_tip_id != tip.id:
+        stats.last_money_tip = tip
+        stats.save(update_fields=['last_money_tip'])
+    data = {
+        **data,
+        'daily_reward': daily_reward_status(stats, today),
+        'money_tip': serialize_tip(tip),
+    }
     return attach_cache_header(Response(data), hit)
 
 
@@ -573,6 +585,45 @@ def update_streak_goal(request):
         'streak_goal': streak_goal,
         'stats': UserStatsSerializer(stats, context={'request': request}).data,
     })
+
+
+CHAT_PERSONALITIES = {choice[0] for choice in UserStats.CHAT_PERSONALITY_CHOICES}
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_personality(request):
+    """Set Tutor / Money Chat voice (DEV-656)."""
+    personality = (request.data.get('chat_personality') or '').strip()
+    if personality not in CHAT_PERSONALITIES:
+        return Response(
+            {
+                'detail': f'chat_personality must be one of {sorted(CHAT_PERSONALITIES)}.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    stats = get_or_create_stats(request.user)
+    stats.chat_personality = personality
+    stats.save(update_fields=['chat_personality'])
+    invalidate_user_cache(request.user.id)
+    return Response({
+        'chat_personality': personality,
+        'stats': UserStatsSerializer(stats, context={'request': request}).data,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def todays_money_tip(request):
+    """Today's Home money tip, rotated so it does not immediately repeat (DEV-660/661)."""
+    from .tips import pick_money_tip, serialize_tip
+
+    stats = get_or_create_stats(request.user)
+    tip = pick_money_tip(stats)
+    if tip and stats.last_money_tip_id != tip.id:
+        stats.last_money_tip = tip
+        stats.save(update_fields=['last_money_tip'])
+    return Response({'tip': serialize_tip(tip)})
 
 
 @api_view(['POST'])

@@ -49,6 +49,8 @@ const NAV_ITEMS = [
   { key: '/onboarding', icon: <SolutionOutlined />, label: 'Onboarding' },
   { key: '/characters', icon: <SkinOutlined />, label: 'Characters' },
   { key: '/badges', icon: <TrophyOutlined />, label: 'Badges' },
+  { key: '/tips', icon: <GiftOutlined />, label: 'Money Tips' },
+  { key: '/feed', icon: <BellOutlined />, label: 'Feed' },
   { key: '/daily-rewards', icon: <GiftOutlined />, label: 'Daily Rewards' },
   { key: '/users', icon: <TeamOutlined />, label: 'Users' },
   { key: '/invites', icon: <MailOutlined />, label: 'Invites' },

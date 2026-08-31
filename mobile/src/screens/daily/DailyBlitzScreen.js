@@ -13,7 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useUserProgress } from '../../context/UserProgressContext';
 import { useTheme } from '../../context/ThemeContext';
 import { dailyApi } from '../../api/daily';
-import { secondsUntilLocalMidnight } from '../../utils/localDate';
+import { localDate, secondsUntilLocalMidnight } from '../../utils/localDate';
 import { BrandLoader } from '../../components/brand';
 import EstimateRound from './rounds/EstimateRound';
 import HigherLowerRound from './rounds/HigherLowerRound';
@@ -94,9 +94,16 @@ export default function DailyBlitzScreen({ navigation }) {
   }, [token]);
 
   useFocusEffect(useCallback(() => {
-    // Only auto-load when we don't already have a fresh session in progress.
-    if (phase === 'loading') load();
-  }, [phase, load]));
+    // Load on first open. Refetch if the calendar date changed so we never
+    // keep yesterday's date-seeded puzzle on screen.
+    if (phase === 'loading') {
+      load();
+      return;
+    }
+    if (today?.date && today.date !== localDate()) {
+      load();
+    }
+  }, [phase, load, today?.date]));
 
   function startGame() {
     answersRef.current = [];

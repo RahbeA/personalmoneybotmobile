@@ -13,6 +13,9 @@ import { useTheme } from '../context/ThemeContext';
 import { requireAccount } from '../utils/requireAccount';
 import CharacterViewer from '../components/CharacterViewer';
 import CharacterPoster from '../components/CharacterPoster';
+import PremiumLockBadge from '../components/moneyverse/PremiumLockBadge';
+import PuckButton from '../components/PuckButton';
+import { isPremiumLocked, openPaywall } from '../components/moneyverse/openPaywall';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -24,7 +27,7 @@ const RARITY_COLORS = {
 export default function CharacterDetailScreen({ navigation, route }) {
   const { character } = route.params;
   const { isGuest } = useAuth();
-  const { botBucks, equippedCharacter, purchaseCharacter, equipCharacter } = useUserProgress();
+  const { botBucks, equippedCharacter, isPremium, purchaseCharacter, equipCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isFocused = useIsFocused();
@@ -35,10 +38,15 @@ export default function CharacterDetailScreen({ navigation, route }) {
   const isEquipped = equippedCharacter?.id === character.id;
   const rarityColor = RARITY_COLORS[character.rarity] || colors.primary;
   const canAfford = botBucks >= character.price;
+  const locked = !owned && isPremiumLocked(character, isPremium);
 
   async function handleBuy() {
     if (busy) return;
     if (!requireAccount({ isGuest, navigation, feature: 'buy characters with Bot Bucks' })) return;
+    if (locked) {
+      openPaywall(navigation);
+      return;
+    }
     if (!canAfford) {
       Alert.alert('Not enough Bot Bucks', `You need ${character.price - botBucks} more Bot Bucks. Complete more lessons to earn them!`);
       return;
@@ -49,7 +57,11 @@ export default function CharacterDetailScreen({ navigation, route }) {
       setOwned(true);
       Alert.alert('Purchased!', `${character.name} is now yours. Equip it to make it your character.`);
     } catch (e) {
-      Alert.alert('Purchase failed', e.message || 'Something went wrong.');
+      if (e?.code === 'premium_required') {
+        openPaywall(navigation);
+      } else {
+        Alert.alert('Purchase failed', e.message || 'Something went wrong.');
+      }
     } finally {
       setBusy(false);
     }
@@ -96,6 +108,11 @@ export default function CharacterDetailScreen({ navigation, route }) {
               <CharacterPoster previewUrl={character.preview_url} />
             )}
             <Text style={styles.dragHint}>Drag to rotate</Text>
+            {locked ? (
+              <View style={styles.viewerLock}>
+                <PremiumLockBadge />
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.header}>
@@ -103,6 +120,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
             <View style={[styles.rarityChip, { backgroundColor: rarityColor + '22', borderColor: rarityColor + '55' }]}>
               <Text style={[styles.rarityChipText, { color: rarityColor }]}>{character.rarity}</Text>
             </View>
+            {locked ? <PremiumLockBadge compact /> : null}
           </View>
 
           {character.description ? (
@@ -123,12 +141,24 @@ export default function CharacterDetailScreen({ navigation, route }) {
         <View style={styles.footer}>
           {owned ? (
             isEquipped ? (
-              <View style={[styles.cta, styles.ctaEquipped]}>
+              <PuckButton
+                color="#1E3D28"
+                borderRadius={16}
+                lip={5}
+                contentStyle={[styles.ctaContent, styles.ctaEquippedContent]}
+              >
                 <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
                 <Text style={[styles.ctaText, { color: colors.primary }]}>Equipped</Text>
-              </View>
+              </PuckButton>
             ) : (
-              <TouchableOpacity style={styles.cta} onPress={handleEquip} activeOpacity={0.85} disabled={busy}>
+              <PuckButton
+                color={colors.primary}
+                borderRadius={16}
+                lip={5}
+                onPress={handleEquip}
+                disabled={busy}
+                contentStyle={styles.ctaContent}
+              >
                 {busy ? (
                   <ActivityIndicator color={colors.background} />
                 ) : (
@@ -137,14 +167,36 @@ export default function CharacterDetailScreen({ navigation, route }) {
                     <Text style={styles.ctaText}>Equip Character</Text>
                   </>
                 )}
-              </TouchableOpacity>
+              </PuckButton>
             )
-          ) : (
-            <TouchableOpacity
-              style={[styles.cta, isGuest ? null : (!canAfford && styles.ctaDisabled)]}
+          ) : locked ? (
+            <PuckButton
+              color={colors.botBucks}
+              borderRadius={16}
+              lip={5}
               onPress={handleBuy}
-              activeOpacity={0.85}
               disabled={busy}
+              contentStyle={styles.ctaContent}
+            >
+              {busy ? (
+                <ActivityIndicator color="#0A0A0A" />
+              ) : (
+                <>
+                  <Ionicons name="lock-closed" size={18} color="#0A0A0A" />
+                  <Text style={[styles.ctaText, { color: '#0A0A0A' }]}>
+                    {isGuest ? 'Create account to unlock' : 'Unlock with Premium'}
+                  </Text>
+                </>
+              )}
+            </PuckButton>
+          ) : (
+            <PuckButton
+              color={!isGuest && !canAfford ? colors.surfaceElevated : colors.primary}
+              borderRadius={16}
+              lip={5}
+              onPress={handleBuy}
+              disabled={busy}
+              contentStyle={styles.ctaContent}
             >
               {busy ? (
                 <ActivityIndicator color={colors.background} />
@@ -161,7 +213,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
                   </Text>
                 </>
               )}
-            </TouchableOpacity>
+            </PuckButton>
           )}
         </View>
       </SafeAreaView>
@@ -193,7 +245,10 @@ const makeStyles = (colors) => StyleSheet.create({
     position: 'absolute', bottom: 12, alignSelf: 'center',
     fontSize: 12, color: colors.textMuted, fontWeight: '500',
   },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  viewerLock: {
+    position: 'absolute', top: 12, left: 12,
+  },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' },
   name: { fontSize: 26, fontWeight: '800', color: colors.white, letterSpacing: -0.4, flexShrink: 1 },
   rarityChip: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1 },
   rarityChipText: { fontSize: 13, fontWeight: '800', textTransform: 'capitalize' },
@@ -207,12 +262,16 @@ const makeStyles = (colors) => StyleSheet.create({
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   priceValue: { fontSize: 24, fontWeight: '800', color: '#F5B72B' },
   footer: { paddingHorizontal: 20, paddingBottom: 16, paddingTop: 8 },
-  cta: {
+  ctaContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: colors.primary, borderRadius: 16, paddingVertical: 18,
+    paddingVertical: 18,
   },
-  ctaDisabled: { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border },
-  ctaEquipped: { backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)' },
+  ctaEquippedContent: {
+    backgroundColor: 'rgba(61,220,95,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(61,220,95,0.3)',
+    borderRadius: 16,
+  },
   ctaText: { fontSize: 17, fontWeight: '800', color: colors.background },
   ctaTextDisabled: { color: colors.textMuted },
 });

@@ -26,11 +26,11 @@ from .glb_preview import (
 
 from courses.models import (
     Module, Lesson, Question, Answer, UserProgress, UserStats, OnboardingQuestion,
-    Badge, DailyRewardTier,
+    Badge, DailyRewardTier, MoneyTip,
 )
 from moneyverse.models import Character, UserCharacter
 from social.campaigns import audience_push_stats, send_campaign
-from social.models import NotificationCampaign
+from social.models import NotificationCampaign, FeedPost, NotificationAutomation
 from ai.models import TutorConversation, MoneyChatSession
 from .pagination import AdminPagination
 from .permissions import IsAdminUserOrReadOnly
@@ -52,6 +52,9 @@ from .serializers import (
     MoneyChatSessionSerializer,
     MoneyChatSessionDetailSerializer,
     NotificationCampaignSerializer,
+    NotificationAutomationSerializer,
+    MoneyTipAdminSerializer,
+    FeedPostAdminSerializer,
 )
 
 User = get_user_model()
@@ -478,10 +481,13 @@ class UserViewSet(viewsets.ModelViewSet):
 
         xp = request.data.get('xp')
         bot_bucks = request.data.get('bot_bucks')
+        is_premium = request.data.get('is_premium')
         if xp is not None:
             stats.xp = max(0, int(xp))
         if bot_bucks is not None:
             stats.bot_bucks = max(0, int(bot_bucks))
+        if is_premium is not None:
+            stats.is_premium = bool(is_premium)
         stats.save()
         return Response(AdminUserSerializer(user).data)
 
@@ -620,6 +626,7 @@ class NotificationCampaignViewSet(viewsets.ModelViewSet):
     def _guard_editable(self, campaign):
         if campaign.status not in (
             NotificationCampaign.STATUS_DRAFT,
+            NotificationCampaign.STATUS_SCHEDULED,
             NotificationCampaign.STATUS_FAILED,
         ):
             return Response(
@@ -661,6 +668,40 @@ class NotificationCampaignViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(NotificationCampaignSerializer(sent).data)
+
+
+class NotificationAutomationViewSet(viewsets.ModelViewSet):
+    """CRUD + preview/run for notification automations."""
+    serializer_class = NotificationAutomationSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = AdminPagination
+
+    def get_queryset(self):
+        qs = NotificationAutomation.objects.all().prefetch_related('recipients')
+        search = (self.request.query_params.get('search') or '').strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(title__icontains=search))
+        enabled = self.request.query_params.get('enabled')
+        if enabled in ('true', 'false'):
+            qs = qs.filter(enabled=(enabled == 'true'))
+        return qs
+
+    @action(detail=True, methods=['get'])
+    def preview(self, request, pk=None):
+        from social.automations import preview_automation
+        automation = self.get_object()
+        return Response(preview_automation(automation))
+
+    @action(detail=True, methods=['post'])
+    def run(self, request, pk=None):
+        from social.automations import run_automation
+        automation = self.get_object()
+        count = run_automation(automation, force=True)
+        automation.refresh_from_db()
+        return Response({
+            'sent_count': count,
+            'automation': NotificationAutomationSerializer(automation).data,
+        })
 
 
 # --- Analytics --------------------------------------------------------------
@@ -921,3 +962,45 @@ def invites_list(request):
         }
 
     return paginator.get_paginated_response([row(inv) for inv in page])
+
+
+class MoneyTipViewSet(viewsets.ModelViewSet):
+    queryset = MoneyTip.objects.all()
+    serializer_class = MoneyTipAdminSerializer
+    permission_classes = [IsAdminUser]
+
+
+class FeedPostViewSet(viewsets.ModelViewSet):
+    serializer_class = FeedPostAdminSerializer
+    permission_classes = [IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        qs = FeedPost.objects.select_related('author').all()
+        status_filter = (self.request.query_params.get('status') or '').strip()
+        if status_filter in {
+            FeedPost.STATUS_PENDING,
+            FeedPost.STATUS_APPROVED,
+            FeedPost.STATUS_REJECTED,
+        }:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        post = self.get_object()
+        post.status = FeedPost.STATUS_APPROVED
+        post.reviewed_at = timezone.now()
+        post.reviewed_by = request.user
+        post.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+        return Response(self.get_serializer(post).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        post = self.get_object()
+        post.status = FeedPost.STATUS_REJECTED
+        post.reviewed_at = timezone.now()
+        post.reviewed_by = request.user
+        post.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+        return Response(self.get_serializer(post).data)

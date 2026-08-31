@@ -89,6 +89,7 @@ class UserStatsSerializer(serializers.ModelSerializer):
             'equipped_character', 'onboarding_completed', 'onboarding_score',
             'onboarding_total', 'onboarding_goals', 'rank', 'daily_reward_day',
             'daily_claim_streak', 'streak_goal', 'questions_correct', 'perfect_lessons',
+            'is_premium', 'chat_personality',
         ]
 
     def get_streak_days(self, obj):

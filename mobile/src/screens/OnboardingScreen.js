@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   Animated, Easing, ScrollView, PanResponder, Pressable, Alert, Linking, Image,
+  KeyboardAvoidingView, Keyboard, Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -203,6 +204,33 @@ function PressScaleButton({ style, disabled, onPress, children }) {
   );
 }
 
+/** If typewriter onDone never fires, still reveal the Continue CTA. */
+function useContinueFallback(onReady, ms = 10000) {
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    const timer = setTimeout(() => onReadyRef.current?.(), ms);
+    return () => clearTimeout(timer);
+  }, [ms]);
+}
+
+function OnboardingShell({ colors, isDark, styles, children, overlay, centered }) {
+  return (
+    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      {overlay}
+      <KeyboardAvoidingView
+        style={styles.gradient}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <SafeAreaView style={[styles.safe, centered && styles.center]} edges={['top']}>
+          {children}
+        </SafeAreaView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
+  );
+}
+
 function SegmentFill({ colors, state }) {
   const anim = useRef(new Animated.Value(state === 'done' ? 1 : 0)).current;
   useEffect(() => {
@@ -249,11 +277,13 @@ export default function OnboardingScreen() {
     claimingDaily,
     streakDays,
     lastActive,
+    equippedCharacter,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
-  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | character | error
+  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | character | error | submitError
   const [phase, setPhase] = useState('loading');
   const [questions, setQuestions] = useState([]);
   const [qIndex, setQIndex] = useState(0);
@@ -290,14 +320,22 @@ export default function OnboardingScreen() {
       setCalcLine(CALC_LINES[i]);
     }, 700);
 
-    const [res] = await Promise.all([
-      submitOnboarding(finalAnswers, finalGoals),
-      new Promise((r) => setTimeout(r, 1900)),
-    ]);
-
-    clearInterval(ticker);
-    setResult(res);
-    setPhase('reveal');
+    try {
+      const [res] = await Promise.all([
+        submitOnboarding(finalAnswers, finalGoals),
+        new Promise((r) => setTimeout(r, 1900)),
+      ]);
+      clearInterval(ticker);
+      if (!res) {
+        setPhase('submitError');
+        return;
+      }
+      setResult(res);
+      setPhase('reveal');
+    } catch (e) {
+      clearInterval(ticker);
+      setPhase('submitError');
+    }
   }, [submitOnboarding]);
 
   const handleAnswer = useCallback((question, optionId) => {
@@ -322,64 +360,72 @@ export default function OnboardingScreen() {
   // ---- Loading ----
   if (phase === 'loading') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={[styles.safe, styles.center]}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </OnboardingShell>
     );
   }
 
   // ---- Error fallback ----
   if (phase === 'error') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={[styles.safe, styles.center]}>
-          <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
-          <Text style={styles.errTitle}>Couldn{"'"}t load your money quiz</Text>
-          <Text style={styles.errText}>No worries. You can jump straight in and take it later.</Text>
-          <PrimaryButton styles={styles} colors={colors} label="Continue" onPress={finishOnboarding} />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
+        <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
+        <Text style={styles.errTitle}>Couldn{"'"}t load your money quiz</Text>
+        <Text style={styles.errText}>No worries. You can jump straight in and take it later.</Text>
+        <PrimaryButton styles={styles} colors={colors} label="Continue" onPress={finishOnboarding} />
+      </OnboardingShell>
+    );
+  }
+
+  if (phase === 'submitError') {
+    return (
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
+        <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
+        <Text style={styles.errTitle}>Couldn{"'"}t save your answers</Text>
+        <Text style={styles.errText}>Check your connection and try again. You{"'"}re not starting over.</Text>
+        <PrimaryButton
+          styles={styles}
+          colors={colors}
+          label="Try again"
+          icon="refresh"
+          onPress={() => runSubmit(answers, goals)}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Greet (MoneyBot intro) ----
   if (phase === 'greet') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={styles.safe}>
-          <GreetView
-            styles={styles}
-            colors={colors}
-            firstName={getFirstName(user)}
-            typingDone={greetDone}
-            onTypingDone={() => setGreetDone(true)}
-            onContinue={() => setPhase('goals')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <GreetView
+          styles={styles}
+          colors={colors}
+          firstName={getFirstName(user)}
+          typingDone={greetDone}
+          onTypingDone={() => setGreetDone(true)}
+          onContinue={() => setPhase('goals')}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Goals ----
   if (phase === 'goals') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={styles.safe}>
-          <GoalsView
-            styles={styles}
-            colors={colors}
-            selected={goals}
-            onToggle={toggleGoal}
-            onContinue={() => setPhase('question')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <GoalsView
+          styles={styles}
+          colors={colors}
+          selected={goals}
+          onToggle={toggleGoal}
+          onContinue={() => {
+            if (!questions.length) runSubmit(answers, goals);
+            else setPhase('question');
+          }}
+        />
+      </OnboardingShell>
     );
   }
 
@@ -387,31 +433,25 @@ export default function OnboardingScreen() {
   if (phase === 'between') {
     const betweenMessage = BETWEEN_LINES[qIndex] || BETWEEN_LINES[BETWEEN_LINES.length - 1];
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={styles.safe}>
-          <BetweenView
-            key={betweenMessage}
-            styles={styles}
-            colors={colors}
-            message={betweenMessage}
-            onContinue={continueFromBetween}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <BetweenView
+          key={betweenMessage}
+          styles={styles}
+          colors={colors}
+          message={betweenMessage}
+          onContinue={continueFromBetween}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Calculating ----
   if (phase === 'calculating') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={[styles.safe, styles.center]}>
-          <PulseLogo colors={colors} />
-          <Text style={styles.calcText}>{calcLine}</Text>
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
+        <PulseLogo colors={colors} />
+        <Text style={styles.calcText}>{calcLine}</Text>
+      </OnboardingShell>
     );
   }
 
@@ -421,20 +461,21 @@ export default function OnboardingScreen() {
     const score = result?.score;
     const total = result?.total;
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <ConfettiBurst colors={colors} />
-        <SafeAreaView style={styles.safe}>
-          <RevealView
-            styles={styles}
-            colors={colors}
-            rank={rank}
-            score={score}
-            total={total}
-            onDone={() => setPhase('reward')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell
+        colors={colors}
+        isDark={isDark}
+        styles={styles}
+        overlay={<ConfettiBurst colors={colors} />}
+      >
+        <RevealView
+          styles={styles}
+          colors={colors}
+          rank={rank}
+          score={score}
+          total={total}
+          onDone={() => setPhase('reward')}
+        />
+      </OnboardingShell>
     );
   }
 
@@ -442,95 +483,97 @@ export default function OnboardingScreen() {
   if (phase === 'reward') {
     const bonus = result?.onboarding_bonus || { bot_bucks: 25, xp: 10 };
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <ConfettiBurst colors={colors} />
-        <SafeAreaView style={styles.safe}>
-          <RewardView
-            styles={styles}
-            colors={colors}
-            botBucks={bonus.bot_bucks ?? 25}
-            xp={bonus.xp ?? 10}
-            onNext={() => setPhase('streak')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell
+        colors={colors}
+        isDark={isDark}
+        styles={styles}
+        overlay={<ConfettiBurst colors={colors} />}
+      >
+        <RewardView
+          styles={styles}
+          colors={colors}
+          botBucks={bonus.bot_bucks ?? 25}
+          xp={bonus.xp ?? 10}
+          onNext={() => setPhase('streak')}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Claim your streak (daily reward) ----
   if (phase === 'streak') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={styles.safe}>
-          <StreakClaimView
-            styles={styles}
-            colors={colors}
-            dailyReward={dailyReward}
-            claiming={claimingDaily}
-            onClaim={claimDailyReward}
-            onDone={() => setPhase('notifications')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <StreakClaimView
+          styles={styles}
+          colors={colors}
+          dailyReward={dailyReward}
+          claiming={claimingDaily}
+          onClaim={claimDailyReward}
+          onDone={() => setPhase('notifications')}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Notifications opt-in ----
   if (phase === 'notifications') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <SafeAreaView style={styles.safe}>
-          <NotificationsOptInView
-            styles={styles}
-            colors={colors}
-            firstName={getFirstName(user)}
-            streakDays={streakDays}
-            lastActive={lastActive}
-            onDone={() => setPhase('character')}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <NotificationsOptInView
+          styles={styles}
+          colors={colors}
+          firstName={getFirstName(user)}
+          streakDays={streakDays}
+          lastActive={lastActive}
+          onDone={() => setPhase('character')}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Free starter character (final step) ----
   if (phase === 'character') {
     return (
-      <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <ConfettiBurst colors={colors} />
-        <SafeAreaView style={styles.safe}>
-          <CharacterRewardView
-            styles={styles}
-            colors={colors}
-            claimStarterCharacter={claimStarterCharacter}
-            onDone={finishOnboarding}
-          />
-        </SafeAreaView>
-      </LinearGradient>
+      <OnboardingShell
+        colors={colors}
+        isDark={isDark}
+        styles={styles}
+        overlay={<ConfettiBurst colors={colors} />}
+      >
+        <CharacterRewardView
+          styles={styles}
+          colors={colors}
+          claimStarterCharacter={claimStarterCharacter}
+          equippedCharacter={equippedCharacter}
+          onDone={finishOnboarding}
+        />
+      </OnboardingShell>
     );
   }
 
   // ---- Question ----
   const question = questions[qIndex];
+  if (!question) {
+    return (
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={styles.calcText}>Getting your next question ready</Text>
+      </OnboardingShell>
+    );
+  }
 
   return (
-    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
-      <SafeAreaView style={styles.safe}>
-        <QuestionCard
-          key={question.id}
-          styles={styles}
-          colors={colors}
-          question={question}
-          guideMessage={QUESTION_GUIDE_LINES[qIndex] || QUESTION_GUIDE_LINES[QUESTION_GUIDE_LINES.length - 1]}
-          onAnswer={handleAnswer}
-        />
-      </SafeAreaView>
-    </LinearGradient>
+    <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+      <QuestionCard
+        key={question.id}
+        styles={styles}
+        colors={colors}
+        question={question}
+        guideMessage={QUESTION_GUIDE_LINES[qIndex] || QUESTION_GUIDE_LINES[QUESTION_GUIDE_LINES.length - 1]}
+        onAnswer={handleAnswer}
+      />
+    </OnboardingShell>
   );
 }
 
@@ -540,6 +583,8 @@ function QuestionCard({ styles, colors, question, guideMessage, onAnswer }) {
   const [guideDone, setGuideDone] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [confirmOptionId, setConfirmOptionId] = useState(null);
+  const markGuideDone = useCallback(() => setGuideDone(true), []);
+  useContinueFallback(markGuideDone, 9000);
 
   useEffect(() => {
     anim.setValue(0);
@@ -569,12 +614,14 @@ function QuestionCard({ styles, colors, question, guideMessage, onAnswer }) {
         },
       ]}
     >
-      <MoneyBotGuide
-        message={guideMessage}
-        onDone={() => setGuideDone(true)}
-        avatarSize={56}
-        style={styles.qGuide}
-      />
+      <Pressable onPress={markGuideDone}>
+        <MoneyBotGuide
+          message={guideMessage}
+          onDone={markGuideDone}
+          avatarSize={56}
+          style={styles.qGuide}
+        />
+      </Pressable>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -583,6 +630,7 @@ function QuestionCard({ styles, colors, question, guideMessage, onAnswer }) {
         scrollEnabled={!dragging}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.qScroll}
+        keyboardDismissMode="on-drag"
       >
         {guideDone && (
           <>
@@ -1081,6 +1129,8 @@ function GoalChip({ styles, colors, goal, index, selected, onToggle }) {
 function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
   const anim = useRef(new Animated.Value(0)).current;
   const [guideDone, setGuideDone] = useState(false);
+  const markGuideDone = useCallback(() => setGuideDone(true), []);
+  useContinueFallback(markGuideDone, 9000);
 
   useEffect(() => {
     Animated.timing(anim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -1098,17 +1148,21 @@ function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
         },
       ]}
     >
-      <View style={styles.goalsHeader}>
+      <Pressable style={styles.goalsHeader} onPress={markGuideDone}>
         <MoneyBotGuide
           message={GOALS_GUIDE_MESSAGE}
-          onDone={() => setGuideDone(true)}
+          onDone={markGuideDone}
           avatarSize={64}
         />
-      </View>
+      </Pressable>
 
       {guideDone && (
         <>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.goalsScroll}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.goalsScroll}
+          >
             <View style={styles.goalsGrid}>
               {GOALS.map((g, i) => (
                 <GoalChip
@@ -1141,6 +1195,7 @@ function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
 
 function GreetView({ styles, colors, firstName, typingDone, onTypingDone, onContinue }) {
   const anim = useRef(new Animated.Value(0)).current;
+  useContinueFallback(onTypingDone, 12000);
   useEffect(() => {
     Animated.spring(anim, { toValue: 1, friction: 7, tension: 55, useNativeDriver: true }).start();
   }, []);
@@ -1150,47 +1205,63 @@ function GreetView({ styles, colors, firstName, typingDone, onTypingDone, onCont
     : GREET_MESSAGE;
 
   return (
-    <View style={styles.greetWrap}>
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }],
-        }}
-      >
-        <View style={styles.greetAvatarRing}>
-          <Image source={GUIDE_IMAGE} style={styles.greetAvatar} resizeMode="contain" />
-        </View>
-        <Text style={styles.rewardKicker}>MEET YOUR COACH</Text>
-        <Text style={styles.greetTitle}>MoneyBot</Text>
-      </Animated.View>
+    <ScrollView
+      style={styles.flexFill}
+      contentContainerStyle={styles.greetScroll}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
+      <View style={styles.greetWrap}>
+        <Animated.View
+          style={{
+            alignItems: 'center',
+            opacity: anim,
+            transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }],
+          }}
+        >
+          <View style={styles.greetAvatarRing}>
+            <Image source={GUIDE_IMAGE} style={styles.greetAvatar} resizeMode="contain" />
+          </View>
+          <Text style={styles.rewardKicker}>MEET YOUR COACH</Text>
+          <Text style={styles.greetTitle}>MoneyBot</Text>
+        </Animated.View>
 
-      <View style={styles.greetBubble}>
-        <TypewriterText
-          key={message}
-          text={message}
-          style={styles.greetMessage}
-          speed={24}
-          onDone={onTypingDone}
-        />
+        <Pressable onPress={onTypingDone} style={styles.greetBubble}>
+          <TypewriterText
+            key={message}
+            text={message}
+            style={styles.greetMessage}
+            speed={24}
+            onDone={onTypingDone}
+          />
+        </Pressable>
+
+        {typingDone && (
+          <PrimaryButton
+            styles={styles}
+            colors={colors}
+            label="Let's go"
+            icon="arrow-forward"
+            onPress={onContinue}
+          />
+        )}
       </View>
-
-      {typingDone && (
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="Let's go"
-          icon="arrow-forward"
-          onPress={onContinue}
-        />
-      )}
-    </View>
+    </ScrollView>
   );
 }
 
-function BetweenView({ styles, message, onContinue }) {
+function BetweenView({ styles, colors, message, onContinue }) {
   const [typed, setTyped] = useState(false);
   const advanced = useRef(false);
+  const markTyped = useCallback(() => setTyped(true), []);
+  useContinueFallback(markTyped, 8000);
+
+  const go = useCallback(() => {
+    if (advanced.current) return;
+    advanced.current = true;
+    onContinue();
+  }, [onContinue]);
 
   useEffect(() => {
     advanced.current = false;
@@ -1199,56 +1270,81 @@ function BetweenView({ styles, message, onContinue }) {
 
   useEffect(() => {
     if (!typed || advanced.current) return undefined;
-    const timer = setTimeout(() => {
-      if (advanced.current) return;
-      advanced.current = true;
-      onContinue();
-    }, 3000);
+    const timer = setTimeout(go, 3000);
     return () => clearTimeout(timer);
-  }, [typed, onContinue]);
+  }, [typed, go]);
 
   return (
     <View style={styles.betweenWrap}>
-      <MoneyBotGuide
-        key={message}
-        message={message}
-        onDone={() => setTyped(true)}
-        avatarSize={72}
-        style={styles.betweenGuide}
-      />
+      <Pressable onPress={markTyped}>
+        <MoneyBotGuide
+          key={message}
+          message={message}
+          onDone={markTyped}
+          avatarSize={72}
+          style={styles.betweenGuide}
+        />
+      </Pressable>
+      {typed && (
+        <PrimaryButton
+          styles={styles}
+          colors={colors}
+          label="Continue"
+          icon="arrow-forward"
+          onPress={go}
+        />
+      )}
     </View>
   );
 }
 
-function CharacterRewardView({ styles, colors, claimStarterCharacter, onDone }) {
+function CharacterRewardView({ styles, colors, claimStarterCharacter, equippedCharacter, onDone }) {
   const anim = useRef(new Animated.Value(0)).current;
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [character, setCharacter] = useState(null);
   const [typed, setTyped] = useState(false);
   const claimedRef = useRef(false);
 
+  const showCharacter = useCallback((granted) => {
+    setCharacter(granted);
+    setStatus('ready');
+    anim.setValue(0);
+    Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
+  }, [anim]);
+
   const retryClaim = useCallback(async () => {
     setStatus('loading');
     try {
       const result = await claimStarterCharacter();
-      if (result?.character) {
-        setCharacter(result.character);
-        setStatus('ready');
-        anim.setValue(0);
-        Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
+      const granted = result?.character || equippedCharacter;
+      if (granted) {
+        showCharacter(granted);
       } else {
         setStatus('error');
       }
     } catch (e) {
-      setStatus('error');
+      if (equippedCharacter) {
+        showCharacter(equippedCharacter);
+      } else {
+        setStatus('error');
+      }
     }
-  }, [claimStarterCharacter, anim]);
+  }, [claimStarterCharacter, equippedCharacter, showCharacter]);
 
   useEffect(() => {
     if (claimedRef.current) return;
     claimedRef.current = true;
     retryClaim();
   }, [retryClaim]);
+
+  useEffect(() => {
+    if (status === 'error' && equippedCharacter) {
+      showCharacter(equippedCharacter);
+    }
+  }, [status, equippedCharacter, showCharacter]);
+
+  const markTyped = useCallback(() => setTyped(true), []);
+  useContinueFallback(markTyped, 10000);
 
   if (status === 'loading') {
     return (
@@ -1293,7 +1389,7 @@ function CharacterRewardView({ styles, colors, claimStarterCharacter, onDone }) 
         <Text style={styles.rewardTitle}>{name}</Text>
       </Animated.View>
 
-      <View style={styles.greetBubble}>
+      <Pressable onPress={markTyped} style={styles.greetBubble}>
         <View style={styles.charGuideRow}>
           <Image source={GUIDE_IMAGE} style={styles.charGuideThumb} resizeMode="contain" />
           <TypewriterText
@@ -1301,10 +1397,10 @@ function CharacterRewardView({ styles, colors, claimStarterCharacter, onDone }) 
             text={message}
             style={styles.greetMessage}
             speed={22}
-            onDone={() => setTyped(true)}
+            onDone={markTyped}
           />
         </View>
-      </View>
+      </Pressable>
 
       {typed && (
         <PrimaryButton
@@ -1328,7 +1424,14 @@ function RevealView({ styles, colors, rank, score, total, onDone }) {
   }, []);
 
   return (
-    <View style={styles.revealWrap}>
+    <ScrollView
+      style={styles.flexFill}
+      contentContainerStyle={styles.greetScroll}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
+      <View style={styles.revealWrap}>
       <Animated.View
         style={{
           alignItems: 'center',
@@ -1365,6 +1468,7 @@ function RevealView({ styles, colors, rank, score, total, onDone }) {
 
       <PrimaryButton styles={styles} colors={colors} label="Claim my rewards" icon="arrow-forward" onPress={onDone} />
     </View>
+    </ScrollView>
   );
 }
 
@@ -1439,6 +1543,13 @@ function RewardView({ styles, colors, botBucks, xp, onNext }) {
   }, []);
 
   return (
+    <ScrollView
+      style={styles.flexFill}
+      contentContainerStyle={styles.greetScroll}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
     <View style={styles.rewardWrap}>
       <Animated.View
         style={{
@@ -1480,6 +1591,7 @@ function RewardView({ styles, colors, botBucks, xp, onNext }) {
 
       <PrimaryButton styles={styles} colors={colors} label="Nice, keep going" icon="arrow-forward" onPress={onNext} />
     </View>
+    </ScrollView>
   );
 }
 
@@ -1516,30 +1628,38 @@ function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDon
   }, []);
 
   async function handleClaim() {
-    const result = await onClaim({ streakGoal: goalDays });
-    const got = result?.bot_bucks_earned ?? amount;
-    setEarned(got);
-    setClaimed(true);
+    try {
+      const result = await onClaim({ streakGoal: goalDays });
+      if (!result) {
+        Alert.alert('Couldn\u2019t claim Day 1', 'Give it another tap in a second.');
+        return;
+      }
+      const got = result?.bot_bucks_earned ?? amount;
+      setEarned(got);
+      setClaimed(true);
 
-    // Flame whoosh + reward card pop on successful claim.
-    flameLoop.current?.stop();
-    claimBurst.setValue(0);
-    Animated.parallel([
-      Animated.sequence([
-        Animated.spring(flame, { toValue: 1.45, friction: 4, tension: 120, useNativeDriver: true }),
-        Animated.spring(flame, { toValue: 1.08, friction: 5, tension: 80, useNativeDriver: true }),
-      ]),
-      Animated.timing(claimBurst, {
-        toValue: 1,
-        duration: 700,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.sequence([
-        Animated.spring(cardPop, { toValue: 1.06, friction: 5, tension: 140, useNativeDriver: true }),
-        Animated.spring(cardPop, { toValue: 1, friction: 6, tension: 100, useNativeDriver: true }),
-      ]),
-    ]).start();
+      // Flame whoosh + reward card pop on successful claim.
+      flameLoop.current?.stop();
+      claimBurst.setValue(0);
+      Animated.parallel([
+        Animated.sequence([
+          Animated.spring(flame, { toValue: 1.45, friction: 4, tension: 120, useNativeDriver: true }),
+          Animated.spring(flame, { toValue: 1.08, friction: 5, tension: 80, useNativeDriver: true }),
+        ]),
+        Animated.timing(claimBurst, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.sequence([
+          Animated.spring(cardPop, { toValue: 1.06, friction: 5, tension: 140, useNativeDriver: true }),
+          Animated.spring(cardPop, { toValue: 1, friction: 6, tension: 100, useNativeDriver: true }),
+        ]),
+      ]).start();
+    } catch (e) {
+      Alert.alert('Couldn\u2019t claim Day 1', 'Give it another tap in a second.');
+    }
   }
 
   function pickGoal(days) {
@@ -1555,6 +1675,7 @@ function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDon
       style={styles.streakWrap}
       contentContainerStyle={styles.streakScroll}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       bounces={false}
     >
       <Animated.View
@@ -1737,8 +1858,6 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
     setBusy(true);
     try {
       if (!areNotificationsSupported()) {
-        console.log('[Onboarding][notif] native module NOT linked in this build');
-        setBusy(false);
         Alert.alert(
           'Almost there',
           "Notifications aren't available in this build yet. Rebuild the dev client to enable them:\n\ncd mobile && npx expo run:ios",
@@ -1750,12 +1869,29 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
       const info = await getNotificationPermissionInfo();
       console.log('[Onboarding][notif] permission before request:', info);
 
+      const saveAndSync = async () => {
+        const prefs = await loadNotificationPrefs();
+        const next = { ...prefs, daily: true, streak: true };
+        await saveNotificationPrefs(next);
+        const result = await syncNotificationSchedule(next, {
+          firstName,
+          streakDays,
+          activeToday: lastActive === localDate(),
+        });
+        console.log('[Onboarding][notif] sync result:', result);
+      };
+
+      if (info.status === 'granted') {
+        await saveAndSync();
+        onDone();
+        return;
+      }
+
       // Already decided at the OS level: iOS won't show the system prompt again.
       if (info.status === 'denied' || !info.canAskAgain) {
-        setBusy(false);
         Alert.alert(
           'Turn on in Settings',
-          "Notifications are currently off for MoneyBot. iOS only asks once, so open Settings to switch them on.",
+          "Notifications are currently off for MoneyBot. iOS only asks once, so open Settings to switch them on. You can keep going either way.",
           [
             { text: 'Not now', style: 'cancel', onPress: onDone },
             { text: 'Open Settings', onPress: () => { Linking.openSettings(); onDone(); } },
@@ -1764,20 +1900,13 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
         return;
       }
 
-      // status === 'undetermined' (or granted): this triggers the system prompt.
-      const prefs = await loadNotificationPrefs();
-      const next = { ...prefs, daily: true, streak: true };
-      await saveNotificationPrefs(next);
-      const result = await syncNotificationSchedule(next, {
-        firstName,
-        streakDays,
-        activeToday: lastActive === localDate(),
-      });
-      console.log('[Onboarding][notif] sync result:', result);
+      await saveAndSync();
+      onDone();
     } catch (err) {
       console.log('[Onboarding][notif] error:', err?.message || err);
-    } finally {
       onDone();
+    } finally {
+      setBusy(false);
     }
   }, [busy, firstName, streakDays, lastActive, onDone]);
 
@@ -1788,6 +1917,7 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
       style={styles.notifWrap}
       contentContainerStyle={styles.notifScroll}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       bounces={false}
     >
       <Animated.View
@@ -1863,7 +1993,14 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
 
 function PrimaryButton({ styles, colors, label, icon, onPress, disabled }) {
   return (
-    <PressScaleButton style={styles.primaryBtn} onPress={onPress} disabled={disabled}>
+    <PressScaleButton
+      style={styles.primaryBtn}
+      onPress={() => {
+        Keyboard.dismiss();
+        onPress?.();
+      }}
+      disabled={disabled}
+    >
       <LinearGradient
         colors={[colors.primary, colors.primaryDark]}
         style={styles.primaryBtnGrad}
@@ -1902,10 +2039,13 @@ function PulseLogo({ colors }) {
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
+const makeStyles = (colors, bottomInset = 16) => {
+  const footerPad = Math.max(bottomInset, 16);
+  return StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 32 },
+  flexFill: { flex: 1 },
+  center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 32, paddingBottom: footerPad },
 
   // Goals
   goalsWrap: { flex: 1, paddingTop: 12 },
@@ -1934,10 +2074,11 @@ const makeStyles = (colors) => StyleSheet.create({
     position: 'absolute', top: 10, right: 10, width: 20, height: 20, borderRadius: 10,
     backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
   },
-  goalsFooter: { paddingHorizontal: 24, paddingTop: 10, paddingBottom: 16 },
+  goalsFooter: { paddingHorizontal: 24, paddingTop: 10, paddingBottom: footerPad },
 
   // Greet
-  greetWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center', gap: 22 },
+  greetWrap: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 8, justifyContent: 'center', gap: 22 },
+  greetScroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: footerPad },
   greetAvatarRing: {
     width: 132, height: 132, borderRadius: 66, overflow: 'hidden', marginBottom: 16,
     borderWidth: 2, borderColor: 'rgba(61,220,95,0.45)', backgroundColor: colors.surfaceElevated,
@@ -1952,7 +2093,7 @@ const makeStyles = (colors) => StyleSheet.create({
   betweenWrap: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingBottom: 24,
+    paddingBottom: footerPad,
     justifyContent: 'center',
     gap: 28,
   },
@@ -1985,7 +2126,7 @@ const makeStyles = (colors) => StyleSheet.create({
   qFooter: {
     paddingHorizontal: 24,
     paddingTop: 8,
-    paddingBottom: 16,
+    paddingBottom: footerPad,
   },
   qGuide: { paddingHorizontal: 24, paddingTop: 12 },
   qPrompt: { fontSize: 19, fontWeight: '700', color: colors.white, textAlign: 'center', lineHeight: 26, marginBottom: 16 },
@@ -2082,7 +2223,7 @@ const makeStyles = (colors) => StyleSheet.create({
   calcText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
 
   // Reveal
-  revealWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center' },
+  revealWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: footerPad, justifyContent: 'center' },
   revealKicker: { fontSize: 13, fontWeight: '800', color: colors.textMuted, letterSpacing: 1.5, marginBottom: 18 },
   revealBadge: {
     width: 128, height: 128, borderRadius: 64, alignItems: 'center', justifyContent: 'center',
@@ -2099,7 +2240,7 @@ const makeStyles = (colors) => StyleSheet.create({
   revealCardText: { flex: 1, fontSize: 14, color: colors.offWhite, lineHeight: 20 },
 
   // Reward (welcome bonus)
-  rewardWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: 16, justifyContent: 'center' },
+  rewardWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: footerPad, justifyContent: 'center' },
   rewardBadge: {
     width: 104, height: 104, borderRadius: 52, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 20,
@@ -2124,7 +2265,7 @@ const makeStyles = (colors) => StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 24,
     paddingTop: 12,
-    paddingBottom: 24,
+    paddingBottom: footerPad,
     justifyContent: 'center',
   },
   streakBadgeWrap: {
@@ -2193,7 +2334,7 @@ const makeStyles = (colors) => StyleSheet.create({
   notifScroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingBottom: 16,
+    paddingBottom: footerPad,
     justifyContent: 'center',
   },
   notifBadge: {
@@ -2239,3 +2380,4 @@ const makeStyles = (colors) => StyleSheet.create({
   errTitle: { fontSize: 20, fontWeight: '800', color: colors.white, textAlign: 'center' },
   errText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 21, marginBottom: 8 },
 });
+};

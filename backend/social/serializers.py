@@ -1,0 +1,24 @@
+from rest_framework import serializers
+
+from moneybot.media_urls import absolute_media_url
+from .models import FeedPost
+from .service import serialize_user_brief
+
+
+class FeedPostSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    author = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FeedPost
+        fields = (
+            'id', 'author', 'image_url', 'caption', 'link',
+            'status', 'created_at',
+        )
+        read_only_fields = fields
+
+    def get_image_url(self, obj):
+        return absolute_media_url(obj.image, self.context.get('request'))
+
+    def get_author(self, obj):
+        return serialize_user_brief(obj.author, self.context.get('request'))

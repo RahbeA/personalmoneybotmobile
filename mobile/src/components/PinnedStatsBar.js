@@ -16,6 +16,7 @@ export default function PinnedStatsBar({
   lessonsCompleted,
   xp,
   onPress,
+  onStatPress,
   variant = 'strip',
   style,
 }) {
@@ -25,25 +26,44 @@ export default function PinnedStatsBar({
 
   const values = { streakDays, botBucks, lessonsCompleted, xp };
 
+  function renderStat(item, compact) {
+    const inner = (
+      <>
+        <Ionicons name={item.icon} size={compact ? 10 : 13} color={colors[item.colorKey]} />
+        <Text style={compact ? styles.cornerVal : styles.val}>{values[item.field] ?? 0}</Text>
+        {!compact ? <Text style={styles.lbl}>{item.label}</Text> : null}
+      </>
+    );
+    if (onStatPress) {
+      return (
+        <TouchableOpacity
+          key={item.key}
+          style={compact ? styles.cornerCell : styles.cell}
+          activeOpacity={0.75}
+          onPress={() => onStatPress(item.key)}
+          hitSlop={compact ? 6 : 4}
+        >
+          {inner}
+        </TouchableOpacity>
+      );
+    }
+    return (
+      <View key={item.key} style={compact ? styles.cornerCell : styles.cell}>
+        {inner}
+      </View>
+    );
+  }
+
   const content = isCorner ? (
     <View style={styles.cornerRow}>
-      {STAT_ITEMS.map((item) => (
-        <View key={item.key} style={styles.cornerCell}>
-          <Ionicons name={item.icon} size={10} color={colors[item.colorKey]} />
-          <Text style={styles.cornerVal}>{values[item.field] ?? 0}</Text>
-        </View>
-      ))}
+      {STAT_ITEMS.map((item) => renderStat(item, true))}
     </View>
   ) : (
     <View style={styles.strip}>
       {STAT_ITEMS.map((item, index) => (
         <React.Fragment key={item.key}>
           {index > 0 && <View style={styles.divider} />}
-          <View style={styles.cell}>
-            <Ionicons name={item.icon} size={13} color={colors[item.colorKey]} />
-            <Text style={styles.val}>{values[item.field] ?? 0}</Text>
-            <Text style={styles.lbl}>{item.label}</Text>
-          </View>
+          {renderStat(item, false)}
         </React.Fragment>
       ))}
     </View>
@@ -51,7 +71,7 @@ export default function PinnedStatsBar({
 
   const wrapStyle = [isCorner ? styles.cornerWrap : styles.wrap, style];
 
-  if (onPress) {
+  if (onPress && !onStatPress) {
     return (
       <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={wrapStyle}>
         {content}

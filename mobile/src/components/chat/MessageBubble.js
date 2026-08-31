@@ -1,51 +1,66 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../context/ThemeContext';
 import BrandAvatar from '../brand/BrandAvatar';
 import MessageText from './MessageText';
 
 export default function MessageBubble({ role, content, character }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const isUser = role === 'user';
 
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       {!isUser && (
-        <BrandAvatar character={character} size={28} style={styles.avatar} logoSize={18} />
+        <BrandAvatar character={character} size={32} style={styles.avatar} logoSize={18} />
       )}
-      <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <MessageText
-          content={content}
-          style={[styles.text, isUser ? styles.textUser : styles.textAssistant]}
-        />
-      </View>
+      {isUser ? (
+        <LinearGradient
+          colors={[colors.primaryLight, colors.primary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.bubble, styles.bubbleUser]}
+        >
+          <MessageText content={content} style={[styles.text, styles.textUser]} />
+        </LinearGradient>
+      ) : (
+        <View style={[styles.bubble, styles.bubbleAssistant]}>
+          <MessageText content={content} style={[styles.text, styles.textAssistant]} />
+        </View>
+      )}
     </View>
   );
 }
 
-const makeStyles = (colors) => StyleSheet.create({
-  row: { width: '100%', marginVertical: 4, flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+const makeStyles = (colors, isDark) => StyleSheet.create({
+  row: {
+    width: '100%',
+    marginVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+  },
   rowUser: { justifyContent: 'flex-end' },
   rowAssistant: { justifyContent: 'flex-start' },
   avatar: { marginBottom: 2 },
   bubble: {
-    maxWidth: '72%',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
+    maxWidth: '80%',
+    paddingHorizontal: 15,
+    paddingVertical: 12,
   },
   bubbleUser: {
-    backgroundColor: colors.primary,
+    borderRadius: 22,
     borderBottomRightRadius: 6,
   },
   bubbleAssistant: {
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: isDark ? 'rgba(255,255,255,0.07)' : colors.border,
+    borderRadius: 22,
     borderBottomLeftRadius: 6,
   },
-  text: { fontSize: 15, lineHeight: 21 },
-  textUser: { color: colors.background, fontWeight: '500' },
-  textAssistant: { color: colors.white },
+  text: { fontSize: 16, lineHeight: 23 },
+  textUser: { color: '#0A0A0A', fontWeight: '600' },
+  textAssistant: { color: colors.white, fontWeight: '500' },
 });

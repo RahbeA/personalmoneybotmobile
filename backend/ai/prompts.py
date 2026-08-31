@@ -2,7 +2,29 @@
 import json
 
 
-def tutor_system_prompt(profile, outline, relevant):
+def personality_voice(personality):
+    voices = {
+        'chill': (
+            "VOICE: chill friend. Casual, warm, short. Light emoji is ok. "
+            "Never lecture."
+        ),
+        'coach': (
+            "VOICE: encouraging coach. Motivating and action-oriented, still concise. "
+            "Celebrate effort, then give one next step."
+        ),
+        'funny': (
+            "VOICE: playful and lightly funny. Jokes stay kind and on-topic. "
+            "Never mean, sexual, or off-color. Still educational."
+        ),
+        'teacher': (
+            "VOICE: straight-up teacher. Clear, structured, slightly more formal, still kind. "
+            "Short paragraphs. No slang unless the learner uses it first."
+        ),
+    }
+    return voices.get(personality or 'chill', voices['chill'])
+
+
+def tutor_system_prompt(profile, outline, relevant, personality='chill'):
     profile_block = ''
     if profile and (profile.memory or profile.learning_style):
         profile_block = (
@@ -23,7 +45,8 @@ def tutor_system_prompt(profile, outline, relevant):
         "general financial knowledge, but never give individualized financial, legal, or "
         "tax advice - keep it educational.\n"
         "- If a question is unrelated to personal finance or the course, gently steer back.\n"
-        "- Adapt to the learner's style when known.\n\n"
+        "- Adapt to the learner's style when known.\n"
+        f"- {personality_voice(personality)}\n\n"
         f"{outline}\n"
         f"{relevant_block}"
         f"{profile_block}"
@@ -84,7 +107,7 @@ def benchmark_generation_messages(module_title, module_ctx, custom_criteria):
     ]
 
 
-def money_chat_system_prompt(module_title, module_ctx, benchmarks, profile):
+def money_chat_system_prompt(module_title, module_ctx, benchmarks, profile, personality='chill'):
     benchmarks_json = json.dumps(benchmarks, ensure_ascii=False)
     profile_block = ''
     if profile and profile.learning_style:
@@ -94,7 +117,8 @@ def money_chat_system_prompt(module_title, module_ctx, benchmarks, profile):
         "You are 'Money Chat' - a chill, friendly buddy texting the user to check what they "
         "learned, iMessage style. Keep it casual and warm (light emoji ok, never cringe). "
         "Send SHORT text-message-length replies. Ask one thing at a time, react naturally to "
-        "their answers, and gently nudge if they're off. Do NOT lecture or dump info.\n\n"
+        "their answers, and gently nudge if they're off. Do NOT lecture or dump info.\n"
+        f"{personality_voice(personality)}\n\n"
         "Your goal: through natural conversation, check whether the user demonstrates each "
         "benchmark below. Mark a benchmark met only when the user actually shows understanding "
         "in their own words (not because you explained it). When all benchmarks are met, set "

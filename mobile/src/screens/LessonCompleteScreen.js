@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { BrandAvatar, LevelUpModal } from '../components/brand';
+import PuckButton from '../components/PuckButton';
 
 const CONFETTI_COLORS = ['#3DDC5F', '#FFD700', '#FF6B35', '#00CED1', '#9B59B6', '#E74C3C'];
 
@@ -166,18 +167,19 @@ export default function LessonCompleteScreen({ navigation, route }) {
         </Animated.View>
 
         <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <TouchableOpacity style={styles.continueBtn} onPress={handleContinue} activeOpacity={0.85}>
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.continueBtnGrad}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.continueBtnText}>
-                {moduleComplete ? 'Start Money Chat' : 'Back to Roadmap'}
-              </Text>
-              <Ionicons name="arrow-forward" size={20} color={colors.background} />
-            </LinearGradient>
-          </TouchableOpacity>
+          <PuckButton
+            color={colors.primary}
+            height={56}
+            borderRadius={18}
+            lip={5}
+            onPress={handleContinue}
+            contentStyle={styles.continueInner}
+          >
+            <Text style={styles.continueBtnText}>
+              {moduleComplete ? 'Start Money Chat' : 'Back to Roadmap'}
+            </Text>
+            <Ionicons name="arrow-forward" size={20} color={colors.background} />
+          </PuckButton>
         </Animated.View>
       </SafeAreaView>
 
@@ -216,10 +218,8 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   badgeBannerText: { fontSize: 15, fontWeight: '700', color: '#FFD700' },
   footer: { paddingBottom: 16 },
-  continueBtn: { borderRadius: 18, overflow: 'hidden' },
-  continueBtnGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 10, paddingVertical: 18, borderRadius: 18,
+  continueInner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
   },
   continueBtnText: { fontSize: 17, fontWeight: '800', color: colors.background },
 });

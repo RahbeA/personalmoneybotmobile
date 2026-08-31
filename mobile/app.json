@@ -24,7 +24,8 @@
             ]
           }
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "MoneyBot uses your photos so you can share a money tip in the Feed."
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -63,12 +64,21 @@
       "expo-web-browser",
       "expo-apple-authentication",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "MoneyBot uses your photos so you can share a money tip in the Feed.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/logo.png",
           "color": "#3DDC5F"
         }
-      ]
+      ],
+      "expo-localization"
     ]
   }
 }

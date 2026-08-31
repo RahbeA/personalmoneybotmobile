@@ -179,9 +179,62 @@ class UserStats(models.Model):
     questions_correct = models.PositiveIntegerField(default=0)
     questions_answered = models.PositiveIntegerField(default=0)
     perfect_lessons = models.PositiveIntegerField(default=0)
+    is_premium = models.BooleanField(
+        default=False,
+        help_text='RevenueCat / admin-granted premium entitlement (DEV-576 / DEV-594).',
+    )
+    CHAT_CHILL = 'chill'
+    CHAT_COACH = 'coach'
+    CHAT_FUNNY = 'funny'
+    CHAT_TEACHER = 'teacher'
+    CHAT_PERSONALITY_CHOICES = [
+        (CHAT_CHILL, 'Chill friend'),
+        (CHAT_COACH, 'Coach'),
+        (CHAT_FUNNY, 'Funny'),
+        (CHAT_TEACHER, 'Straight-up teacher'),
+    ]
+    chat_personality = models.CharField(
+        max_length=16,
+        choices=CHAT_PERSONALITY_CHOICES,
+        default=CHAT_CHILL,
+        help_text='Tutor / Money Chat voice preset (DEV-656).',
+    )
+    last_money_tip = models.ForeignKey(
+        'MoneyTip',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+        help_text='Last Home tip shown, so daily rotation does not repeat (DEV-661).',
+    )
 
     def __str__(self):
         return f"{self.user.email} — {self.xp} XP, {self.streak_days} day streak"
+
+
+class MoneyTip(models.Model):
+    """Admin-authored Home 'Today's Tip' lines (DEV-660 / DEV-661)."""
+
+    CATEGORY_CHOICES = [
+        ('general', 'General'),
+        ('budget', 'Budget'),
+        ('investing', 'Investing'),
+        ('credit', 'Credit'),
+        ('saving', 'Saving'),
+        ('stocks', 'Stocks'),
+    ]
+
+    body = models.CharField(max_length=280)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='general')
+    is_active = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f'[{self.category}] {self.body[:48]}'
 
 
 class Badge(models.Model):
@@ -198,6 +251,7 @@ class Badge(models.Model):
         ('xp', 'Total XP'),
         ('onboarding_score', 'Onboarding score'),
         ('characters_owned', 'Characters owned'),
+        ('friends_count', 'Accepted friends'),
         ('questions_correct', 'Questions answered correctly'),
         ('perfect_lessons', 'Perfect lessons (0 mistakes)'),
     ]

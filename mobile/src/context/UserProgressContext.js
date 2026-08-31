@@ -93,6 +93,9 @@ export function UserProgressProvider({ children }) {
   const [modules, setModules] = useState([]);
   const [botBucks, setBotBucks] = useState(0);
   const [equippedCharacter, setEquippedCharacter] = useState(null);
+  const [isPremium, setIsPremium] = useState(false);
+  const [chatPersonality, setChatPersonality] = useState('chill');
+  const [moneyTip, setMoneyTip] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [charactersLoading, setCharactersLoading] = useState(false);
   const syncGeneration = useRef(0);
@@ -172,6 +175,13 @@ export function UserProgressProvider({ children }) {
     setLessonsCompleted(Math.max(statsData.lessons_completed || 0, merged.size));
     setBotBucks(statsData.bot_bucks || 0);
     setEquippedCharacter(statsData.equipped_character || null);
+    setIsPremium(!!statsData.is_premium);
+    if (statsData.chat_personality) {
+      setChatPersonality(statsData.chat_personality);
+    }
+    if (statsData.money_tip !== undefined) {
+      setMoneyTip(statsData.money_tip);
+    }
     const completed = inferOnboardingCompleted(statsData);
     setOnboardingScore(statsData.onboarding_score || 0);
     setOnboardingTotal(statsData.onboarding_total || 5);
@@ -638,6 +648,24 @@ export function UserProgressProvider({ children }) {
     }
   }
 
+  async function updatePersonality(personality) {
+    if (!token) return null;
+    const previous = chatPersonality;
+    setChatPersonality(personality);
+    try {
+      const result = await coursesApi.updatePersonality(token, personality);
+      const saved = result.chat_personality || personality;
+      setChatPersonality(saved);
+      if (user?.id) {
+        await invalidateCache(cacheKeys.progress(user.id));
+      }
+      return saved;
+    } catch (e) {
+      setChatPersonality(previous);
+      throw e;
+    }
+  }
+
   // Flip the gate so the root navigator swaps onboarding for the main app,
   // and land the user on the Moneyverse tab to meet their free starter character.
   function finishOnboarding() {
@@ -734,6 +762,9 @@ export function UserProgressProvider({ children }) {
         modules,
         botBucks,
         equippedCharacter,
+        isPremium,
+        chatPersonality,
+        moneyTip,
         characters,
         charactersLoading,
         onboardingCompleted,
@@ -741,6 +772,7 @@ export function UserProgressProvider({ children }) {
         onboardingTotal,
         onboardingGoals,
         updateGoals,
+        updatePersonality,
         pendingFirstLesson,
         clearPendingFirstLesson,
         pendingMoneyverseIntro,

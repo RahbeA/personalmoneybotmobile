@@ -49,6 +49,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     apple_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     # True for anonymous "Continue as guest" accounts until they upgrade.
     is_guest = models.BooleanField(default=False)
+    # SHA-256 hex of E.164 phone, opt-in for contact matching (DEV-536). Never store raw phones.
+    phone_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     # Set when an admin's password was created/reset by someone else, so the
@@ -326,4 +328,5 @@ def ensure_user_invites(user):
 
 
 def invite_only_enabled():
-    return bool(InviteConfig.get().invite_only_enabled)
+    """Signup is never gated on an invite code."""
+    return False

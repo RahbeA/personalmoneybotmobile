@@ -1,17 +1,24 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Modal,
-  Switch, Alert, ActivityIndicator, Linking, Platform, KeyboardAvoidingView,
+  Switch, Alert, ActivityIndicator, Linking, Platform, KeyboardAvoidingView, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../context/AuthContext';
 import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
-import { BrandHeader, BrandAvatar } from '../components/brand';
+import { navigate as rootNavigate } from '../navigation/rootNavigation';
+import { BrandHeader, BrandAvatar, BrandToast } from '../components/brand';
+import PuckButton from '../components/PuckButton';
+import PersonalityChips from '../components/chat/PersonalityChips';
+import { personalityByKey } from '../components/chat/personalities';
 import { LEGAL } from '../constants/legal';
 import { GOALS } from '../constants/goals';
 import {
@@ -20,9 +27,49 @@ import {
   syncNotificationSchedule,
   areNotificationsSupported,
   getNotificationsUnavailableMessage,
+  getNotificationPermissionInfo,
+  openSystemNotificationSettings,
 } from '../utils/notifications';
 import { getFirstName } from '../utils/displayName';
 import { localDate } from '../utils/localDate';
+import { ANALYTICS_EVENTS, track } from '../utils/analytics';
+
+const GOAL_KEYWORDS = {
+  emergency_fund: ['emergenc', 'saving', 'save'],
+  pay_off_debt: ['debt'],
+  start_investing: ['invest', 'stock'],
+  budget_better: ['budget'],
+  boost_credit: ['credit'],
+  save_big_goal: ['saving', 'save', 'emergenc'],
+};
+
+const NOTIF_ROWS = [
+  { key: 'daily', label: 'Daily reminders', hint: 'A 6pm ping to hop into a lesson', icon: 'sunny-outline' },
+  { key: 'streak', label: 'Streak alerts', hint: 'Only when your streak is actually at risk', icon: 'flame-outline' },
+  { key: 'newContent', label: 'Product updates', hint: 'New lessons and MoneyBot news', icon: 'megaphone-outline' },
+];
+
+const GOAL_CELEB_KEY = 'goalCelebratedV1';
+
+function goalLessonProgress(goalKey, modules = []) {
+  const needles = GOAL_KEYWORDS[goalKey] || [];
+  let done = 0;
+  let total = 0;
+  (modules || []).forEach((mod) => {
+    const hay = `${mod.title || ''} ${mod.description || ''}`.toLowerCase();
+    if (!needles.some((n) => hay.includes(n))) return;
+    const lessons = mod.lessons || [];
+    if (lessons.length) {
+      total += lessons.length;
+      done += lessons.filter((l) => l.is_completed).length;
+    } else {
+      total += mod.lesson_count || 0;
+      done += mod.completed_lesson_count || 0;
+    }
+  });
+  if (done > total) done = total;
+  return { done, total };
+}
 
 function LinkTile({ icon, label, onPress, colors, styles }) {
   return (
@@ -37,8 +84,10 @@ export default function SettingsScreen({ navigation }) {
   const { user, isGuest, updateProfile, logout, deleteAccount } = useAuth();
   const {
     xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
-    onboardingGoals, updateGoals,
+    onboardingGoals, updateGoals, modules, isPremium, chatPersonality, updatePersonality,
+    loading: progressLoading,
   } = useUserProgress();
+  const { registerPush } = useNotifications();
   const rankMeta = getRankMeta(rank?.key);
   const { colors, isDark, toggleTheme } = useTheme();
   const tabBarInset = useTabBarInset(24);
@@ -47,7 +96,12 @@ export default function SettingsScreen({ navigation }) {
   const [notifPrefs, setNotifPrefs] = useState({ daily: true, streak: true, newContent: false });
   const [notifLoading, setNotifLoading] = useState(true);
   const [notifSyncing, setNotifSyncing] = useState(false);
+  const [permInfo, setPermInfo] = useState({ supported: true, status: 'undetermined', canAskAgain: true });
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [goalToast, setGoalToast] = useState(null);
+  const [savingPersonality, setSavingPersonality] = useState(null);
+  const celebratedRef = useRef({});
+  const goalBaselineReady = useRef(false);
 
   // Profile name editing
   const [profileOpen, setProfileOpen] = useState(false);
@@ -61,6 +115,7 @@ export default function SettingsScreen({ navigation }) {
   const selectedGoals = onboardingGoals || [];
 
   const notifSupported = areNotificationsSupported();
+  const voice = personalityByKey(chatPersonality);
 
   const displayName = getFirstName(user);
   const emailDisplay = isGuest ? 'Guest — progress saved on this device' : (user?.email || '');
@@ -111,6 +166,29 @@ export default function SettingsScreen({ navigation }) {
     }
   }, [savingGoalKey, selectedGoals, updateGoals]);
 
+  const handlePersonality = useCallback(async (item) => {
+    if (item.premium && !isPremium) {
+      rootNavigate('Paywall');
+      return;
+    }
+    if (item.key === chatPersonality) return;
+    setSavingPersonality(item.key);
+    try {
+      await updatePersonality(item.key);
+      track(ANALYTICS_EVENTS.PERSONALITY_CHANGED, { personality: item.key, source: 'settings' });
+    } catch (err) {
+      Alert.alert('Could not update', err.message || 'Try again in a moment.');
+    } finally {
+      setSavingPersonality(null);
+    }
+  }, [isPremium, chatPersonality, updatePersonality]);
+
+  const refreshPermInfo = useCallback(async () => {
+    const info = await getNotificationPermissionInfo();
+    setPermInfo(info);
+    return info;
+  }, []);
+
   function openLegal(document) {
     const rootNav = navigation.getParent?.() ?? navigation;
     rootNav.navigate('Legal', { document });
@@ -121,17 +199,69 @@ export default function SettingsScreen({ navigation }) {
       setNotifPrefs(prefs);
       setNotifLoading(false);
     });
-  }, []);
+    refreshPermInfo();
+    SecureStore.getItemAsync(GOAL_CELEB_KEY).then((raw) => {
+      try {
+        celebratedRef.current = raw ? JSON.parse(raw) : {};
+      } catch {
+        celebratedRef.current = {};
+      }
+    }).catch(() => {});
+  }, [refreshPermInfo]);
+
+  useFocusEffect(useCallback(() => {
+    refreshPermInfo();
+  }, [refreshPermInfo]));
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') refreshPermInfo();
+    });
+    return () => sub.remove();
+  }, [refreshPermInfo]);
+
+  useEffect(() => {
+    if (!user?.id || progressLoading) return;
+    let shouldSave = false;
+    if (!goalBaselineReady.current) {
+      selectedGoals.forEach((key) => {
+        const { done, total } = goalLessonProgress(key, modules);
+        const celebKey = `${user.id}:${key}`;
+        if (total > 0 && done >= total) {
+          celebratedRef.current[celebKey] = true;
+          shouldSave = true;
+        }
+      });
+      goalBaselineReady.current = true;
+      if (shouldSave) {
+        SecureStore.setItemAsync(GOAL_CELEB_KEY, JSON.stringify(celebratedRef.current)).catch(() => {});
+      }
+      return;
+    }
+    selectedGoals.forEach((key) => {
+      const { done, total } = goalLessonProgress(key, modules);
+      const celebKey = `${user.id}:${key}`;
+      if (total > 0 && done >= total && !celebratedRef.current[celebKey]) {
+        celebratedRef.current[celebKey] = true;
+        shouldSave = true;
+        const goal = GOALS.find((g) => g.key === key);
+        setGoalToast(`${goal?.label || 'Goal'} crushed — ${done} lesson${done === 1 ? '' : 's'} done.`);
+      }
+    });
+    if (shouldSave) {
+      SecureStore.setItemAsync(GOAL_CELEB_KEY, JSON.stringify(celebratedRef.current)).catch(() => {});
+    }
+  }, [selectedGoals, modules, user?.id, progressLoading]);
 
   const notifOn = notifPrefs.daily || notifPrefs.streak || notifPrefs.newContent;
+  const permDenied = permInfo.status === 'denied';
 
-  const toggleNotifications = useCallback(async (value) => {
+  const applyNotifPrefs = useCallback(async (next) => {
     if (!notifSupported) {
       Alert.alert('Rebuild Required', getNotificationsUnavailableMessage());
       return;
     }
     const previous = notifPrefs;
-    const next = { daily: value, streak: value, newContent: value };
     setNotifPrefs(next);
     setNotifSyncing(true);
     try {
@@ -142,14 +272,23 @@ export default function SettingsScreen({ navigation }) {
         activeToday: lastActive === localDate(),
       };
       const result = await syncNotificationSchedule(next, streakContext);
+      const info = await refreshPermInfo();
       if (!result.ok && result.reason === 'permission_denied') {
         Alert.alert(
           'Notifications Off',
-          'Enable notifications in your device Settings to receive reminders.',
+          'Enable notifications in iOS Settings, then come back to MoneyBot.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => openSystemNotificationSettings() },
+          ],
         );
         const reverted = { daily: false, streak: false, newContent: false };
         setNotifPrefs(reverted);
         await saveNotificationPrefs(reverted);
+        return;
+      }
+      if (info.status === 'granted' && (next.daily || next.streak || next.newContent)) {
+        await registerPush?.();
       }
     } catch (err) {
       Alert.alert('Could Not Update', err.message || 'Try again in a moment.');
@@ -157,7 +296,15 @@ export default function SettingsScreen({ navigation }) {
     } finally {
       setNotifSyncing(false);
     }
-  }, [notifPrefs, notifSupported, user, streakDays, lastActive]);
+  }, [notifPrefs, notifSupported, user, streakDays, lastActive, refreshPermInfo, registerPush]);
+
+  const toggleNotifications = useCallback(async (value) => {
+    await applyNotifPrefs({ daily: value, streak: value, newContent: value });
+  }, [applyNotifPrefs]);
+
+  const toggleNotifPref = useCallback(async (key, value) => {
+    await applyNotifPrefs({ ...notifPrefs, [key]: value });
+  }, [applyNotifPrefs, notifPrefs]);
 
   function confirmLogout() {
     if (isGuest) {
@@ -233,6 +380,12 @@ export default function SettingsScreen({ navigation }) {
                   <Text style={[styles.chipText, { color: rankMeta.color }]}>{rank.label}</Text>
                 </View>
               )}
+              {isPremium && (
+                <View style={[styles.chip, { borderColor: '#F5B72B55', backgroundColor: '#F5B72B1A' }]}>
+                  <Ionicons name="diamond" size={12} color="#F5B72B" />
+                  <Text style={[styles.chipText, { color: '#F5B72B' }]}>Premium</Text>
+                </View>
+              )}
               <View style={styles.chip}>
                 <Text style={[styles.chipText, { color: colors.primary }]}>Lv {level}</Text>
               </View>
@@ -293,6 +446,23 @@ export default function SettingsScreen({ navigation }) {
               </Text>
             </View>
           )}
+          {permDenied && notifSupported && (
+            <View style={styles.notifBanner}>
+              <Ionicons name="notifications-off-outline" size={18} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.notifBannerText}>
+                  Notifications are off in iOS Settings. Turn on Alerts for MoneyBot, then return here.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => openSystemNotificationSettings()}
+                  style={styles.openSettingsBtn}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.openSettingsText}>Open Settings</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           <View style={[styles.prefCard, !notifSupported && styles.notifGridDisabled]}>
             <View style={styles.prefRow}>
               <View style={styles.prefLeft}>
@@ -301,7 +471,7 @@ export default function SettingsScreen({ navigation }) {
                   size={20}
                   color={colors.primary}
                 />
-                <Text style={styles.prefLabel}>Notifications</Text>
+                <Text style={styles.prefLabel}>All reminders</Text>
               </View>
               {notifLoading ? (
                 <ActivityIndicator color={colors.primary} />
@@ -316,12 +486,44 @@ export default function SettingsScreen({ navigation }) {
                 />
               )}
             </View>
+            {NOTIF_ROWS.map((row, index) => (
+              <View key={row.key} style={[styles.prefRow, styles.prefRowNested, index < NOTIF_ROWS.length - 1 && styles.prefRowBorder]}>
+                <View style={styles.prefLeft}>
+                  <Ionicons name={row.icon} size={18} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.prefLabel}>{row.label}</Text>
+                    <Text style={styles.prefHint}>{row.hint}</Text>
+                  </View>
+                </View>
+                <Switch
+                  value={!!notifPrefs[row.key]}
+                  onValueChange={(value) => toggleNotifPref(row.key, value)}
+                  disabled={notifSyncing || notifLoading}
+                  trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                  thumbColor={notifPrefs[row.key] ? colors.primary : colors.textMuted}
+                  ios_backgroundColor={colors.border}
+                />
+              </View>
+            ))}
           </View>
           <Text style={styles.notifHint}>
             {notifSupported
-              ? `Reminders to keep your streak alive and get back to learning${notifSyncing ? ' · syncing…' : ''}`
+              ? `Turning a type off cancels those local reminders${notifSyncing ? ' · syncing…' : ''}`
               : 'Your choice is saved but won\u2019t fire until you rebuild the app.'}
           </Text>
+
+          {/* Tutor voice */}
+          <Text style={styles.sectionTitle}>Tutor voice</Text>
+          <Text style={styles.sectionSub}>
+            {voice.label} — used in Tutor and Money Chat. Extra voices are Premium.
+          </Text>
+          <PersonalityChips
+            selected={chatPersonality || 'chill'}
+            isPremium={isPremium}
+            savingKey={savingPersonality}
+            onSelect={handlePersonality}
+            padded={false}
+          />
 
           {/* Preferences */}
           <Text style={styles.sectionTitle}>Preferences</Text>
@@ -342,38 +544,89 @@ export default function SettingsScreen({ navigation }) {
 
           {/* Goals */}
           <Text style={styles.sectionTitle}>Your goals</Text>
-          <View style={styles.goalsGrid}>
-            {GOALS.map((goal) => {
-              const selected = selectedGoals.includes(goal.key);
-              const saving = savingGoalKey === goal.key;
-              return (
-                <TouchableOpacity
-                  key={goal.key}
-                  style={[styles.goalChip, selected && styles.goalChipSel]}
-                  activeOpacity={0.85}
-                  onPress={() => toggleGoal(goal.key)}
-                  disabled={!!savingGoalKey}
-                >
+          {GOALS.filter((g) => !selectedGoals.includes(g.key)).slice(0, 1).map((goal) => (
+            <TouchableOpacity
+              key={`suggest-${goal.key}`}
+              style={styles.suggestChip}
+              activeOpacity={0.85}
+              onPress={() => toggleGoal(goal.key)}
+            >
+              <Ionicons name="sparkles" size={14} color={colors.primary} />
+              <Text style={styles.suggestText}>Try adding {goal.label}</Text>
+            </TouchableOpacity>
+          ))}
+          {GOALS.map((goal) => {
+            const selected = selectedGoals.includes(goal.key);
+            const saving = savingGoalKey === goal.key;
+            const { done, total } = goalLessonProgress(goal.key, modules);
+            const pct = total > 0 ? Math.round((done / total) * 100) : null;
+            const facts = [
+              total > 0
+                ? `${done} of ${total} matching lessons`
+                : (lessonsCompleted ? `${lessonsCompleted} lessons overall · start this topic on Home` : 'Start a matching lesson on Home'),
+              streakDays ? `${streakDays}-day streak` : null,
+              typeof botBucks === 'number' ? `${botBucks} Bot Bucks` : null,
+            ].filter(Boolean);
+            return (
+              <View key={goal.key} style={[styles.goalCard, selected && styles.goalCardSel]}>
+                <View style={styles.goalTop}>
                   <View style={[styles.goalIconWrap, selected && styles.goalIconWrapSel]}>
+                    <Ionicons name={goal.icon} size={20} color={selected ? colors.background : colors.primary} />
+                  </View>
+                  <View style={styles.goalCopy}>
+                    <Text style={styles.goalTitle}>{goal.label}</Text>
+                    <Text style={styles.goalFacts} numberOfLines={2}>{facts.join(' · ')}</Text>
+                  </View>
+                  <PuckButton
+                    color={selected ? colors.primary : colors.surfaceElevated}
+                    width={68}
+                    height={40}
+                    borderRadius={14}
+                    lip={5}
+                    disabled={!!savingGoalKey}
+                    onPress={() => toggleGoal(goal.key)}
+                    contentStyle={styles.goalPuckContent}
+                    accessibilityLabel={selected ? `Remove ${goal.label}` : `Add ${goal.label}`}
+                  >
                     {saving ? (
                       <ActivityIndicator size="small" color={selected ? colors.background : colors.primary} />
                     ) : (
-                      <Ionicons name={goal.icon} size={18} color={selected ? colors.background : colors.primary} />
+                      <Text style={[styles.goalPuckText, { color: selected ? colors.background : colors.white }]}>
+                        {selected ? 'On' : 'Add'}
+                      </Text>
                     )}
+                  </PuckButton>
+                </View>
+                {pct != null && (
+                  <View style={styles.goalTrack}>
+                    <View style={[styles.goalFill, { width: `${pct}%` }]} />
                   </View>
-                  <Text style={[styles.goalLabel, selected && styles.goalLabelSel]} numberOfLines={2}>
-                    {goal.label}
-                  </Text>
-                  {selected && !saving && (
-                    <View style={styles.goalCheck}>
-                      <Ionicons name="checkmark" size={11} color={colors.background} />
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <Text style={styles.notifHint}>Tap to add or remove goals — we tailor your journey to these.</Text>
+                )}
+              </View>
+            );
+          })}
+          <Text style={styles.notifHint}>Progress is lessons in that topic, plus your real streak and Bot Bucks — not a made-up score.</Text>
+
+          {/* Premium */}
+          <Text style={styles.sectionTitle}>Premium</Text>
+          <TouchableOpacity
+            style={styles.guestCta}
+            activeOpacity={0.9}
+            onPress={() => rootNavigate('Paywall')}
+          >
+            <View style={[styles.guestCtaIcon, { backgroundColor: 'rgba(245,183,43,0.16)' }]}>
+              <Ionicons name="diamond" size={22} color="#F5B72B" />
+            </View>
+            <View style={styles.guestCtaText}>
+              <Text style={styles.guestCtaTitle}>{isPremium ? 'You\'re Premium' : 'MoneyBot Premium'}</Text>
+              <Text style={styles.guestCtaBody}>
+                {isPremium
+                  ? 'Extra Tutor voices and characters are unlocked.'
+                  : 'Unlock extra Tutor voices and Moneyverse characters.'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </TouchableOpacity>
 
           {/* Invite friends to the app */}
           {!isGuest && (
@@ -393,7 +646,7 @@ export default function SettingsScreen({ navigation }) {
                 <View style={styles.guestCtaText}>
                   <Text style={styles.guestCtaTitle}>Your invite codes</Text>
                   <Text style={styles.guestCtaBody}>
-                    Share up to 10 join links. Friends paste the code when they sign up.
+                    Share your join link. You earn Bot Bucks when friends sign up.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
@@ -495,6 +748,12 @@ export default function SettingsScreen({ navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <BrandToast
+        visible={!!goalToast}
+        message={goalToast}
+        onHide={() => setGoalToast(null)}
+      />
     </LinearGradient>
   );
 }
@@ -572,6 +831,13 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     marginBottom: 12,
     letterSpacing: -0.2,
   },
+  sectionSub: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: -6,
+    marginBottom: 10,
+    lineHeight: 17,
+  },
 
   guestCta: {
     flexDirection: 'row',
@@ -642,8 +908,20 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
-  prefLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  prefLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, marginRight: 12 },
   prefLabel: { fontSize: 15, fontWeight: '600', color: colors.white },
+  prefHint: { fontSize: 11, color: colors.textMuted, marginTop: 2, lineHeight: 15 },
+  prefRowNested: { paddingTop: 4 },
+  prefRowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  openSettingsBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  openSettingsText: { fontSize: 13, fontWeight: '800', color: colors.background },
 
   linkGrid: {
     flexDirection: 'row',
@@ -691,43 +969,55 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   deleteText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
 
   // Goals
-  goalsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 8 },
-  goalChip: {
-    width: '48%',
+  suggestChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    alignSelf: 'flex-start',
     backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 10,
-    borderWidth: 1.5,
+    borderRadius: 14,
+    borderWidth: 1,
     borderColor: colors.border,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 12,
   },
-  goalChipSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
+  suggestText: { fontSize: 13, fontWeight: '700', color: colors.white },
+  goalCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 10,
+  },
+  goalCardSel: {
+    borderColor: colors.primaryTintStrong,
+    backgroundColor: colors.primaryTint,
+  },
+  goalTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  goalCopy: { flex: 1, minWidth: 0 },
+  goalTitle: { fontSize: 16, fontWeight: '800', color: colors.white, letterSpacing: -0.2 },
+  goalFacts: { fontSize: 12, color: colors.textSecondary, marginTop: 3, lineHeight: 17, fontWeight: '500' },
+  goalPuckContent: { alignItems: 'center', justifyContent: 'center' },
+  goalPuckText: { fontSize: 13, fontWeight: '800' },
+  goalTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.border,
+    overflow: 'hidden',
+    marginTop: 12,
+  },
+  goalFill: { height: '100%', borderRadius: 3, backgroundColor: colors.primary },
   goalIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(61,220,95,0.12)',
   },
   goalIconWrapSel: { backgroundColor: colors.primary },
-  goalLabel: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.textSecondary, lineHeight: 17 },
-  goalLabelSel: { color: colors.white },
-  goalCheck: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   // Profile edit modal
   modalOverlay: {

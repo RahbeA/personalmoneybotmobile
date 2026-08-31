@@ -1,15 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl,
+  View, Text, StyleSheet, ScrollView, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import FeaturedCharacter from '../components/FeaturedCharacter';
 import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
+import PremiumLockBadge from '../components/moneyverse/PremiumLockBadge';
+import PuckButton from '../components/PuckButton';
+import { isPremiumLocked, openPaywall } from '../components/moneyverse/openPaywall';
+import { requireAccount } from '../utils/requireAccount';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 
@@ -40,9 +45,11 @@ function CoinBadge({ amount, styles, colors }) {
 }
 
 export default function MoneyverseScreen({ navigation }) {
+  const { isGuest } = useAuth();
   const {
     botBucks,
     equippedCharacter,
+    isPremium,
     characters,
     loading: progressLoading,
     refreshCharacterCache,
@@ -107,6 +114,11 @@ export default function MoneyverseScreen({ navigation }) {
     }
   }, [refreshCharacterCache]);
 
+  const onPremiumPress = useCallback(() => {
+    if (!requireAccount({ isGuest, navigation, feature: 'unlock Premium items' })) return;
+    openPaywall(navigation);
+  }, [isGuest, navigation]);
+
   const filters = useMemo(
     () => [
       { key: 'all', label: 'All' },
@@ -138,54 +150,71 @@ export default function MoneyverseScreen({ navigation }) {
 
         {loading ? (
           <BrandLoader message={LOADER_MESSAGES.moneyverse} />
-        ) : characters.length === 0 ? (
-          <ScrollView
-            contentContainerStyle={styles.emptyScroll}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-            }
-          >
-            <BrandEmptyState
-              title={EMPTY_STATES.moneyverseShop.title}
-              body={EMPTY_STATES.moneyverseShop.body}
-            />
-          </ScrollView>
         ) : (
           <View style={styles.body}>
-            {filters.length > 1 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterRow}
-                style={styles.filterScroll}
-              >
-                {filters.map((f) => {
-                  const active = filter === f.key;
-                  const tint = RARITY_COLORS[f.key] || colors.primary;
-                  return (
-                    <TouchableOpacity
-                      key={f.key}
-                      activeOpacity={0.85}
-                      onPress={() => setFilter(f.key)}
-                      style={[
-                        styles.filterChip,
-                        active && { backgroundColor: rgba(tint, 0.16), borderColor: rgba(tint, 0.55) },
-                      ]}
-                    >
-                      <Text style={[styles.filterChipText, active && { color: tint }]}>{f.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterRow}
+              style={styles.filterScroll}
+            >
+              {filters.map((f) => {
+                const active = filter === f.key;
+                const tint = RARITY_COLORS[f.key] || colors.primary;
+                return (
+                  <PuckButton
+                    key={f.key}
+                    color={active ? tint : colors.surfaceElevated}
+                    borderRadius={999}
+                    lip={5}
+                    onPress={() => setFilter(f.key)}
+                    contentStyle={styles.filterChipContent}
+                    accessibilityLabel={`Filter ${f.label}`}
+                  >
+                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                      {f.label}
+                    </Text>
+                  </PuckButton>
+                );
+              })}
+            </ScrollView>
 
-            <FeaturedCharacter
-              characters={visibleCharacters}
-              index={index}
-              onIndexChange={setIndex}
-              onOpen={openCharacter}
-              equippedId={equippedCharacter?.id}
-            />
+            {characters.length === 0 ? (
+              <ScrollView
+                contentContainerStyle={styles.emptyScroll}
+                refreshControl={
+                  <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+                }
+              >
+                <BrandEmptyState
+                  title={EMPTY_STATES.moneyverseShop.title}
+                  body={EMPTY_STATES.moneyverseShop.body}
+                />
+              </ScrollView>
+            ) : (
+              <View style={styles.showcase}>
+                <FeaturedCharacter
+                  characters={visibleCharacters}
+                  index={index}
+                  onIndexChange={setIndex}
+                  onOpen={openCharacter}
+                  equippedId={equippedCharacter?.id}
+                />
+                {isPremiumLocked(visibleCharacters[index], isPremium) ? (
+                  <PuckButton
+                    color={colors.botBucks}
+                    borderRadius={14}
+                    lip={5}
+                    onPress={onPremiumPress}
+                    style={styles.premiumLock}
+                    contentStyle={styles.premiumLockContent}
+                    accessibilityLabel="Premium character"
+                  >
+                    <PremiumLockBadge />
+                  </PuckButton>
+                ) : null}
+              </View>
+            )}
           </View>
         )}
       </SafeAreaView>
@@ -205,14 +234,28 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   coinBadgeText: { fontSize: 15, fontWeight: '800', color: colors.botBucks },
   body: { flex: 1, paddingBottom: tabBarInset },
   emptyScroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  showcase: { flex: 1 },
+  premiumLock: {
+    position: 'absolute',
+    top: 12,
+    left: 32,
+    zIndex: 4,
+  },
+  premiumLockContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
 
-  filterScroll: { flexGrow: 0, marginBottom: 12, maxHeight: 44 },
-  filterRow: { gap: 8, paddingHorizontal: 20, paddingRight: 24 },
-  filterChip: {
-    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999,
-    backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
+  filterScroll: { flexGrow: 0, marginBottom: 12, maxHeight: 52 },
+  filterRow: { gap: 8, paddingHorizontal: 20, paddingRight: 24, alignItems: 'center' },
+  filterChipContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   filterChipText: {
     fontSize: 13, fontWeight: '700', color: colors.textSecondary, textTransform: 'capitalize',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
   },
 });

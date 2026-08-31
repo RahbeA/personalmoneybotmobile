@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.conf import settings
 from django.db import models
 
@@ -17,11 +19,13 @@ class NotificationCampaign(models.Model):
     ]
 
     STATUS_DRAFT = 'draft'
+    STATUS_SCHEDULED = 'scheduled'
     STATUS_SENDING = 'sending'
     STATUS_SENT = 'sent'
     STATUS_FAILED = 'failed'
     STATUS_CHOICES = [
         (STATUS_DRAFT, 'Draft'),
+        (STATUS_SCHEDULED, 'Scheduled'),
         (STATUS_SENDING, 'Sending'),
         (STATUS_SENT, 'Sent'),
         (STATUS_FAILED, 'Failed'),
@@ -65,6 +69,11 @@ class NotificationCampaign(models.Model):
         related_name='created_notification_campaigns',
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    scheduled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When set, the campaign sends automatically at or after this time.',
+    )
     sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -72,6 +81,103 @@ class NotificationCampaign(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class NotificationAutomation(models.Model):
+    """Recurring or trigger-based notification rules managed from the admin panel."""
+
+    TRIGGER_BROADCAST = 'broadcast_recurring'
+    TRIGGER_INACTIVE = 'inactive_users'
+    TRIGGER_STREAK = 'streak_at_risk'
+    TRIGGER_CHOICES = [
+        (TRIGGER_BROADCAST, 'Recurring broadcast'),
+        (TRIGGER_INACTIVE, 'Inactive users'),
+        (TRIGGER_STREAK, 'Streak at risk'),
+    ]
+
+    RECURRENCE_DAILY = 'daily'
+    RECURRENCE_WEEKLY = 'weekly'
+    RECURRENCE_CHOICES = [
+        (RECURRENCE_DAILY, 'Daily'),
+        (RECURRENCE_WEEKLY, 'Weekly'),
+    ]
+
+    name = models.CharField(max_length=120)
+    enabled = models.BooleanField(default=True)
+    trigger_type = models.CharField(max_length=32, choices=TRIGGER_CHOICES)
+    trigger_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='e.g. {"inactive_days": 7} for inactive_users.',
+    )
+    title = models.CharField(max_length=140)
+    body = models.CharField(max_length=280)
+    audience = models.CharField(
+        max_length=16,
+        choices=NotificationCampaign.AUDIENCE_CHOICES,
+        default=NotificationCampaign.AUDIENCE_ALL,
+    )
+    recipients = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name='notification_automations',
+    )
+    include_staff = models.BooleanField(default=False)
+    send_push = models.BooleanField(default=True)
+    data = models.JSONField(default=dict, blank=True)
+    recurrence = models.CharField(
+        max_length=16,
+        choices=RECURRENCE_CHOICES,
+        default=RECURRENCE_DAILY,
+        help_text='Used for broadcast_recurring; trigger rules run once per day.',
+    )
+    run_at_time = models.TimeField(
+        default=time(18, 0),
+        help_text='UTC time of day when this automation may run.',
+    )
+    run_weekday = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='0=Monday … 6=Sunday; used when recurrence is weekly.',
+    )
+    cooldown_days = models.PositiveIntegerField(
+        default=7,
+        help_text='Minimum days before the same user can receive this automation again.',
+    )
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.name
+
+
+class NotificationAutomationDelivery(models.Model):
+    """Tracks per-user sends so automations respect cooldown windows."""
+
+    automation = models.ForeignKey(
+        NotificationAutomation,
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='automation_deliveries',
+    )
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['automation', 'user', '-sent_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.automation_id} -> {self.user_id}'
 
 
 class Friendship(models.Model):
@@ -381,3 +487,45 @@ class ChallengeParticipant(models.Model):
 
     def __str__(self):
         return f'{self.user_id} in challenge {self.challenge_id}'
+
+
+class FeedPost(models.Model):
+    """User-submitted financial-education feed item. Live only after admin approve (DEV-535)."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='feed_posts',
+    )
+    image = models.ImageField(upload_to='feed/')
+    caption = models.CharField(max_length=280)
+    link = models.URLField(blank=True, default='')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_feed_posts',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['author', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.author_id} {self.status}: {self.caption[:40]}'

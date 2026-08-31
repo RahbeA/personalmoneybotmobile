@@ -83,7 +83,7 @@ def user_modules_cache_key(user_id):
 
 
 def user_stats_cache_key(user_id):
-    return f'user:{user_id}:stats:v1:cv{user_cache_version(user_id)}'
+    return f'user:{user_id}:stats:v2:cv{user_cache_version(user_id)}'
 
 
 def invalidate_user_cache(user_id):

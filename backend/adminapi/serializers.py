@@ -5,10 +5,10 @@ from rest_framework import serializers
 
 from courses.models import (
     Module, Lesson, Question, Answer, UserProgress, UserStats,
-    OnboardingQuestion, OnboardingOption, Badge, DailyRewardTier,
+    OnboardingQuestion, OnboardingOption, Badge, DailyRewardTier, MoneyTip,
 )
-from moneyverse.models import Character
-from social.models import NotificationCampaign
+from moneyverse.models import Character, UserCharacter
+from social.models import NotificationCampaign, FeedPost, NotificationAutomation
 from ai.models import (
     TutorConversation,
     TutorMessage,
@@ -125,7 +125,7 @@ class CharacterSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'description', 'price', 'rarity', 'accent_color',
             'model_file', 'preview_image', 'order', 'is_active', 'is_starter',
-            'model_file_size', 'model_optimized',
+            'is_premium', 'model_file_size', 'model_optimized',
         )
 
     def get_model_file_size(self, obj):
@@ -141,6 +141,25 @@ class CharacterSerializer(serializers.ModelSerializer):
         if not obj.model_file:
             return False
         return '_opt' in Path(obj.model_file.name).name.lower()
+
+
+class MoneyTipAdminSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MoneyTip
+        fields = ('id', 'body', 'category', 'is_active', 'order', 'created_at')
+        read_only_fields = ('id', 'created_at')
+
+
+class FeedPostAdminSerializer(serializers.ModelSerializer):
+    author_email = serializers.EmailField(source='author.email', read_only=True)
+
+    class Meta:
+        model = FeedPost
+        fields = (
+            'id', 'author', 'author_email', 'image', 'caption', 'link',
+            'status', 'created_at', 'reviewed_at',
+        )
+        read_only_fields = ('id', 'author', 'created_at', 'reviewed_at')
 
 
 class BadgeAdminSerializer(serializers.ModelSerializer):
@@ -177,6 +196,7 @@ class UserStatsSerializer(serializers.ModelSerializer):
         fields = (
             'xp', 'streak_days', 'last_active', 'badges', 'bot_bucks',
             'onboarding_completed', 'onboarding_score', 'lessons_completed',
+            'is_premium', 'chat_personality',
         )
 
     def get_lessons_completed(self, obj):
@@ -262,7 +282,8 @@ class NotificationCampaignSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'body', 'audience', 'recipients', 'recipient_emails',
             'include_staff', 'send_push', 'data', 'status', 'target_count',
-            'push_count', 'error_message', 'created_by_email', 'created_at', 'sent_at',
+            'push_count', 'error_message', 'created_by_email', 'created_at',
+            'scheduled_at', 'sent_at',
         )
         read_only_fields = (
             'id', 'status', 'target_count', 'push_count', 'error_message',
@@ -288,6 +309,70 @@ class NotificationCampaignSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'recipients': 'Choose at least one user for the selected-users audience.'}
             )
+        return attrs
+
+    def create(self, validated_data):
+        scheduled_at = validated_data.get('scheduled_at')
+        if scheduled_at:
+            validated_data['status'] = NotificationCampaign.STATUS_SCHEDULED
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        scheduled_at = validated_data.get('scheduled_at', instance.scheduled_at)
+        if scheduled_at and instance.status in (
+            NotificationCampaign.STATUS_DRAFT,
+            NotificationCampaign.STATUS_SCHEDULED,
+            NotificationCampaign.STATUS_FAILED,
+        ):
+            validated_data['status'] = NotificationCampaign.STATUS_SCHEDULED
+        elif scheduled_at is None and instance.status == NotificationCampaign.STATUS_SCHEDULED:
+            validated_data['status'] = NotificationCampaign.STATUS_DRAFT
+        return super().update(instance, validated_data)
+
+
+class NotificationAutomationSerializer(serializers.ModelSerializer):
+    recipients = serializers.PrimaryKeyRelatedField(
+        many=True,
+        required=False,
+        queryset=User.objects.filter(is_active=True),
+    )
+    recipient_emails = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotificationAutomation
+        fields = (
+            'id', 'name', 'enabled', 'trigger_type', 'trigger_config',
+            'title', 'body', 'audience', 'recipients', 'recipient_emails',
+            'include_staff', 'send_push', 'data', 'recurrence', 'run_at_time',
+            'run_weekday', 'cooldown_days', 'last_run_at', 'last_run_count',
+            'last_error', 'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'id', 'last_run_at', 'last_run_count', 'last_error',
+            'created_at', 'updated_at',
+        )
+
+    def get_recipient_emails(self, obj):
+        return list(obj.recipients.values_list('email', flat=True))
+
+    def validate_data(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Routing data must be a JSON object.')
+        return value
+
+    def validate(self, attrs):
+        trigger = attrs.get('trigger_type', getattr(self.instance, 'trigger_type', None))
+        audience = attrs.get('audience', getattr(self.instance, 'audience', None))
+        recipients = attrs.get('recipients')
+        if recipients is None and self.instance is not None:
+            recipients = list(self.instance.recipients.all())
+        if trigger == NotificationAutomation.TRIGGER_BROADCAST:
+            if audience == NotificationCampaign.AUDIENCE_SELECTED and not recipients:
+                raise serializers.ValidationError(
+                    {'recipients': 'Choose at least one user for the selected-users audience.'}
+                )
         return attrs
 
 

@@ -1,7 +1,10 @@
 """Evaluate admin-configured badges against user progress."""
 from django.db.models import Count
 
+from django.db.models import Q
+
 from moneyverse.models import UserCharacter
+from social.models import Friendship
 
 from .models import Badge, Module, UserProgress, UserStats
 
@@ -40,6 +43,10 @@ def build_metric_context(user, stats):
         'lessons_completed': lessons_completed,
         'modules_completed': _modules_completed_count(user),
         'characters_owned': UserCharacter.objects.filter(user=user).count(),
+        'friends_count': Friendship.objects.filter(
+            Q(requester=user) | Q(addressee=user),
+            status=Friendship.STATUS_ACCEPTED,
+        ).count(),
     }
 
 
@@ -66,6 +73,8 @@ def metric_value(badge, ctx):
         return stats.onboarding_score
     if metric == 'characters_owned':
         return ctx['characters_owned']
+    if metric == 'friends_count':
+        return ctx['friends_count']
     if metric == 'questions_correct':
         return stats.questions_correct
     if metric == 'perfect_lessons':

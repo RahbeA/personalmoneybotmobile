@@ -8,7 +8,9 @@ import {
   presentLocalNotification,
   registerForPushNotificationsAsync,
   addNotificationListeners,
-  getLastNotificationResponse,
+  consumeLastNotificationResponse,
+  extractNotificationData,
+  setAppBadgeCount,
 } from '../utils/notifications';
 import { handleNotificationNavigation } from '../navigation/rootNavigation';
 
@@ -16,18 +18,12 @@ const NotificationsContext = createContext(null);
 
 const POLL_INTERVAL_MS = 30000;
 
-function extractNotificationData(responseOrNotification) {
-  const content = responseOrNotification?.notification?.request?.content
-    || responseOrNotification?.request?.content
-    || {};
-  return content.data || {};
-}
-
 export function NotificationsProvider({ children }) {
   const { token, user, isGuest } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [pushReady, setPushReady] = useState(false);
 
   // Highest notification id we've already surfaced a local banner for. `null`
   // means "not initialised yet" so we don't spam banners for the backlog that
@@ -36,27 +32,36 @@ export function NotificationsProvider({ children }) {
   const pollRef = useRef(null);
   const pushTokenRef = useRef(null);
   const prevAuthTokenRef = useRef(token);
+  const lastTapKeyRef = useRef(null);
 
   const registerPush = useCallback(async () => {
     // Guests have no durable identity — don't register push for them.
-    if (!token || isGuest || !user?.id) return;
+    if (!token || isGuest || !user?.id) return null;
     try {
       const pushToken = await registerForPushNotificationsAsync();
-      if (!pushToken) return;
+      if (!pushToken) {
+        setPushReady(false);
+        return null;
+      }
 
       // Always (re)register with the backend so a user switch on the same
       // device moves the token, and a failed first attempt can retry.
       await notificationsApi.registerPushToken(token, pushToken, Platform.OS);
       pushTokenRef.current = pushToken;
+      setPushReady(true);
+      return pushToken;
     } catch (e) {
       // Push is best-effort; in-app notifications still work without it.
       pushTokenRef.current = null;
+      setPushReady(false);
+      return null;
     }
   }, [token, isGuest, user?.id]);
 
   const unregisterPush = useCallback(async (authToken) => {
     const pushToken = pushTokenRef.current;
     pushTokenRef.current = null;
+    setPushReady(false);
     if (!pushToken || !authToken) return;
     try {
       await notificationsApi.unregisterPushToken(authToken, pushToken);
@@ -99,7 +104,9 @@ export function NotificationsProvider({ children }) {
       const data = await notificationsApi.list(token);
       const items = data.notifications || [];
       setNotifications(items);
-      setUnreadCount(data.unread_count ?? 0);
+      const nextUnread = data.unread_count ?? 0;
+      setUnreadCount(nextUnread);
+      setAppBadgeCount(nextUnread);
       alertForNewItems(items);
       return data;
     } catch (e) {
@@ -120,6 +127,7 @@ export function NotificationsProvider({ children }) {
         await refresh();
       } else {
         setUnreadCount(next);
+        setAppBadgeCount(next);
       }
     } catch (e) {
       // ignore transient poll failures
@@ -130,10 +138,17 @@ export function NotificationsProvider({ children }) {
     if (!token) return;
     setNotifications((prev) =>
       prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n)));
-    setUnreadCount((prev) => Math.max(0, prev - 1));
+    setUnreadCount((prev) => {
+      const next = Math.max(0, prev - 1);
+      setAppBadgeCount(next);
+      return next;
+    });
     try {
       const data = await notificationsApi.markRead(token, notificationId);
-      if (typeof data?.unread_count === 'number') setUnreadCount(data.unread_count);
+      if (typeof data?.unread_count === 'number') {
+        setUnreadCount(data.unread_count);
+        setAppBadgeCount(data.unread_count);
+      }
     } catch (e) {
       // optimistic update stands; a later poll will reconcile
     }
@@ -143,12 +158,23 @@ export function NotificationsProvider({ children }) {
     if (!token) return;
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     setUnreadCount(0);
+    setAppBadgeCount(0);
     try {
       await notificationsApi.markAllRead(token);
     } catch (e) {
       // ignore; poll will reconcile
     }
   }, [token]);
+
+  const handleTap = useCallback((response) => {
+    const data = extractNotificationData(response);
+    const key = response?.notification?.request?.identifier
+      || `${data.kind || 'unknown'}:${data.campaign_id || data.id || JSON.stringify(data)}`;
+    if (lastTapKeyRef.current === key) return;
+    lastTapKeyRef.current = key;
+    pollUnread();
+    handleNotificationNavigation(data);
+  }, [pollUnread]);
 
   // Reset state on sign-out / user switch.
   useEffect(() => {
@@ -161,6 +187,7 @@ export function NotificationsProvider({ children }) {
       }
       setNotifications([]);
       setUnreadCount(0);
+      setAppBadgeCount(0);
       seenMaxIdRef.current = null;
       return undefined;
     }
@@ -184,17 +211,12 @@ export function NotificationsProvider({ children }) {
     // deep-link into the right Social screen on tap.
     const removePushListeners = addNotificationListeners({
       onReceive: () => pollUnread(),
-      onRespond: (response) => {
-        pollUnread();
-        handleNotificationNavigation(extractNotificationData(response));
-      },
+      onRespond: handleTap,
     });
 
     // Cold-start: user tapped a notification that launched the app.
-    getLastNotificationResponse().then((response) => {
-      if (response) {
-        handleNotificationNavigation(extractNotificationData(response));
-      }
+    consumeLastNotificationResponse().then((response) => {
+      if (response) handleTap(response);
     }).catch(() => {});
 
     return () => {
@@ -211,9 +233,11 @@ export function NotificationsProvider({ children }) {
         notifications,
         unreadCount,
         loading,
+        pushReady,
         refresh,
         markRead,
         markAllRead,
+        registerPush,
       }}
     >
       {children}

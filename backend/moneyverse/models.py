@@ -26,6 +26,10 @@ class Character(models.Model):
         default=False,
         help_text='Gifted and equipped automatically when a new account is created. Only one character can be the starter.',
     )
+    is_premium = models.BooleanField(
+        default=False,
+        help_text='Requires UserStats.is_premium to purchase (DEV-576).',
+    )
 
     class Meta:
         ordering = ['order', 'id']

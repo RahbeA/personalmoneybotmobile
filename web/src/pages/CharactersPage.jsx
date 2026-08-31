@@ -122,6 +122,7 @@ export default function CharactersPage() {
             order: rows.length,
             is_active: true,
             is_starter: false,
+            is_premium: false,
             model_file: [],
             preview_image: [],
             optimize: true,
@@ -137,6 +138,7 @@ export default function CharactersPage() {
     });
     fd.append('is_active', values.is_active ? 'true' : 'false');
     fd.append('is_starter', values.is_starter ? 'true' : 'false');
+    fd.append('is_premium', values.is_premium ? 'true' : 'false');
 
     const modelFile = values.model_file?.[0]?.originFileObj;
     const previewFile = values.preview_image?.[0]?.originFileObj;
@@ -642,6 +644,9 @@ export default function CharactersPage() {
               valuePropName="checked"
               extra="New accounts receive & equip this character. Only one starter allowed."
             >
+              <Switch />
+            </Form.Item>
+            <Form.Item name="is_premium" label="Premium only" valuePropName="checked">
               <Switch />
             </Form.Item>
           </div>

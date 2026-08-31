@@ -21,6 +21,7 @@ export default function AppBar({
   onBack,
   onLogoPress,
   onStatsPress,
+  onStatPress,
   rightActions,
   showStats = true,
   style,
@@ -78,7 +79,8 @@ export default function AppBar({
               botBucks={botBucks}
               lessonsCompleted={lessonsCompleted}
               xp={xp}
-              onPress={onStatsPress}
+              onPress={onStatPress ? undefined : onStatsPress}
+              onStatPress={onStatPress}
             />
           )}
         </View>

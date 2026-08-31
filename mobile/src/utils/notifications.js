@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 const PREFS_KEY = 'notificationPrefs';
 
@@ -113,7 +113,7 @@ function configureNotificationHandler() {
       shouldShowBanner: true,
       shouldShowList: true,
       shouldPlaySound: true,
-      shouldSetBadge: false,
+      shouldSetBadge: true,
     }),
   });
   handlerConfigured = true;
@@ -122,6 +122,11 @@ function configureNotificationHandler() {
 async function ensureAndroidChannel() {
   const mod = getNotificationsModule();
   if (!mod || Platform.OS !== 'android' || androidChannelReady) return;
+  await mod.setNotificationChannelAsync('default', {
+    name: 'MoneyBot',
+    importance: mod.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+  });
   await mod.setNotificationChannelAsync('reminders', {
     name: 'Reminders',
     importance: mod.AndroidImportance.HIGH,
@@ -223,10 +228,22 @@ export async function ensureNotificationPermissions() {
   const mod = getNotificationsModule();
   if (!mod) return false;
   await ensureAndroidChannel();
-  const { status: existing } = await mod.getPermissionsAsync();
-  if (existing === 'granted') return true;
-  const { status } = await mod.requestPermissionsAsync();
+  const existing = await mod.getPermissionsAsync();
+  if (existing.status === 'granted') return true;
+  if (existing.canAskAgain === false) return false;
+  const { status } = await mod.requestPermissionsAsync({
+    ios: { allowAlert: true, allowBadge: true, allowSound: true },
+  });
   return status === 'granted';
+}
+
+export async function openSystemNotificationSettings() {
+  try {
+    await Linking.openSettings();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function cancelStreakNotifications() {
@@ -284,6 +301,7 @@ async function scheduleDailyNotifications(mod, firstName) {
       identifier: dailyNotificationId(offset),
       content: {
         ...content,
+        data: { kind: 'daily_reminder' },
         sound: true,
         ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
       },
@@ -307,7 +325,6 @@ async function scheduleStreakNotifications(mod, streakContext) {
     return 0;
   }
 
-  const content = buildStreakNotificationContent(firstName, streakDays);
   let scheduled = 0;
 
   for (let offset = 0; offset < STREAK_WINDOW_DAYS; offset += 1) {
@@ -320,10 +337,12 @@ async function scheduleStreakNotifications(mod, streakContext) {
       continue;
     }
 
+    const content = buildStreakNotificationContent(firstName, streakDays);
     await mod.scheduleNotificationAsync({
       identifier: streakNotificationId(offset),
       content: {
         ...content,
+        data: { kind: 'streak_reminder' },
         sound: true,
         ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
       },
@@ -373,6 +392,7 @@ export async function syncNotificationSchedule(prefs, streakContext = null) {
       content: {
         title: TEST_SAMPLES.newContent.title,
         body: TEST_SAMPLES.newContent.body,
+        data: { kind: 'new_content' },
         sound: true,
         ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
       },
@@ -477,6 +497,56 @@ export function addNotificationListeners({ onReceive, onRespond } = {}) {
   return () => subs.forEach((s) => s?.remove?.());
 }
 
+/** Parse tap/receive payloads from Expo local + remote notifications. */
+export function extractNotificationData(responseOrNotification) {
+  const request = responseOrNotification?.notification?.request
+    || responseOrNotification?.request
+    || {};
+  const content = request.content || {};
+  let data = content.data || {};
+  const triggerData = request.trigger?.payload
+    || request.trigger?.remoteMessage?.data
+    || null;
+  if ((!data || Object.keys(data).length === 0) && triggerData) {
+    data = triggerData;
+  }
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      data = {};
+    }
+  }
+  const normalized = { ...(data && typeof data === 'object' ? data : {}) };
+  Object.keys(normalized).forEach((key) => {
+    const value = normalized[key];
+    if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) {
+      try {
+        normalized[key] = JSON.parse(value);
+      } catch {
+        // leave as string
+      }
+    }
+  });
+  if (typeof normalized.body === 'object' && normalized.body) {
+    Object.assign(normalized, normalized.body);
+  }
+  if (!normalized.kind && content.categoryIdentifier) {
+    normalized.kind = content.categoryIdentifier;
+  }
+  return normalized;
+}
+
+export async function setAppBadgeCount(count) {
+  const mod = getNotificationsModule();
+  if (!mod?.setBadgeCountAsync) return;
+  try {
+    await mod.setBadgeCountAsync(Math.max(0, Number(count) || 0));
+  } catch {
+    // badge is best-effort
+  }
+}
+
 /** Notification that launched / resumed the app via a tap, if any. */
 export async function getLastNotificationResponse() {
   const mod = getNotificationsModule();
@@ -486,6 +556,19 @@ export async function getLastNotificationResponse() {
   } catch {
     return null;
   }
+}
+
+export async function consumeLastNotificationResponse() {
+  const response = await getLastNotificationResponse();
+  const mod = getNotificationsModule();
+  if (response && mod?.clearLastNotificationResponseAsync) {
+    try {
+      await mod.clearLastNotificationResponseAsync();
+    } catch {
+      // ignore
+    }
+  }
+  return response;
 }
 
 function getExpoProjectId() {
@@ -507,17 +590,18 @@ export async function registerForPushNotificationsAsync() {
   configureNotificationHandler();
   await ensureAndroidChannel();
 
-  const granted = await ensureNotificationPermissions();
-  if (!granted) return null;
+  // Do not prompt here — onboarding and Settings own the permission UX.
+  // Prompting on login caused a surprise deny that blocked campaign delivery.
+  const status = await getNotificationPermissionStatus();
+  if (status !== 'granted') return null;
 
   const mod = getNotificationsModule();
   if (!mod) return null;
 
   try {
     const projectId = getExpoProjectId();
-    const { data } = await mod.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined,
-    );
+    if (!projectId) return null;
+    const { data } = await mod.getExpoPushTokenAsync({ projectId });
     return data || null;
   } catch {
     return null;

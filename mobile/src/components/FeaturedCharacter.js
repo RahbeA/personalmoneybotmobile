@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import CharacterPoster from './CharacterPoster';
+import PuckButton from './PuckButton';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -268,10 +269,12 @@ export default function FeaturedCharacter({
           <Text style={styles.description} numberOfLines={2}>{character.description}</Text>
         ) : null}
 
-        <TouchableOpacity
-          style={[styles.cta, { backgroundColor: character.is_owned ? colors.surfaceElevated : colors.primary }]}
-          activeOpacity={0.88}
+        <PuckButton
+          color={character.is_owned ? colors.surfaceElevated : colors.primary}
+          borderRadius={16}
+          lip={5}
           onPress={() => onOpen?.(character)}
+          contentStyle={styles.ctaContent}
         >
           <Text style={[styles.ctaText, character.is_owned && { color: colors.white }]}>
             {ctaLabel}
@@ -281,7 +284,7 @@ export default function FeaturedCharacter({
             size={18}
             color={character.is_owned ? colors.white : '#0A0A0A'}
           />
-        </TouchableOpacity>
+        </PuckButton>
       </View>
 
       <View style={styles.stripWrap}>
@@ -405,16 +408,13 @@ const makeStyles = (colors) => StyleSheet.create({
     lineHeight: 20,
     color: colors.textSecondary,
   },
-  cta: {
+  ctaContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    borderRadius: 16,
     paddingVertical: 14,
     paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   ctaText: {
     fontSize: 15,

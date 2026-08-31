@@ -37,7 +37,11 @@ export default function UsersPage() {
 
   function openAdjust(record) {
     setAdjusting(record);
-    form.setFieldsValue({ xp: record.stats?.xp ?? 0, bot_bucks: record.stats?.bot_bucks ?? 0 });
+    form.setFieldsValue({
+      xp: record.stats?.xp ?? 0,
+      bot_bucks: record.stats?.bot_bucks ?? 0,
+      is_premium: !!record.stats?.is_premium,
+    });
   }
 
   async function saveAdjust() {
@@ -78,6 +82,11 @@ export default function UsersPage() {
     },
     { title: 'XP', width: 80, render: (_, r) => r.stats?.xp ?? 0 },
     { title: 'Bot Bucks', width: 100, render: (_, r) => r.stats?.bot_bucks ?? 0 },
+    {
+      title: 'Premium',
+      width: 90,
+      render: (_, r) => (r.stats?.is_premium ? 'Yes' : 'No'),
+    },
     {
       title: 'Lessons', width: 90,
       render: (_, r) => r.stats?.lessons_completed ?? r.lessons_completed ?? 0,
@@ -157,6 +166,9 @@ export default function UsersPage() {
           </Form.Item>
           <Form.Item name="bot_bucks" label="Bot Bucks">
             <InputNumber min={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="is_premium" label="Premium" valuePropName="checked">
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>

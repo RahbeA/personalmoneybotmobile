@@ -17,7 +17,6 @@ from .models import (
     InviteError,
     ensure_user_invites,
     get_or_create_personal_invite,
-    invite_only_enabled,
 )
 from .rewards import reward_inviter_for_signup
 from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
@@ -48,15 +47,16 @@ def _invite_code_from_request(request):
 
 
 def _claim_invite_if_needed(request, user, *, is_new_account):
-    """Claim invite atomically when invite-only is on and this is a new real account.
-
-    Returns the claimed Invite (so the caller can reward the inviter) or None.
-    """
+    """Optionally attribute a referral code. Signup is never gated on a code."""
     if not is_new_account:
         return None
-    if not invite_only_enabled():
+    code = (_invite_code_from_request(request) or '').strip()
+    if not code:
         return None
-    return Invite.claim(_invite_code_from_request(request), user)
+    try:
+        return Invite.claim(code, user)
+    except InviteError:
+        return None
 
 
 def _invite_error_response(exc):
@@ -354,8 +354,8 @@ def delete_account(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def invite_status(request):
-    """Public flag so Landing/Auth know whether to show the invite code field."""
-    return Response({'invite_only_enabled': invite_only_enabled()})
+    """Legacy flag. Invite codes are no longer required for authentication."""
+    return Response({'invite_only_enabled': False})
 
 
 @api_view(['POST'])

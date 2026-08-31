@@ -35,6 +35,15 @@ def get_or_create_stats(user):
     return stats
 
 
+def _premium_blocked(stats, item):
+    if getattr(item, 'is_premium', False) and not stats.is_premium:
+        return Response(
+            {'detail': 'This is a Premium item.', 'code': 'premium_required'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def character_list(request):
@@ -80,6 +89,10 @@ def purchase_character(request, character_id):
 
     if UserCharacter.objects.filter(user=request.user, character=character).exists():
         return Response({'detail': 'You already own this character.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    blocked_premium = _premium_blocked(stats, character)
+    if blocked_premium:
+        return blocked_premium
 
     if stats.bot_bucks < character.price:
         return Response({'detail': 'Not enough Bot Bucks.'}, status=status.HTTP_400_BAD_REQUEST)

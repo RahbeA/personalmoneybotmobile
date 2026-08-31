@@ -14,6 +14,7 @@ from accounts.models import User
 from . import service
 from .models import (
     ChallengeParticipant,
+    FeedPost,
     Friendship,
     FriendNudge,
     Group,
@@ -935,3 +936,131 @@ def push_token(request):
         defaults={'user': request.user, 'platform': platform},
     )
     return Response({'status': 'registered'})
+
+
+PHONE_HASH_LEN = 64
+MAX_CONTACT_HASHES = 200
+
+
+def _normalized_phone_hash(raw):
+    value = (raw or '').strip().lower()
+    if len(value) != PHONE_HASH_LEN:
+        return ''
+    if any(ch not in '0123456789abcdef' for ch in value):
+        return ''
+    return value
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def register_phone_hash(request):
+    """Store this user's SHA-256(E.164) hash for contact matching. Never send raw phones."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    phone_hash = _normalized_phone_hash(request.data.get('phone_hash'))
+    if not phone_hash:
+        return Response(
+            {'detail': 'phone_hash must be a 64-char sha256 hex digest.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    request.user.phone_hash = phone_hash
+    request.user.save(update_fields=['phone_hash'])
+    return Response({'registered': True})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def match_contacts(request):
+    """Return MoneyBot users whose phone_hash is in the client-hashed contact list."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    raw_hashes = request.data.get('hashes')
+    if not isinstance(raw_hashes, list):
+        return Response({'detail': 'hashes must be a list of sha256 hex digests.'}, status=status.HTTP_400_BAD_REQUEST)
+    hashes = []
+    seen = set()
+    for item in raw_hashes[:MAX_CONTACT_HASHES]:
+        digest = _normalized_phone_hash(item)
+        if digest and digest not in seen:
+            seen.add(digest)
+            hashes.append(digest)
+    if not hashes:
+        return Response({'results': []})
+
+    users = User.objects.filter(
+        phone_hash__in=hashes,
+        is_guest=False,
+        is_active=True,
+    ).exclude(id=request.user.id).order_by('name', 'email')[:MAX_CONTACT_HASHES]
+
+    results = []
+    for user in users:
+        fs = _friendship_status(request.user, user.id)
+        status_label = None
+        request_id = None
+        if fs:
+            status_label = fs.status
+            if fs.status == Friendship.STATUS_PENDING:
+                request_id = fs.id
+        results.append({
+            **service.serialize_user_brief(user, request),
+            'friendship_status': status_label,
+            'request_id': request_id,
+        })
+    return Response({'results': results})
+
+
+FEED_PAGE_SIZE = 30
+
+
+def _serialize_feed_posts(posts, request):
+    from .serializers import FeedPostSerializer
+    return FeedPostSerializer(posts, many=True, context={'request': request}).data
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def feed_list_create(request):
+    """Approved feed for everyone; create stays pending until admin approve (DEV-535)."""
+    if request.method == 'GET':
+        posts = (
+            FeedPost.objects.filter(status=FeedPost.STATUS_APPROVED)
+            .select_related('author')
+            .order_by('-created_at')[:FEED_PAGE_SIZE]
+        )
+        return Response({'results': _serialize_feed_posts(posts, request)})
+
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    caption = (request.data.get('caption') or '').strip()
+    if not caption:
+        return Response({'detail': 'caption is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    image = request.FILES.get('image')
+    if not image:
+        return Response({'detail': 'image is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    link = (request.data.get('link') or '').strip()
+    post = FeedPost.objects.create(
+        author=request.user,
+        image=image,
+        caption=caption[:280],
+        link=link[:2000],
+        status=FeedPost.STATUS_PENDING,
+    )
+    from .serializers import FeedPostSerializer
+    return Response(
+        FeedPostSerializer(post, context={'request': request}).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def feed_mine(request):
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    posts = FeedPost.objects.filter(author=request.user).order_by('-created_at')[:FEED_PAGE_SIZE]
+    return Response({'results': _serialize_feed_posts(posts, request)})

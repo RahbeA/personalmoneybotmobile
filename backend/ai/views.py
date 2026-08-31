@@ -36,6 +36,11 @@ def _reject_guest(request):
     return None
 
 
+def _chat_personality(user):
+    stats = UserStats.objects.filter(user=user).only('chat_personality').first()
+    return getattr(stats, 'chat_personality', None) or 'chill'
+
+
 def get_profile(user):
     profile, _ = UserAIProfile.objects.get_or_create(user=user)
     return profile
@@ -108,6 +113,7 @@ def tutor_chat(request):
         profile,
         knowledge.course_outline(),
         knowledge.relevant_context(message),
+        _chat_personality(request.user),
     )
 
     history = list(convo.messages.order_by('-created_at', '-id')[:HISTORY_LIMIT])[::-1]
@@ -195,6 +201,7 @@ def money_chat_start(request):
     profile = get_profile(request.user)
     system_prompt = prompts.money_chat_system_prompt(
         module.title, module_ctx, normalized, profile,
+        _chat_personality(request.user),
     )
     opener_instruction = {
         'role': 'user',
@@ -243,6 +250,7 @@ def money_chat_message(request):
     profile = get_profile(request.user)
     system_prompt = prompts.money_chat_system_prompt(
         module.title, knowledge.module_context(module), session.benchmarks, profile,
+        _chat_personality(request.user),
     )
 
     history = list(session.messages.order_by('-created_at', '-id')[:HISTORY_LIMIT])[::-1]

@@ -12,12 +12,14 @@ import { useTheme } from '../context/ThemeContext';
 import { moneyChatApi } from '../api/moneyChat';
 import ChatThread from '../components/chat/ChatThread';
 import { BrandLoader } from '../components/brand';
+import PuckButton from '../components/PuckButton';
 import { LOADER_MESSAGES } from '../constants/brandCopy';
+import { personalityByKey } from '../components/chat/personalities';
 
 export default function MoneyChatScreen({ navigation, route }) {
   const { module, badge, xp } = route.params;
   const { token } = useAuth();
-  const { refresh, equippedCharacter } = useUserProgress();
+  const { refresh, equippedCharacter, chatPersonality } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -95,6 +97,7 @@ export default function MoneyChatScreen({ navigation, route }) {
   }
 
   const pct = progress.total > 0 ? progress.met / progress.total : 0;
+  const voice = personalityByKey(chatPersonality);
 
   if (loading) {
     return (
@@ -115,15 +118,17 @@ export default function MoneyChatScreen({ navigation, route }) {
           <Text style={styles.errorText}>
             We couldn{"'"}t start the chat right now. You can still finish the module.
           </Text>
-          <TouchableOpacity style={[styles.primaryBtn, styles.errorBtn]} onPress={goToModuleComplete} activeOpacity={0.85}>
-            <LinearGradient
-              colors={[colors.primary, colors.primaryDark]}
-              style={styles.primaryBtnGrad}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            >
-              <Text style={styles.primaryBtnText}>Continue</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+          <PuckButton
+            color={colors.primary}
+            height={54}
+            borderRadius={16}
+            lip={5}
+            onPress={goToModuleComplete}
+            style={styles.errorBtn}
+            contentStyle={styles.primaryInner}
+          >
+            <Text style={styles.primaryBtnText}>Continue</Text>
+          </PuckButton>
         </SafeAreaView>
       </LinearGradient>
     );
@@ -141,7 +146,9 @@ export default function MoneyChatScreen({ navigation, route }) {
               </View>
               <View style={styles.headerTextWrap}>
                 <Text style={styles.headerTitle}>Money Chat</Text>
-                <Text style={styles.headerSub} numberOfLines={1}>{module.title}</Text>
+                <Text style={styles.headerSub} numberOfLines={1}>
+                  {module.title} · {voice.label} voice
+                </Text>
               </View>
             </View>
             {!passed && (
@@ -177,16 +184,17 @@ export default function MoneyChatScreen({ navigation, route }) {
                   <Text style={styles.bonusText}>+{bonus.xp} XP   +{bonus.bot_bucks} Bot Bucks</Text>
                 </View>
               )}
-              <TouchableOpacity style={styles.primaryBtn} onPress={goToModuleComplete} activeOpacity={0.85}>
-                <LinearGradient
-                  colors={[colors.primary, colors.primaryDark]}
-                  style={styles.primaryBtnGrad}
-                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                >
-                  <Text style={styles.primaryBtnText}>Continue</Text>
-                  <Ionicons name="arrow-forward" size={20} color={colors.background} />
-                </LinearGradient>
-              </TouchableOpacity>
+              <PuckButton
+                color={colors.primary}
+                height={54}
+                borderRadius={16}
+                lip={5}
+                onPress={goToModuleComplete}
+                contentStyle={styles.primaryInner}
+              >
+                <Text style={styles.primaryBtnText}>Continue</Text>
+                <Ionicons name="arrow-forward" size={20} color={colors.background} />
+              </PuckButton>
             </View>
           ) : null}
         />
@@ -241,10 +249,9 @@ const makeStyles = (colors) => StyleSheet.create({
     borderRadius: 14, paddingVertical: 10,
   },
   bonusText: { fontSize: 14, fontWeight: '800', color: '#F5B72B' },
-  primaryBtn: { borderRadius: 16, overflow: 'hidden' },
   errorBtn: { alignSelf: 'stretch', marginTop: 8 },
-  primaryBtnGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16,
+  primaryInner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
   },
   primaryBtnText: { fontSize: 17, fontWeight: '800', color: colors.background },
 });
