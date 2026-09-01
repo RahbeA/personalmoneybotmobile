@@ -26,13 +26,6 @@ import PuckButton from '../../components/PuckButton';
 import { buildInviteShareMessage, APP_STORE_URL } from '../../constants/brandCopy';
 import { useTabBarInset } from '../../navigation/tabBarLayout';
 import { requireAccount } from '../../utils/requireAccount';
-import {
-  loadDeviceContacts,
-  requestContactAccess,
-  syncContactsWithApp,
-  openContactSettings,
-  ContactsNativeMissingError,
-} from '../../utils/contactSync';
 
 function formatName(name) {
   if (!name) return 'Learner';
@@ -82,6 +75,13 @@ export default function ContactInviteScreen({ navigation }) {
     setPermissionDenied(false);
     setNativeMissing(false);
     try {
+      const {
+        loadDeviceContacts,
+        requestContactAccess,
+        syncContactsWithApp,
+        ContactsNativeMissingError,
+      } = await import('../../utils/contactSync');
+
       const granted = await requestContactAccess();
       if (!granted) {
         setPermissionDenied(true);
@@ -95,7 +95,7 @@ export default function ContactInviteScreen({ navigation }) {
       setOnApp(matched);
       setToInvite(invites);
     } catch (e) {
-      if (e instanceof ContactsNativeMissingError || e?.code === 'CONTACTS_NATIVE_MISSING') {
+      if (e?.code === 'CONTACTS_NATIVE_MISSING' || e?.name === 'ContactsNativeMissingError') {
         setNativeMissing(true);
         return;
       }
@@ -104,6 +104,11 @@ export default function ContactInviteScreen({ navigation }) {
       setSyncing(false);
     }
   }, [token, isGuest]);
+
+  const openContactSettings = useCallback(async () => {
+    const { openContactSettings: openSettings } = await import('../../utils/contactSync');
+    await openSettings();
+  }, []);
 
   const handleShareInvite = async () => {
     if (!invitePayload?.code) {

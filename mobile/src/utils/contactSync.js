@@ -1,41 +1,55 @@
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Contacts from 'expo-contacts';
 import { hashPhone } from './phoneHash';
 import { socialApi } from '../api/social';
 
 const MATCH_BATCH = 200;
-const CONTACT_PAGE_SIZE = 500;
+const CONTACT_PAGE_SIZE = 100;
 const OWN_PHONE_KEY = 'moneybot:ownPhoneHash';
 
 export class ContactsNativeMissingError extends Error {
   constructor() {
-    super('Contacts requires a dev build rebuild. Run: cd mobile && npx expo run:ios');
+    super('Contacts is unavailable in this build. Update the app from the App Store.');
     this.code = 'CONTACTS_NATIVE_MISSING';
     this.name = 'ContactsNativeMissingError';
   }
 }
 
-function isContactsUnavailable(error) {
-  return error?.code === 'ERR_UNAVAILABLE'
-    || /UnavailabilityError|expo-contacts/i.test(error?.message || '');
+let contactsModulePromise;
+
+async function getContactsModule() {
+  if (!contactsModulePromise) {
+    contactsModulePromise = import('expo-contacts/legacy').catch(() => {
+      contactsModulePromise = null;
+      throw new ContactsNativeMissingError();
+    });
+  }
+  return contactsModulePromise;
+}
+
+function hasContactsAccess(permission) {
+  if (!permission) return false;
+  if (permission.status === 'granted') return true;
+  if (permission.accessPrivileges === 'limited') return true;
+  return false;
 }
 
 export async function requestContactAccess() {
+  const Contacts = await getContactsModule();
   if (!Contacts.getPermissionsAsync || !Contacts.requestPermissionsAsync) {
     throw new ContactsNativeMissingError();
   }
   try {
     const existing = await Contacts.getPermissionsAsync();
-    if (existing.status === 'granted') return true;
+    if (hasContactsAccess(existing)) return true;
     if (existing.status === 'denied' && !existing.canAskAgain) {
       return false;
     }
-    const { status } = await Contacts.requestPermissionsAsync();
-    return status === 'granted';
+    const requested = await Contacts.requestPermissionsAsync();
+    return hasContactsAccess(requested);
   } catch (e) {
-    if (isContactsUnavailable(e)) throw new ContactsNativeMissingError();
-    throw e;
+    if (e instanceof ContactsNativeMissingError) throw e;
+    throw new ContactsNativeMissingError();
   }
 }
 
@@ -48,49 +62,48 @@ export async function openContactSettings() {
 }
 
 export async function loadDeviceContacts() {
-  if (!Contacts.Contact?.getAllDetails) {
+  const Contacts = await getContactsModule();
+  if (!Contacts.getContactsAsync) {
     throw new ContactsNativeMissingError();
   }
 
   const contacts = [];
   const seenIds = new Set();
-  let offset = 0;
+  let pageOffset = 0;
 
   while (true) {
-    let batch;
+    let data = [];
+    let hasNextPage = false;
     try {
-      batch = await Contacts.Contact.getAllDetails(
-        [
-          Contacts.ContactField.PHONES,
-          Contacts.ContactField.GIVEN_NAME,
-          Contacts.ContactField.FAMILY_NAME,
-          Contacts.ContactField.FULL_NAME,
+      const page = await Contacts.getContactsAsync({
+        fields: [
+          Contacts.Fields.PhoneNumbers,
+          Contacts.Fields.FirstName,
+          Contacts.Fields.LastName,
         ],
-        {
-          limit: CONTACT_PAGE_SIZE,
-          offset,
-          sortOrder: Contacts.ContactsSortOrder.GivenName,
-        },
-      );
-    } catch (e) {
-      if (isContactsUnavailable(e)) throw new ContactsNativeMissingError();
-      throw e;
+        pageSize: CONTACT_PAGE_SIZE,
+        pageOffset,
+      });
+      data = page.data || [];
+      hasNextPage = !!page.hasNextPage;
+    } catch {
+      break;
     }
 
-    if (!batch.length) break;
+    if (!data.length) break;
 
-    for (const row of batch) {
+    for (const row of data) {
       const id = String(row.id);
       if (seenIds.has(id)) continue;
       seenIds.add(id);
-      const phones = (row.phones || []).map((p) => p.number).filter(Boolean);
+      const phones = (row.phoneNumbers || []).map((p) => p.number).filter(Boolean);
       if (!phones.length) continue;
-      const name = (row.fullName || [row.givenName, row.familyName].filter(Boolean).join(' ')).trim() || 'Contact';
+      const name = [row.firstName, row.lastName].filter(Boolean).join(' ').trim() || 'Contact';
       contacts.push({ id, name, phones });
     }
 
-    if (batch.length < CONTACT_PAGE_SIZE) break;
-    offset += CONTACT_PAGE_SIZE;
+    if (!hasNextPage) break;
+    pageOffset += CONTACT_PAGE_SIZE;
   }
 
   contacts.sort((a, b) => a.name.localeCompare(b.name));
