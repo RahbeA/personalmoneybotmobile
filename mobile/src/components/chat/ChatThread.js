@@ -18,7 +18,6 @@ export default function ChatThread({
   bottomInset = 0,
   footer = null,
   emptyComponent = null,
-  character = null,
   composerStyle = null,
   composerLeading = null,
   composerAccessory = null,
@@ -80,8 +79,8 @@ export default function ChatThread({
   }, [keyboardVisible, keyboardHeight, insets.bottom, bottomInset, isTabletLayout]);
 
   function renderItem({ item }) {
-    if (item.type === 'typing') return <TypingIndicator character={character} />;
-    return <MessageBubble role={item.role} content={item.content} character={character} />;
+    if (item.type === 'typing') return <TypingIndicator />;
+    return <MessageBubble role={item.role} content={item.content} />;
   }
 
   const listPadding = useMemo(

@@ -2,10 +2,19 @@ import React, { useMemo } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BrandAvatar } from '../../components/brand';
+import PuckButton from '../../components/PuckButton';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDisplayName, timeAgo, safeHttpsUrl, STATUS_LABELS } from './feedHelpers';
 
-export default function FeedPostCard({ post, compact = false, showStatus = false, onOpenLink }) {
+export default function FeedPostCard({
+  post,
+  compact = false,
+  showStatus = false,
+  showUpvote = false,
+  onOpenLink,
+  onToggleUpvote,
+  upvoteDisabled = false,
+}) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const imageUrl = safeHttpsUrl(post?.image_url);
@@ -17,6 +26,9 @@ export default function FeedPostCard({ post, compact = false, showStatus = false
       ? colors.primary
       : colors.botBucks;
   const statusLabel = STATUS_LABELS[post?.status] || STATUS_LABELS.pending;
+  const upvoteCount = post?.upvote_count ?? 0;
+  const hasUpvoted = !!post?.has_upvoted;
+  const showUpvoteButton = showUpvote && !!onToggleUpvote;
 
   if (compact) {
     return (
@@ -38,6 +50,12 @@ export default function FeedPostCard({ post, compact = false, showStatus = false
               </View>
             ) : null}
             <Text style={styles.time}>{timeAgo(post?.created_at)}</Text>
+            {upvoteCount > 0 ? (
+              <View style={styles.compactUpvote}>
+                <Ionicons name="arrow-up" size={12} color={colors.textMuted} />
+                <Text style={styles.compactUpvoteText}>{upvoteCount}</Text>
+              </View>
+            ) : null}
           </View>
         </View>
       </View>
@@ -75,6 +93,33 @@ export default function FeedPostCard({ post, compact = false, showStatus = false
       )}
 
       {!!post?.caption && <Text style={styles.caption}>{post.caption}</Text>}
+
+      {showUpvoteButton ? (
+        <View style={styles.upvoteRow}>
+          <PuckButton
+            color={colors.primary}
+            width={44}
+            height={44}
+            borderRadius={14}
+            lip={4}
+            disabled={upvoteDisabled}
+            onPress={() => onToggleUpvote(post)}
+            accessibilityLabel={hasUpvoted ? 'Remove upvote' : 'Upvote post'}
+          >
+            <Ionicons name="arrow-up" size={22} color="#FFFFFF" />
+          </PuckButton>
+          {upvoteCount > 0 ? (
+            <Text style={styles.upvoteCount}>{upvoteCount}</Text>
+          ) : null}
+        </View>
+      ) : upvoteCount > 0 ? (
+        <View style={styles.upvoteRow}>
+          <View style={styles.upvoteButtonStatic}>
+            <Ionicons name="arrow-up" size={20} color={colors.textMuted} />
+          </View>
+          <Text style={styles.upvoteCountStatic}>{upvoteCount}</Text>
+        </View>
+      ) : null}
 
       {linkUrl && onOpenLink ? (
         <TouchableOpacity
@@ -136,18 +181,46 @@ const makeStyles = (colors) => StyleSheet.create({
   caption: {
     paddingHorizontal: 14,
     paddingTop: 12,
-    paddingBottom: 14,
+    paddingBottom: 4,
     fontSize: 15,
     fontWeight: '600',
     color: colors.white,
     lineHeight: 21,
+  },
+  upvoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  upvoteButtonStatic: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  upvoteCount: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  upvoteCountStatic: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textMuted,
   },
   linkChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginHorizontal: 14,
-    marginBottom: 14,
+    marginBottom: 4,
     marginTop: -4,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -215,5 +288,15 @@ const makeStyles = (colors) => StyleSheet.create({
     gap: 8,
     marginTop: 6,
     flexWrap: 'wrap',
+  },
+  compactUpvote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  compactUpvoteText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textMuted,
   },
 });

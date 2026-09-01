@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Typography, Button, App, Table, Space, Image, Tag, Select } from 'antd';
 import { api } from '../api/client';
 import { resolveMediaUrl } from '../utils/media';
+import SwipeFeedModeration from '../components/SwipeFeedModeration';
 
 const { Title, Text } = Typography;
 
@@ -15,6 +16,7 @@ export default function FeedPage() {
   const { message } = App.useApp();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [moderating, setModerating] = useState(false);
   const [status, setStatus] = useState('pending');
 
   const load = useCallback(async () => {
@@ -32,15 +34,19 @@ export default function FeedPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function moderate(record, action) {
+  const moderate = useCallback(async (record, action) => {
+    setModerating(true);
     try {
-      await api.post(`/feed/${record.id}/${action}/`);
+      await api.post(`/feed/${record.id}/${action}/`, {});
       message.success(action === 'approve' ? 'Approved' : 'Rejected');
-      load();
+      setRows((prev) => prev.filter((row) => row.id !== record.id));
     } catch (e) {
       message.error(e.message);
+      if (e.status) load();
+    } finally {
+      setModerating(false);
     }
-  }
+  }, [load, message]);
 
   const columns = [
     {
@@ -100,7 +106,15 @@ export default function FeedPage() {
           ]}
         />
       </div>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} />
+      {status === 'pending' ? (
+        loading ? (
+          <div className="mb-feed-swipe-empty"><Text type="secondary">Loading pending posts…</Text></div>
+        ) : (
+          <SwipeFeedModeration posts={rows} onDecision={moderate} busy={moderating} />
+        )
+      ) : (
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} />
+      )}
     </div>
   );
 }

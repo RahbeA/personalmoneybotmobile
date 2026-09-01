@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .campaigns import campaign_audience, send_campaign
-from .models import DeviceToken, Friendship, FriendNudge, Notification, NotificationCampaign
+from .models import DeviceToken, FeedPost, FeedPostUpvote, Friendship, FriendNudge, Notification, NotificationCampaign
 from .push import PushResult
 
 
@@ -160,4 +160,57 @@ class FriendNudgeTests(TestCase):
         User = get_user_model()
         stranger = User.objects.create_user(email='stranger@example.com', password='test')
         res = self.client.post(f'/api/social/users/{stranger.id}/nudge/', format='json')
+        self.assertEqual(res.status_code, 403)
+
+
+class FeedUpvoteTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.author = User.objects.create_user(email='feed_author@example.com', password='test')
+        self.voter = User.objects.create_user(email='feed_voter@example.com', password='test')
+        self.post = FeedPost.objects.create(
+            author=self.author,
+            image='feed/test.jpg',
+            caption='Save more',
+            status=FeedPost.STATUS_APPROVED,
+        )
+        self.pending = FeedPost.objects.create(
+            author=self.author,
+            image='feed/pending.jpg',
+            caption='Pending tip',
+            status=FeedPost.STATUS_PENDING,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.voter)
+
+    def test_toggle_upvote_on_approved_post(self):
+        res = self.client.post(f'/api/social/feed/{self.post.id}/upvote/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['has_upvoted'])
+        self.assertEqual(res.data['upvote_count'], 1)
+        self.assertEqual(FeedPostUpvote.objects.filter(post=self.post).count(), 1)
+
+        again = self.client.post(f'/api/social/feed/{self.post.id}/upvote/', {}, format='json')
+        self.assertEqual(again.status_code, 200)
+        self.assertFalse(again.data['has_upvoted'])
+        self.assertEqual(again.data['upvote_count'], 0)
+
+    def test_cannot_upvote_pending_post(self):
+        res = self.client.post(f'/api/social/feed/{self.pending.id}/upvote/', {}, format='json')
+        self.assertEqual(res.status_code, 404)
+
+    def test_feed_list_includes_upvote_fields(self):
+        FeedPostUpvote.objects.create(post=self.post, user=self.voter)
+        res = self.client.get('/api/social/feed/')
+        self.assertEqual(res.status_code, 200)
+        row = next(item for item in res.data['results'] if item['id'] == self.post.id)
+        self.assertEqual(row['upvote_count'], 1)
+        self.assertTrue(row['has_upvoted'])
+
+    def test_guest_cannot_upvote(self):
+        User = get_user_model()
+        guest = User.objects.create_user(email='guest@example.com', password='test', is_guest=True)
+        guest_client = APIClient()
+        guest_client.force_authenticate(user=guest)
+        res = guest_client.post(f'/api/social/feed/{self.post.id}/upvote/', {}, format='json')
         self.assertEqual(res.status_code, 403)

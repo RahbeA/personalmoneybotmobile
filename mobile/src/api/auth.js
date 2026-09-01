@@ -51,7 +51,4 @@ export const authApi = {
 
   getMyInvites: (token) =>
     apiRequest('/auth/invites/', { token }),
-
-  regenerateInvite: (token) =>
-    apiRequest('/auth/invites/regenerate/', { method: 'POST', token }),
 };

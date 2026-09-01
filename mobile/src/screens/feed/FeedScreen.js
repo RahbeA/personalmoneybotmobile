@@ -36,6 +36,38 @@ export default function FeedScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState(null);
+  const [upvotingId, setUpvotingId] = useState(null);
+
+  const syncPost = useCallback((postId, patch) => {
+    setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, ...patch } : p)));
+    setMyPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, ...patch } : p)));
+  }, []);
+
+  const toggleUpvote = useCallback(async (post) => {
+    if (!requireAccount({ isGuest, navigation, feature: 'upvote tips' })) return;
+    if (post.status !== 'approved' || upvotingId === post.id) return;
+
+    const nextUpvoted = !post.has_upvoted;
+    const nextCount = Math.max(0, (post.upvote_count || 0) + (nextUpvoted ? 1 : -1));
+    syncPost(post.id, { has_upvoted: nextUpvoted, upvote_count: nextCount });
+    setUpvotingId(post.id);
+
+    try {
+      const result = await socialApi.toggleFeedUpvote(token, post.id);
+      syncPost(post.id, {
+        has_upvoted: result.has_upvoted,
+        upvote_count: result.upvote_count,
+      });
+    } catch {
+      syncPost(post.id, {
+        has_upvoted: post.has_upvoted,
+        upvote_count: post.upvote_count || 0,
+      });
+      setToast('Could not update upvote. Try again.');
+    } finally {
+      setUpvotingId(null);
+    }
+  }, [isGuest, navigation, syncPost, token, upvotingId]);
 
   const load = useCallback(async ({ force = false } = {}) => {
     if (!token) {
@@ -183,7 +215,10 @@ export default function FeedScreen({ navigation, route }) {
               <FeedPostCard
                 post={item}
                 showStatus={tab === 'mine'}
+                showUpvote={tab === 'live' || item.status === 'approved'}
                 onOpenLink={openLink}
+                onToggleUpvote={toggleUpvote}
+                upvoteDisabled={upvotingId === item.id}
               />
             )}
             ListHeaderComponent={header}

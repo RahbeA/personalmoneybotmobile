@@ -2,7 +2,8 @@ from datetime import datetime
 
 from django.contrib import admin
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Exists, OuterRef, Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -15,6 +16,7 @@ from . import service
 from .models import (
     ChallengeParticipant,
     FeedPost,
+    FeedPostUpvote,
     Friendship,
     FriendNudge,
     Group,
@@ -1006,6 +1008,7 @@ def match_contacts(request):
                 request_id = fs.id
         results.append({
             **service.serialize_user_brief(user, request),
+            'phone_hash': user.phone_hash,
             'friendship_status': status_label,
             'request_id': request_id,
         })
@@ -1013,6 +1016,20 @@ def match_contacts(request):
 
 
 FEED_PAGE_SIZE = 30
+
+
+def _feed_posts_queryset(request):
+    qs = FeedPost.objects.select_related('author').annotate(
+        upvote_count=Count('upvotes', distinct=True),
+    )
+    user = request.user
+    if user.is_authenticated and not getattr(user, 'is_guest', False):
+        qs = qs.annotate(
+            has_upvoted=Exists(
+                FeedPostUpvote.objects.filter(post_id=OuterRef('pk'), user_id=user.id)
+            ),
+        )
+    return qs
 
 
 def _serialize_feed_posts(posts, request):
@@ -1026,8 +1043,8 @@ def feed_list_create(request):
     """Approved feed for everyone; create stays pending until admin approve (DEV-535)."""
     if request.method == 'GET':
         posts = (
-            FeedPost.objects.filter(status=FeedPost.STATUS_APPROVED)
-            .select_related('author')
+            _feed_posts_queryset(request)
+            .filter(status=FeedPost.STATUS_APPROVED)
             .order_by('-created_at')[:FEED_PAGE_SIZE]
         )
         return Response({'results': _serialize_feed_posts(posts, request)})
@@ -1062,5 +1079,28 @@ def feed_mine(request):
     blocked = _reject_guest(request)
     if blocked:
         return blocked
-    posts = FeedPost.objects.filter(author=request.user).order_by('-created_at')[:FEED_PAGE_SIZE]
+    posts = (
+        _feed_posts_queryset(request)
+        .filter(author=request.user)
+        .order_by('-created_at')[:FEED_PAGE_SIZE]
+    )
     return Response({'results': _serialize_feed_posts(posts, request)})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def feed_upvote_toggle(request, post_id):
+    """Toggle upvote on an approved feed post."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    post = get_object_or_404(FeedPost, pk=post_id, status=FeedPost.STATUS_APPROVED)
+    existing = FeedPostUpvote.objects.filter(post=post, user=request.user).first()
+    if existing:
+        existing.delete()
+        upvoted = False
+    else:
+        FeedPostUpvote.objects.create(post=post, user=request.user)
+        upvoted = True
+    count = post.upvotes.count()
+    return Response({'upvote_count': count, 'has_upvoted': upvoted})

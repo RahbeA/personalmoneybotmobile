@@ -41,7 +41,9 @@ async function request(endpoint, { method = 'GET', body, isForm = false, headers
     }
   }
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, opts);
+  const response = await fetch(`${BASE_URL}${endpoint}`, opts).catch(() => {
+    throw new Error('Cannot reach the API. Make sure the backend is running on port 8000.');
+  });
 
   if (response.status === 204) return null;
 

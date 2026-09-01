@@ -291,7 +291,7 @@ def _serialize_leaderboard_entry(stats, rank, request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def leaderboard(request):
-    """Top-N board + caller rank, or name/email search with global ranks."""
+    """Top-N board + caller rank, paginated rows, or name/email search."""
     # Ranking is account-based (Apple 5.1.1(v)); guests browse lessons instead.
     if getattr(request.user, 'is_guest', False):
         return Response(
@@ -307,6 +307,22 @@ def leaderboard(request):
         data = _build_leaderboard_search_payload(request, search)
         return Response(data)
 
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.query_params.get('page_size', LEADERBOARD_TOP_N))
+    except (TypeError, ValueError):
+        page_size = LEADERBOARD_TOP_N
+    page_size = min(max(1, page_size), LEADERBOARD_MAX_PAGE_SIZE)
+
+    if page > 1:
+        payload = _build_leaderboard_page(request, page, page_size)
+        me_entry = _leaderboard_me_entry(request)
+        data = apply_leaderboard_user_flags(payload, request, me_entry)
+        return attach_cache_header(Response(data), False)
+
     # Shared snapshot is just the top board; each caller's "me" is applied after cache.
     cache_key = leaderboard_cache_key(1, LEADERBOARD_TOP_N, '')
 
@@ -316,23 +332,23 @@ def leaderboard(request):
         )
 
     cached, hit = cache_get_or_set(cache_key, factory, TTL_LEADERBOARD)
-
-    my_id = request.user.id
-    me_in_top = next(
-        (e for e in cached.get('top') or [] if e.get('user_id') == my_id),
-        None,
-    )
-    if me_in_top:
-        # Same rank as the visible top list (avoids stale-cache vs fresh-me mismatch).
-        me_entry = copy.deepcopy(me_in_top)
-        me_entry['is_me'] = True
-    else:
-        my_stats = get_or_create_stats(request.user)
-        rank = _compute_user_rank(request.user, my_stats)
-        me_entry = _serialize_leaderboard_entry(my_stats, rank, request)
-
+    me_entry = _leaderboard_me_entry(request, cached_top=cached.get('top') or [])
     data = apply_leaderboard_user_flags(cached, request, me_entry)
     return attach_cache_header(Response(data), hit)
+
+
+def _leaderboard_me_entry(request, cached_top=None):
+    """Current user's rank row, preferring the cached top list when present."""
+    my_id = request.user.id
+    top = cached_top or []
+    me_in_top = next((e for e in top if e.get('user_id') == my_id), None)
+    if me_in_top:
+        me_entry = copy.deepcopy(me_in_top)
+        me_entry['is_me'] = True
+        return me_entry
+    my_stats = get_or_create_stats(request.user)
+    rank = _compute_user_rank(request.user, my_stats)
+    return _serialize_leaderboard_entry(my_stats, rank, request)
 
 
 def _compute_user_rank(user, stats):
@@ -375,7 +391,35 @@ def _build_leaderboard_payload(request):
             'page': 1,
             'page_size': LEADERBOARD_TOP_N,
             'total_count': total_count,
-            'has_next': False,
+            'has_next': total_count > LEADERBOARD_TOP_N,
+        },
+        'search': '',
+    }
+
+
+def _build_leaderboard_page(request, page, page_size):
+    """Paginated slice for ranks beyond the cached top snapshot (page >= 2)."""
+    ranked = _leaderboard_ranked_qs(_leaderboard_stats_qs())
+    total_count = ranked.count()
+    start_rank = (page - 1) * page_size + 1
+    end_rank = page * page_size
+    stats_list = list(
+        ranked.filter(rank__gte=start_rank, rank__lte=end_rank).order_by('rank')
+    )
+    entries = [
+        _serialize_leaderboard_entry(stats, stats.rank, request)
+        for stats in stats_list
+    ]
+    return {
+        'top': [],
+        'me': None,
+        'entries': entries,
+        'total_count': total_count,
+        'pagination': {
+            'page': page,
+            'page_size': page_size,
+            'total_count': total_count,
+            'has_next': end_rank < total_count,
         },
         'search': '',
     }

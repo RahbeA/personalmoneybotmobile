@@ -40,14 +40,15 @@ Admin: control panel **Money Tips**, **Hats**, **Feed**.
 
 ## Feed (DEV-535)
 
-- `GET /api/social/feed/` approved posts only
+- `GET /api/social/feed/` approved posts only; each post includes `upvote_count`, `has_upvoted`
 - `POST /api/social/feed/` multipart `image` + `caption` + optional `link` → status `pending`
 - `GET /api/social/feed/mine/` author’s posts including pending/rejected
+- `POST /api/social/feed/:id/upvote/` toggle upvote on approved posts → `{upvote_count, has_upvoted}`
 - Admin: `/feed/` approve / reject
 
-`socialApi.getFeed / getMyFeed / createFeedPost(token, formData)`. `apiRequest` already sends FormData as multipart (do not set JSON Content-Type).
+`socialApi.getFeed / getMyFeed / createFeedPost(token, formData) / toggleFeedUpvote(token, postId)`. `apiRequest` already sends FormData as multipart (do not set JSON Content-Type).
 
-Do not add likes, stories, or DMs.
+Do not add stories or DMs.
 
 ## Contacts (DEV-536)
 
@@ -57,7 +58,7 @@ Never upload raw phone numbers.
 2. `POST /api/social/contacts/register/` `{phone_hash}` for the signed-in user.
 3. `POST /api/social/contacts/match/` `{hashes: [...]}` max 200.
 
-Matches reuse `serialize_user_brief` + `friendship_status`. Invite non-matches with existing invite share copy (`MyInvitesScreen` / `brandCopy.js`).
+Matches reuse `serialize_user_brief` + `friendship_status` + `phone_hash` (echo of matched hash). Invite non-matches with existing invite share copy (`brandCopy.js` / `authApi.getMyInvites`).
 
 ## Already shipped — do not rebuild
 

@@ -6,15 +6,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import FeaturedCharacter from '../components/FeaturedCharacter';
 import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
-import PremiumLockBadge from '../components/moneyverse/PremiumLockBadge';
 import PuckButton from '../components/PuckButton';
-import { isPremiumLocked, openPaywall } from '../components/moneyverse/openPaywall';
-import { requireAccount } from '../utils/requireAccount';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 
@@ -45,11 +41,9 @@ function CoinBadge({ amount, styles, colors }) {
 }
 
 export default function MoneyverseScreen({ navigation }) {
-  const { isGuest } = useAuth();
   const {
     botBucks,
     equippedCharacter,
-    isPremium,
     characters,
     loading: progressLoading,
     refreshCharacterCache,
@@ -113,11 +107,6 @@ export default function MoneyverseScreen({ navigation }) {
       setRefreshing(false);
     }
   }, [refreshCharacterCache]);
-
-  const onPremiumPress = useCallback(() => {
-    if (!requireAccount({ isGuest, navigation, feature: 'unlock Premium items' })) return;
-    openPaywall(navigation);
-  }, [isGuest, navigation]);
 
   const filters = useMemo(
     () => [
@@ -200,19 +189,6 @@ export default function MoneyverseScreen({ navigation }) {
                   onOpen={openCharacter}
                   equippedId={equippedCharacter?.id}
                 />
-                {isPremiumLocked(visibleCharacters[index], isPremium) ? (
-                  <PuckButton
-                    color={colors.botBucks}
-                    borderRadius={14}
-                    lip={5}
-                    onPress={onPremiumPress}
-                    style={styles.premiumLock}
-                    contentStyle={styles.premiumLockContent}
-                    accessibilityLabel="Premium character"
-                  >
-                    <PremiumLockBadge />
-                  </PuckButton>
-                ) : null}
               </View>
             )}
           </View>
@@ -235,16 +211,6 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   body: { flex: 1, paddingBottom: tabBarInset },
   emptyScroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
   showcase: { flex: 1 },
-  premiumLock: {
-    position: 'absolute',
-    top: 12,
-    left: 32,
-    zIndex: 4,
-  },
-  premiumLockContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
 
   filterScroll: { flexGrow: 0, marginBottom: 12, maxHeight: 52 },
   filterRow: { gap: 8, paddingHorizontal: 20, paddingRight: 24, alignItems: 'center' },

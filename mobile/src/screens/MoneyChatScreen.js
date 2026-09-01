@@ -19,7 +19,7 @@ import { personalityByKey } from '../components/chat/personalities';
 export default function MoneyChatScreen({ navigation, route }) {
   const { module, badge, xp } = route.params;
   const { token } = useAuth();
-  const { refresh, equippedCharacter, chatPersonality } = useUserProgress();
+  const { refresh, chatPersonality } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -175,7 +175,6 @@ export default function MoneyChatScreen({ navigation, route }) {
           composerDisabled={sending}
           placeholder="Reply..."
           keyboardVerticalOffset={8}
-          character={equippedCharacter}
           footer={passed ? (
             <View style={styles.passedFooter}>
               {bonus && (

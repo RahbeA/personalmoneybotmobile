@@ -16,27 +16,18 @@ import { requireAccount } from '../utils/requireAccount';
 import ChatThread from '../components/chat/ChatThread';
 import PersonalityChips from '../components/chat/PersonalityChips';
 import { personalityByKey } from '../components/chat/personalities';
-import { BrandAvatar } from '../components/brand';
 import PuckButton from '../components/PuckButton';
 import { EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
-import { navigate as rootNavigate } from '../navigation/rootNavigation';
 import { ANALYTICS_EVENTS, track } from '../utils/analytics';
 
 const TUTOR_HERO = require('../../assets/tutor-hero.png');
-
-const SUGGESTED_PROMPTS = [
-  'How do I start budgeting?',
-  'What is compound interest?',
-  'How does credit work?',
-  'Tips for building an emergency fund',
-];
 
 function hairlineBorder(isDark) {
   return isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
 }
 
-function TutorEmptyHero({ styles, colors, voice, character, onPrompt }) {
+function TutorEmptyHero({ styles, voice }) {
   return (
     <ScrollView
       contentContainerStyle={styles.emptyScroll}
@@ -44,39 +35,11 @@ function TutorEmptyHero({ styles, colors, voice, character, onPrompt }) {
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.emptyHero}>
-        <LinearGradient
-          colors={[`${voice.accent || colors.primary}28`, 'transparent']}
-          style={styles.emptyHeroGlow}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-        />
-        <View style={[styles.emptyAvatarRing, { borderColor: voice.accent || colors.primary }]}>
-          {character ? (
-            <BrandAvatar character={character} size={80} autoRotate logoSize={44} />
-          ) : (
-            <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
-          )}
+        <View style={[styles.emptyAvatarRing, { borderColor: voice.accent }]}>
+          <Image source={TUTOR_HERO} style={styles.emptyHeroImage} resizeMode="cover" />
         </View>
-        <Text style={[styles.emptyKicker, { color: voice.accent || colors.primary }]}>
-          {voice.label.toUpperCase()}
-        </Text>
         <Text style={styles.emptyTitle}>{voice.greeting}</Text>
         <Text style={styles.emptyBody}>{EMPTY_STATES.tutor.body}</Text>
-      </View>
-
-      <Text style={styles.promptsLabel}>TRY ASKING</Text>
-      <View style={styles.promptsGrid}>
-        {SUGGESTED_PROMPTS.map((prompt) => (
-          <TouchableOpacity
-            key={prompt}
-            style={styles.promptTile}
-            activeOpacity={0.88}
-            onPress={() => onPrompt(prompt)}
-          >
-            <Ionicons name="sparkles" size={15} color={voice.accent || colors.primary} />
-            <Text style={styles.promptChipText}>{prompt}</Text>
-          </TouchableOpacity>
-        ))}
       </View>
     </ScrollView>
   );
@@ -84,7 +47,7 @@ function TutorEmptyHero({ styles, colors, voice, character, onPrompt }) {
 
 export default function TutorScreen({ navigation }) {
   const { token, user, isGuest } = useAuth();
-  const { equippedCharacter, chatPersonality, updatePersonality, isPremium } = useUserProgress();
+  const { chatPersonality, updatePersonality } = useUserProgress();
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(6);
   const insets = useSafeAreaInsets();
@@ -138,10 +101,6 @@ export default function TutorScreen({ navigation }) {
 
   const handlePersonality = useCallback(async (item) => {
     if (!requireAccount({ isGuest, navigation, feature: 'change Tutor voice' })) return;
-    if (item.premium && !isPremium) {
-      rootNavigate('Paywall');
-      return;
-    }
     if (item.key === chatPersonality) return;
     setSavingPersonality(item.key);
     try {
@@ -152,7 +111,7 @@ export default function TutorScreen({ navigation }) {
     } finally {
       setSavingPersonality(null);
     }
-  }, [isGuest, navigation, isPremium, chatPersonality, updatePersonality]);
+  }, [isGuest, navigation, chatPersonality, updatePersonality]);
 
   function startNewChat() {
     if (!requireAccount({ isGuest, navigation, feature: 'chat with the AI Tutor' })) return;
@@ -230,10 +189,7 @@ export default function TutorScreen({ navigation }) {
   const emptyState = (
     <TutorEmptyHero
       styles={styles}
-      colors={colors}
       voice={voice}
-      character={equippedCharacter}
-      onPrompt={handleSend}
     />
   );
 
@@ -269,11 +225,7 @@ export default function TutorScreen({ navigation }) {
         <View style={styles.header}>
           <View style={styles.identity}>
             <View style={[styles.identityAvatar, { borderColor: voice.accent || colors.primary }]}>
-              {equippedCharacter ? (
-                <BrandAvatar character={equippedCharacter} size={40} autoRotate={false} />
-              ) : (
-                <Image source={TUTOR_HERO} style={styles.identityImage} />
-              )}
+              <Image source={TUTOR_HERO} style={styles.identityImage} />
             </View>
             <View style={styles.identityCopy}>
               <Text style={styles.heroEyebrow}>AI TUTOR</Text>
@@ -291,7 +243,6 @@ export default function TutorScreen({ navigation }) {
           <PersonalityChips
             variant="dock"
             selected={chatPersonality || 'chill'}
-            isPremium={isPremium}
             savingKey={savingPersonality}
             onSelect={handlePersonality}
           />
@@ -305,7 +256,6 @@ export default function TutorScreen({ navigation }) {
           placeholder="Ask about anything you're learning..."
           bottomInset={tabBarInset}
           emptyComponent={emptyState}
-          character={equippedCharacter}
           composerStyle={styles.composerWrap}
           composerAccessory={composerAccessory}
           onKeyboardVisibleChange={handleKeyboardVisible}
@@ -461,79 +411,39 @@ const makeStyles = (colors, isDark) => {
     },
     emptyHero: {
       alignItems: 'center',
-      paddingVertical: 24,
-      paddingHorizontal: 18,
-      marginBottom: 16,
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(61,220,95,0.14)' : 'rgba(22,163,74,0.14)',
-      backgroundColor: colors.surfaceElevated,
-      overflow: 'hidden',
-      position: 'relative',
-    },
-    emptyHeroGlow: {
-      ...StyleSheet.absoluteFillObject,
-      borderRadius: 24,
+      paddingVertical: 28,
+      paddingHorizontal: 20,
+      marginBottom: 8,
     },
     emptyAvatarRing: {
       borderRadius: 44,
       borderWidth: 2,
       padding: 3,
-      marginBottom: 12,
+      marginBottom: 16,
       overflow: 'hidden',
     },
     emptyHeroImage: {
-      width: 80,
-      height: 80,
-      borderRadius: 40,
-    },
-    emptyKicker: {
-      fontSize: 11,
-      fontWeight: '800',
-      letterSpacing: 1.1,
-      marginBottom: 6,
+      width: 72,
+      height: 72,
+      borderRadius: 36,
     },
     emptyTitle: {
-      fontSize: 21,
+      fontSize: 20,
       fontWeight: '800',
       color: colors.white,
       letterSpacing: -0.4,
       textAlign: 'center',
       marginBottom: 8,
-      lineHeight: 27,
+      lineHeight: 26,
     },
     emptyBody: {
       fontSize: 14,
       color: colors.textSecondary,
       textAlign: 'center',
-      lineHeight: 20,
+      lineHeight: 21,
       fontWeight: '500',
+      maxWidth: 300,
     },
-    promptsLabel: {
-      fontSize: 11,
-      fontWeight: '800',
-      color: colors.textMuted,
-      letterSpacing: 1,
-      marginBottom: 10,
-    },
-    promptsGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    promptTile: {
-      width: '48%',
-      flexGrow: 1,
-      minHeight: 68,
-      gap: 8,
-      paddingVertical: 12,
-      paddingHorizontal: 12,
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: hairline,
-    },
-    promptChipText: { fontSize: 13, fontWeight: '700', color: colors.white, lineHeight: 18 },
     guestCtaBtnText: { fontSize: 15, fontWeight: '800', color: '#0A0A0A' },
 
     modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },

@@ -38,8 +38,7 @@ import CreateChallengeScreen from '../screens/social/CreateChallengeScreen';
 import ChallengeLeaderboardScreen from '../screens/social/ChallengeLeaderboardScreen';
 import FeedScreen from '../screens/feed/FeedScreen';
 import ComposeFeedScreen from '../screens/feed/ComposeFeedScreen';
-import ContactInviteScreen from '../screens/social/ContactInviteScreen';
-import PaywallScreen from '../screens/PaywallScreen';
+import { BrandEmptyState } from '../components/brand';
 import { useTheme } from '../context/ThemeContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { TabReselectProvider, TAB_ROOT_SCREENS, emitTabReselect, useTabReselectContext } from './tabReselect';
@@ -49,6 +48,30 @@ const HomeStack = createNativeStackNavigator();
 const MoneyverseStack = createNativeStackNavigator();
 const TutorStack = createNativeStackNavigator();
 const SocialStack = createNativeStackNavigator();
+
+function ContactInviteRoute(props) {
+  const { colors } = useTheme();
+  const Screen = useMemo(() => {
+    try {
+      return require('../screens/social/ContactInviteScreen').default;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  if (!Screen) {
+    return (
+      <BrandEmptyState
+        icon="people-outline"
+        title="Contacts unavailable"
+        body="Restart the app to try again. If this keeps happening, rebuild with: cd mobile && npx expo run:ios"
+        style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.background }}
+      />
+    );
+  }
+
+  return <Screen {...props} />;
+}
 
 const TABS = [
   { name: 'HomeTab', label: 'Home', icon: 'home', iconOutline: 'home-outline' },
@@ -63,7 +86,7 @@ const LESSON_ROUTES = new Set([
   'Arcade', 'BudgetBlitz', 'InflationDodge', 'CreditClimb', 'ScamSpotter', 'DailyBlitz', 'DailyLeaderboard',
   'Groups', 'CreateGroup', 'GroupDetail', 'InviteFriends', 'GroupLeaderboard', 'CreateChallenge', 'ChallengeLeaderboard',
   'FriendRequests', 'Notifications', 'MyFriends', 'CharacterDetail',
-  'ComposeFeed', 'Paywall',
+  'ComposeFeed',
 ]);
 
 function getDeepestRouteName(route) {
@@ -188,11 +211,6 @@ function HomeStackNavigator() {
         component={BadgeRevealScreen}
         options={badgeRevealOptions}
       />
-      <HomeStack.Screen
-        name="Paywall"
-        component={PaywallScreen}
-        options={{ animation: 'slide_from_bottom' }}
-      />
     </HomeStack.Navigator>
   );
 }
@@ -202,11 +220,6 @@ function MoneyverseStackNavigator() {
     <MoneyverseStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <MoneyverseStack.Screen name="Moneyverse" component={MoneyverseScreen} />
       <MoneyverseStack.Screen name="CharacterDetail" component={CharacterDetailScreen} options={{ animation: 'slide_from_bottom' }} />
-      <MoneyverseStack.Screen
-        name="Paywall"
-        component={PaywallScreen}
-        options={{ animation: 'slide_from_bottom' }}
-      />
     </MoneyverseStack.Navigator>
   );
 }
@@ -235,7 +248,7 @@ function SocialStackNavigator() {
       <SocialStack.Screen name="ChallengeLeaderboard" component={ChallengeLeaderboardScreen} />
       <SocialStack.Screen name="Feed" component={FeedScreen} />
       <SocialStack.Screen name="ComposeFeed" component={ComposeFeedScreen} options={{ animation: 'slide_from_bottom' }} />
-      <SocialStack.Screen name="ContactInvite" component={ContactInviteScreen} />
+      <SocialStack.Screen name="ContactInvite" component={ContactInviteRoute} />
     </SocialStack.Navigator>
   );
 }

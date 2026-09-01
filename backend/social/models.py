@@ -529,3 +529,34 @@ class FeedPost(models.Model):
 
     def __str__(self):
         return f'{self.author_id} {self.status}: {self.caption[:40]}'
+
+
+class FeedPostUpvote(models.Model):
+    """One upvote per user per approved feed post."""
+
+    post = models.ForeignKey(
+        FeedPost,
+        on_delete=models.CASCADE,
+        related_name='upvotes',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='feed_upvotes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['post', 'user'],
+                name='unique_feed_post_upvote',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['post']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        return f'user {self.user_id} upvoted post {self.post_id}'

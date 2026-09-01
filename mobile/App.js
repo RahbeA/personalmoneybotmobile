@@ -32,8 +32,6 @@ import LandingScreen from './src/screens/LandingScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import LegalDocumentScreen from './src/screens/LegalDocumentScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import MyInvitesScreen from './src/screens/MyInvitesScreen';
-import PaywallScreen from './src/screens/PaywallScreen';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
 import NameCapturePrompt from './src/components/NameCapturePrompt';
 
@@ -194,16 +192,6 @@ function RootNavigator() {
               <Stack.Screen
                 name="AuthUpgrade"
                 component={AuthScreen}
-                options={{ animation: 'slide_from_bottom' }}
-              />
-              <Stack.Screen
-                name="MyInvites"
-                component={MyInvitesScreen}
-                options={{ animation: 'slide_from_right' }}
-              />
-              <Stack.Screen
-                name="Paywall"
-                component={PaywallScreen}
                 options={{ animation: 'slide_from_bottom' }}
               />
             </>

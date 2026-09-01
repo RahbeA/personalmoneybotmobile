@@ -974,7 +974,7 @@ class FeedPostViewSet(viewsets.ModelViewSet):
     serializer_class = FeedPostAdminSerializer
     permission_classes = [IsAdminUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
-    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
         qs = FeedPost.objects.select_related('author').all()

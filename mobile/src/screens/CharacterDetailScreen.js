@@ -13,9 +13,7 @@ import { useTheme } from '../context/ThemeContext';
 import { requireAccount } from '../utils/requireAccount';
 import CharacterViewer from '../components/CharacterViewer';
 import CharacterPoster from '../components/CharacterPoster';
-import PremiumLockBadge from '../components/moneyverse/PremiumLockBadge';
 import PuckButton from '../components/PuckButton';
-import { isPremiumLocked, openPaywall } from '../components/moneyverse/openPaywall';
 
 const RARITY_COLORS = {
   common: '#9AA4B2',
@@ -27,7 +25,7 @@ const RARITY_COLORS = {
 export default function CharacterDetailScreen({ navigation, route }) {
   const { character } = route.params;
   const { isGuest } = useAuth();
-  const { botBucks, equippedCharacter, isPremium, purchaseCharacter, equipCharacter } = useUserProgress();
+  const { botBucks, equippedCharacter, purchaseCharacter, equipCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isFocused = useIsFocused();
@@ -38,15 +36,10 @@ export default function CharacterDetailScreen({ navigation, route }) {
   const isEquipped = equippedCharacter?.id === character.id;
   const rarityColor = RARITY_COLORS[character.rarity] || colors.primary;
   const canAfford = botBucks >= character.price;
-  const locked = !owned && isPremiumLocked(character, isPremium);
 
   async function handleBuy() {
     if (busy) return;
     if (!requireAccount({ isGuest, navigation, feature: 'buy characters with Bot Bucks' })) return;
-    if (locked) {
-      openPaywall(navigation);
-      return;
-    }
     if (!canAfford) {
       Alert.alert('Not enough Bot Bucks', `You need ${character.price - botBucks} more Bot Bucks. Complete more lessons to earn them!`);
       return;
@@ -57,11 +50,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
       setOwned(true);
       Alert.alert('Purchased!', `${character.name} is now yours. Equip it to make it your character.`);
     } catch (e) {
-      if (e?.code === 'premium_required') {
-        openPaywall(navigation);
-      } else {
-        Alert.alert('Purchase failed', e.message || 'Something went wrong.');
-      }
+      Alert.alert('Purchase failed', e.message || 'Something went wrong.');
     } finally {
       setBusy(false);
     }
@@ -108,11 +97,6 @@ export default function CharacterDetailScreen({ navigation, route }) {
               <CharacterPoster previewUrl={character.preview_url} />
             )}
             <Text style={styles.dragHint}>Drag to rotate</Text>
-            {locked ? (
-              <View style={styles.viewerLock}>
-                <PremiumLockBadge />
-              </View>
-            ) : null}
           </View>
 
           <View style={styles.header}>
@@ -120,7 +104,6 @@ export default function CharacterDetailScreen({ navigation, route }) {
             <View style={[styles.rarityChip, { backgroundColor: rarityColor + '22', borderColor: rarityColor + '55' }]}>
               <Text style={[styles.rarityChipText, { color: rarityColor }]}>{character.rarity}</Text>
             </View>
-            {locked ? <PremiumLockBadge compact /> : null}
           </View>
 
           {character.description ? (
@@ -169,26 +152,6 @@ export default function CharacterDetailScreen({ navigation, route }) {
                 )}
               </PuckButton>
             )
-          ) : locked ? (
-            <PuckButton
-              color={colors.botBucks}
-              borderRadius={16}
-              lip={5}
-              onPress={handleBuy}
-              disabled={busy}
-              contentStyle={styles.ctaContent}
-            >
-              {busy ? (
-                <ActivityIndicator color="#0A0A0A" />
-              ) : (
-                <>
-                  <Ionicons name="lock-closed" size={18} color="#0A0A0A" />
-                  <Text style={[styles.ctaText, { color: '#0A0A0A' }]}>
-                    {isGuest ? 'Create account to unlock' : 'Unlock with Premium'}
-                  </Text>
-                </>
-              )}
-            </PuckButton>
           ) : (
             <PuckButton
               color={!isGuest && !canAfford ? colors.surfaceElevated : colors.primary}
@@ -244,9 +207,6 @@ const makeStyles = (colors) => StyleSheet.create({
   dragHint: {
     position: 'absolute', bottom: 12, alignSelf: 'center',
     fontSize: 12, color: colors.textMuted, fontWeight: '500',
-  },
-  viewerLock: {
-    position: 'absolute', top: 12, left: 12,
   },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' },
   name: { fontSize: 26, fontWeight: '800', color: colors.white, letterSpacing: -0.4, flexShrink: 1 },

@@ -347,15 +347,16 @@ export default function HomeScreen({ navigation, route }) {
 
             <PuckButton
               color="#FF8A1F"
-              width={64}
+              width={88}
               height={64}
               borderRadius={16}
               lip={5}
               onPress={() => navigation.navigate('DailyBlitz')}
-              contentStyle={styles.puzzleGrad}
+              contentStyle={styles.puzzleContent}
               accessibilityLabel="Daily Puzzle"
             >
-              <Ionicons name="today" size={20} color="#FFFFFF" />
+              <Ionicons name="today" size={18} color="#FFFFFF" />
+              <Text style={styles.puzzleLabel}>Daily Puzzle</Text>
             </PuckButton>
           </View>
 
@@ -501,5 +502,18 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     minHeight: 64,
   },
   allDoneTitle: { fontSize: 14, fontWeight: '700', color: colors.white },
-  puzzleGrad: { paddingVertical: 10 },
+  puzzleContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+  },
+  puzzleLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: -0.2,
+    lineHeight: 12,
+  },
 });

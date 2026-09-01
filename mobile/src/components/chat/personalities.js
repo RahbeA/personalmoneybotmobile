@@ -15,7 +15,7 @@ export const CHAT_PERSONALITIES = [
     greeting: "Let's lock a money win. What are we working?",
     icon: 'flash',
     accent: '#F5B72B',
-    premium: true,
+    premium: false,
   },
   {
     key: 'funny',
@@ -24,7 +24,7 @@ export const CHAT_PERSONALITIES = [
     greeting: "Hit me. I'll explain it without the lecture voice.",
     icon: 'happy',
     accent: '#56C8E8',
-    premium: true,
+    premium: false,
   },
   {
     key: 'teacher',
@@ -33,7 +33,7 @@ export const CHAT_PERSONALITIES = [
     greeting: 'Ask a real question. I will answer it cleanly.',
     icon: 'school',
     accent: '#A66BFF',
-    premium: true,
+    premium: false,
   },
 ];
 

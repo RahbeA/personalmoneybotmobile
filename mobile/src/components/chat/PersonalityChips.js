@@ -6,7 +6,6 @@ import { CHAT_PERSONALITIES } from './personalities';
 
 export default function PersonalityChips({
   selected = 'chill',
-  isPremium = false,
   savingKey = null,
   onSelect,
   padded = true,
@@ -18,30 +17,28 @@ export default function PersonalityChips({
 
   const cells = CHAT_PERSONALITIES.map((item) => {
     const active = selected === item.key;
-    const locked = item.premium && !isPremium;
     const saving = savingKey === item.key;
-    const iconColor = active ? '#0A0A0A' : locked ? colors.textMuted : (item.accent || colors.primary);
+    const iconColor = active ? '#0A0A0A' : (item.accent || colors.primary);
     return (
       <TouchableOpacity
         key={item.key}
         style={[
           isDock ? styles.dockCell : styles.chip,
           active && (isDock ? styles.dockCellActive : styles.chipActive),
-          locked && !active && (isDock ? styles.dockCellLocked : styles.chipLocked),
           active && isDock && { backgroundColor: item.accent || colors.primary, borderColor: item.accent || colors.primary },
         ]}
         activeOpacity={0.85}
         onPress={() => onSelect?.(item)}
         disabled={!!savingKey}
         accessibilityRole="button"
-        accessibilityLabel={`${item.label} voice${locked ? ', Premium' : ''}`}
+        accessibilityLabel={`${item.label} voice`}
         accessibilityState={{ selected: active, disabled: !!savingKey }}
       >
         {saving ? (
           <ActivityIndicator size="small" color={active ? '#0A0A0A' : colors.primary} />
         ) : (
           <Ionicons
-            name={locked ? 'lock-closed' : item.icon}
+            name={item.icon}
             size={isDock ? 16 : 14}
             color={iconColor}
           />
@@ -102,9 +99,6 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
-  chipLocked: {
-    opacity: 0.72,
-  },
   label: {
     fontSize: 13,
     fontWeight: '700',
@@ -142,9 +136,6 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   dockCellActive: {
     backgroundColor: colors.primary,
-  },
-  dockCellLocked: {
-    opacity: 0.55,
   },
   dockLabel: {
     fontSize: 12,

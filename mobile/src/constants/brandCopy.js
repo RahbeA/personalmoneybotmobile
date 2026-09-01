@@ -3,6 +3,13 @@ export const BRAND_TAGLINE = 'Financial literacy for everyone';
 export const BRAND_URL = 'getmoneybot.com';
 export const APP_STORE_URL = 'https://apps.apple.com/us/app/moneybot-mobile/id6778658807';
 
+export function buildInviteShareMessage() {
+  return (
+    `Join me on MoneyBot — learn money skills the fun way.\n\n`
+    + `Download the app:\n${APP_STORE_URL}`
+  );
+}
+
 export const LOADER_MESSAGES = {
   boot: 'Starting MoneyBot...',
   roadmap: 'Loading your roadmap...',

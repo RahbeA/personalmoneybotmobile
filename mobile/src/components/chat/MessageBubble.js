@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
-import BrandAvatar from '../brand/BrandAvatar';
 import MessageText from './MessageText';
 
-export default function MessageBubble({ role, content, character }) {
+export default function MessageBubble({ role, content }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const isUser = role === 'user';
@@ -13,7 +13,9 @@ export default function MessageBubble({ role, content, character }) {
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
       {!isUser && (
-        <BrandAvatar character={character} size={32} style={styles.avatar} logoSize={18} />
+        <View style={styles.botAvatar}>
+          <Ionicons name="chatbubble-ellipses" size={16} color={colors.background} />
+        </View>
       )}
       {isUser ? (
         <LinearGradient
@@ -43,7 +45,15 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
   },
   rowUser: { justifyContent: 'flex-end' },
   rowAssistant: { justifyContent: 'flex-start' },
-  avatar: { marginBottom: 2 },
+  botAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginBottom: 2,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bubble: {
     maxWidth: '80%',
     paddingHorizontal: 15,

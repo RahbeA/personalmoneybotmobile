@@ -10,7 +10,7 @@ export function navigate(name, params) {
   }
 }
 
-const ROOT_SCREENS = new Set(['Paywall', 'MyInvites', 'AuthUpgrade', 'Legal']);
+const ROOT_SCREENS = new Set(['AuthUpgrade', 'Legal']);
 
 const TAB_BY_HINT = {
   Home: 'HomeTab',
@@ -87,8 +87,8 @@ export function handleNotificationNavigation(data = {}) {
   const kind = payload.kind;
   const hint = payload.screen || payload.route || payload.target;
 
-  if (kind === 'invite_reward' || hint === 'MyInvites') {
-    navigationRef.dispatch(CommonActions.navigate({ name: 'MyInvites' }));
+  if (kind === 'invite_reward') {
+    navigateTab('HomeTab');
     return;
   }
 

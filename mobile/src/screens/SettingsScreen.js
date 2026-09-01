@@ -14,7 +14,6 @@ import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
-import { navigate as rootNavigate } from '../navigation/rootNavigation';
 import { BrandHeader, BrandAvatar, BrandToast } from '../components/brand';
 import PuckButton from '../components/PuckButton';
 import PersonalityChips from '../components/chat/PersonalityChips';
@@ -84,7 +83,7 @@ export default function SettingsScreen({ navigation }) {
   const { user, isGuest, updateProfile, logout, deleteAccount } = useAuth();
   const {
     xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
-    onboardingGoals, updateGoals, modules, isPremium, chatPersonality, updatePersonality,
+    onboardingGoals, updateGoals, modules, chatPersonality, updatePersonality,
     loading: progressLoading,
   } = useUserProgress();
   const { registerPush } = useNotifications();
@@ -167,10 +166,6 @@ export default function SettingsScreen({ navigation }) {
   }, [savingGoalKey, selectedGoals, updateGoals]);
 
   const handlePersonality = useCallback(async (item) => {
-    if (item.premium && !isPremium) {
-      rootNavigate('Paywall');
-      return;
-    }
     if (item.key === chatPersonality) return;
     setSavingPersonality(item.key);
     try {
@@ -181,7 +176,7 @@ export default function SettingsScreen({ navigation }) {
     } finally {
       setSavingPersonality(null);
     }
-  }, [isPremium, chatPersonality, updatePersonality]);
+  }, [chatPersonality, updatePersonality]);
 
   const refreshPermInfo = useCallback(async () => {
     const info = await getNotificationPermissionInfo();
@@ -380,12 +375,6 @@ export default function SettingsScreen({ navigation }) {
                   <Text style={[styles.chipText, { color: rankMeta.color }]}>{rank.label}</Text>
                 </View>
               )}
-              {isPremium && (
-                <View style={[styles.chip, { borderColor: '#F5B72B55', backgroundColor: '#F5B72B1A' }]}>
-                  <Ionicons name="diamond" size={12} color="#F5B72B" />
-                  <Text style={[styles.chipText, { color: '#F5B72B' }]}>Premium</Text>
-                </View>
-              )}
               <View style={styles.chip}>
                 <Text style={[styles.chipText, { color: colors.primary }]}>Lv {level}</Text>
               </View>
@@ -515,11 +504,10 @@ export default function SettingsScreen({ navigation }) {
           {/* Tutor voice */}
           <Text style={styles.sectionTitle}>Tutor voice</Text>
           <Text style={styles.sectionSub}>
-            {voice.label} — used in Tutor and Money Chat. Extra voices are Premium.
+            {voice.label} — used in Tutor and Money Chat.
           </Text>
           <PersonalityChips
             selected={chatPersonality || 'chill'}
-            isPremium={isPremium}
             savingKey={savingPersonality}
             onSelect={handlePersonality}
             padded={false}
@@ -606,53 +594,6 @@ export default function SettingsScreen({ navigation }) {
             );
           })}
           <Text style={styles.notifHint}>Progress is lessons in that topic, plus your real streak and Bot Bucks — not a made-up score.</Text>
-
-          {/* Premium */}
-          <Text style={styles.sectionTitle}>Premium</Text>
-          <TouchableOpacity
-            style={styles.guestCta}
-            activeOpacity={0.9}
-            onPress={() => rootNavigate('Paywall')}
-          >
-            <View style={[styles.guestCtaIcon, { backgroundColor: 'rgba(245,183,43,0.16)' }]}>
-              <Ionicons name="diamond" size={22} color="#F5B72B" />
-            </View>
-            <View style={styles.guestCtaText}>
-              <Text style={styles.guestCtaTitle}>{isPremium ? 'You\'re Premium' : 'MoneyBot Premium'}</Text>
-              <Text style={styles.guestCtaBody}>
-                {isPremium
-                  ? 'Extra Tutor voices and characters are unlocked.'
-                  : 'Unlock extra Tutor voices and Moneyverse characters.'}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </TouchableOpacity>
-
-          {/* Invite friends to the app */}
-          {!isGuest && (
-            <>
-              <Text style={styles.sectionTitle}>Invite friends</Text>
-              <TouchableOpacity
-                style={styles.guestCta}
-                activeOpacity={0.9}
-                onPress={() => {
-                  const rootNav = navigation.getParent?.() ?? navigation;
-                  rootNav.navigate('MyInvites');
-                }}
-              >
-                <View style={styles.guestCtaIcon}>
-                  <Ionicons name="mail-outline" size={22} color={colors.primary} />
-                </View>
-                <View style={styles.guestCtaText}>
-                  <Text style={styles.guestCtaTitle}>Your invite codes</Text>
-                  <Text style={styles.guestCtaBody}>
-                    Share your join link. You earn Bot Bucks when friends sign up.
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            </>
-          )}
 
           {/* Support & legal */}
           <Text style={styles.sectionTitle}>Support</Text>

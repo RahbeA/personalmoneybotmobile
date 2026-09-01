@@ -134,4 +134,11 @@ export const socialApi = {
       token,
       body: formData,
     }),
+
+  toggleFeedUpvote: (token, postId) =>
+    apiRequest(`/social/feed/${postId}/upvote/`, {
+      method: 'POST',
+      token,
+      body: {},
+    }),
 };
