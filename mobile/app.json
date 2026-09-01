@@ -7,11 +7,6 @@
     "scheme": "moneybot",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0A0A0A"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.moneybot.app",
@@ -64,7 +59,14 @@
       "expo-dev-client",
       "expo-secure-store",
       "expo-asset",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0A"
+        }
+      ],
       "expo-web-browser",
       "expo-apple-authentication",
       [
@@ -88,7 +90,8 @@
           "color": "#3DDC5F"
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "expo-font"
     ]
   }
 }
