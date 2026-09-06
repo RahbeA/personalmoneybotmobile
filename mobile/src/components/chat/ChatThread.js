@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
-  View, FlatList, Keyboard, Platform, StyleSheet, useWindowDimensions,
+  View, FlatList, Keyboard, Platform, StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble from './MessageBubble';
@@ -16,6 +16,9 @@ export default function ChatThread({
   placeholder,
   keyboardVerticalOffset = 0,
   bottomInset = 0,
+  // Bottom safe-area the PARENT already applied (e.g. SafeAreaView edges
+  // include 'bottom'). Used so the composer lifts to exactly the keyboard top.
+  keyboardBottomInset = 0,
   footer = null,
   emptyComponent = null,
   composerStyle = null,
@@ -25,11 +28,8 @@ export default function ChatThread({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
   const listRef = useRef(null);
   const styles = useMemo(() => makeStyles(colors), [colors]);
-
-  const isTabletLayout = Platform.OS === 'ios' && (Platform.isPad || width >= 768);
 
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -72,11 +72,14 @@ export default function ChatThread({
 
   const bottomPad = useMemo(() => {
     if (keyboardVisible) {
-      const lift = Math.max(0, keyboardHeight - insets.bottom);
-      return isTabletLayout ? lift : lift;
+      // The iOS keyboard height already spans down to the screen bottom
+      // (including the home-indicator area), so lift the composer by the FULL
+      // height — only subtracting any bottom safe-area the parent already
+      // applied — to seat it right above the keyboard, plus a small gap.
+      return Math.max(0, keyboardHeight - keyboardBottomInset) + 8;
     }
     return bottomInset;
-  }, [keyboardVisible, keyboardHeight, insets.bottom, bottomInset, isTabletLayout]);
+  }, [keyboardVisible, keyboardHeight, keyboardBottomInset, bottomInset]);
 
   function renderItem({ item }) {
     if (item.type === 'typing') return <TypingIndicator />;

@@ -79,6 +79,14 @@ export default function HomeScreen({ navigation, route }) {
   // Drives the eased "glide to your lesson" scroll (accelerate, then settle).
   const scrollAnim = useRef(new Animated.Value(0)).current;
   const scrollAnimListenerRef = useRef(null);
+  // Floating "jump to your lesson" button — shows whenever the current lesson
+  // section isn't in view. `jumpAnim` drives its fade/scale in and out.
+  const viewportHeightRef = useRef(0);
+  const jumpAnim = useRef(new Animated.Value(0)).current;
+  const showJumpRef = useRef(false);
+  const jumpDirRef = useRef('down');
+  const [showJump, setShowJump] = useState(false);
+  const [jumpDir, setJumpDir] = useState('down');
 
   useTabReselect('HomeTab', () => {
     scrollRef.current?.scrollTo({ y: 0, animated: true });
@@ -152,6 +160,18 @@ export default function HomeScreen({ navigation, route }) {
         animateScrollTo(Math.max(y - 8, 0));
       }
     }, 260);
+  }, [modules, animateScrollTo]);
+
+  // Tap handler for the floating arrow — glides straight to the lesson now
+  // (layouts are already measured by the time the button is visible).
+  const handleJumpPress = useCallback(() => {
+    const targetId = getCurrentModuleId(modules) || getNextLesson(modules)?.module?.id;
+    if (targetId == null) return;
+    const layout = sectionLayoutRef.current[targetId];
+    const y = layout?.y != null ? pathStartYRef.current + layout.y : null;
+    if (y != null && scrollRef.current) {
+      animateScrollTo(Math.max(y - 8, 0));
+    }
   }, [modules, animateScrollTo]);
 
   // Load today's "already shown" flag once we know the user.
@@ -262,6 +282,11 @@ export default function HomeScreen({ navigation, route }) {
 
   const lockedModuleIds = useMemo(() => getLockedModuleIds(modules), [modules]);
   const currentModuleId = useMemo(() => getCurrentModuleId(modules), [modules]);
+  // The module that holds the user's current/next lesson — the scroll target.
+  const targetLessonModuleId = useMemo(
+    () => getCurrentModuleId(modules) ?? getNextLesson(modules)?.module?.id ?? null,
+    [modules],
+  );
   const stickyModule = useMemo(
     () => modules.find((m) => m.id === stickyModuleId) || modules[0] || null,
     [modules, stickyModuleId],
@@ -284,8 +309,49 @@ export default function HomeScreen({ navigation, route }) {
     }).start();
   }, [stickyAnim]);
 
+  const setJumpVisible = useCallback((visible, dir) => {
+    if (dir && dir !== jumpDirRef.current) {
+      jumpDirRef.current = dir;
+      setJumpDir(dir);
+    }
+    if (showJumpRef.current === visible) return;
+    showJumpRef.current = visible;
+    setShowJump(visible);
+    Animated.timing(jumpAnim, {
+      toValue: visible ? 1 : 0,
+      duration: visible ? 220 : 150,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }, [jumpAnim]);
+
+  // Show the floating arrow when the current lesson's section isn't on screen.
+  const updateJumpButton = useCallback((scrollY) => {
+    const targetId = targetLessonModuleId;
+    const layout = targetId != null ? sectionLayoutRef.current[targetId] : null;
+    const vh = viewportHeightRef.current;
+    if (!layout || vh <= 0) {
+      setJumpVisible(false);
+      return;
+    }
+    const top = pathStartYRef.current + layout.y;
+    const bottom = top + (layout.height || 0);
+    const viewTop = scrollY;
+    const viewBottom = scrollY + vh;
+    const overlap = Math.min(bottom, viewBottom) - Math.max(top, viewTop);
+    // Consider it "in view" once a meaningful slice is visible.
+    const threshold = Math.min(90, Math.max(40, (layout.height || 80) * 0.35));
+    if (overlap >= threshold) {
+      setJumpVisible(false);
+      return;
+    }
+    const dir = top >= viewBottom ? 'down' : 'up';
+    setJumpVisible(true, dir);
+  }, [targetLessonModuleId, setJumpVisible]);
+
   const updateStickyFromScroll = useCallback((scrollY) => {
     lastScrollYRef.current = scrollY;
+    updateJumpButton(scrollY);
     const pathOffset = pathStartYRef.current;
     const entries = modules
       .map((mod) => ({ mod, layout: sectionLayoutRef.current[mod.id] }))
@@ -328,6 +394,12 @@ export default function HomeScreen({ navigation, route }) {
   useEffect(() => () => {
     if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current);
   }, []);
+
+  // Re-check arrow visibility once layouts settle (initial load / lesson change).
+  useEffect(() => {
+    const t = setTimeout(() => updateJumpButton(lastScrollYRef.current || 0), 500);
+    return () => clearTimeout(t);
+  }, [targetLessonModuleId, modules.length, updateJumpButton]);
 
   function handleSectionLayout(id, y, height) {
     sectionLayoutRef.current[id] = { y, height };
@@ -453,6 +525,7 @@ export default function HomeScreen({ navigation, route }) {
             showsVerticalScrollIndicator={false}
             scrollEventThrottle={32}
             onScroll={handleScroll}
+            onLayout={(e) => { viewportHeightRef.current = e.nativeEvent.layout.height; }}
             refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ROADMAP_GREEN.solid} />
           }
@@ -482,6 +555,34 @@ export default function HomeScreen({ navigation, route }) {
             </View>
           )}
           </ScrollView>
+
+          <Animated.View
+            pointerEvents={showJump ? 'auto' : 'none'}
+            style={[
+              styles.jumpButton,
+              {
+                opacity: jumpAnim,
+                transform: [
+                  { scale: jumpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) },
+                  { translateY: jumpAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) },
+                ],
+              },
+            ]}
+          >
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={handleJumpPress}
+              style={styles.jumpButtonInner}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to your lesson"
+            >
+              <Ionicons
+                name={jumpDir === 'up' ? 'chevron-up' : 'chevron-down'}
+                size={26}
+                color="#0A0A0A"
+              />
+            </TouchableOpacity>
+          </Animated.View>
         </View>
 
         <BrandToast
@@ -537,6 +638,27 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   },
   scrollHost: { flex: 1, position: 'relative' },
   scrollView: { flex: 1 },
+  jumpButton: {
+    position: 'absolute',
+    right: 18,
+    bottom: tabBarInset,
+    zIndex: 30,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  jumpButtonInner: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: ROADMAP_GREEN.solid,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
   scroll: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: tabBarInset },
   stickyUnitOverlay: {
     position: 'absolute',

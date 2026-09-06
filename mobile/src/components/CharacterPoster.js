@@ -26,8 +26,13 @@ export default function CharacterPoster({
   useEffect(() => {
     let cancelled = false;
 
+    // Reset when the character identity changes. Without this, the async
+    // `setUri((prev) => prev || existing)` below keeps the PREVIOUS character's
+    // image (since `prev` is still truthy) and never swaps in the new one —
+    // that's what made the Moneyverse show the wrong character after a swipe.
+    setUri(null);
+
     if (!previewUrl && !modelUrl) {
-      setUri(null);
       setLoading(false);
       return undefined;
     }

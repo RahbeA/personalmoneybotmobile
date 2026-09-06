@@ -32,14 +32,20 @@ export default function CameraCaptureScreen({ navigation }) {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
       if (!photo?.uri) return;
-      navigation.navigate('ComposeFeed', {
-        capturedPhoto: {
-          uri: photo.uri,
-          width: photo.width,
-          height: photo.height,
-          mimeType: 'image/jpeg',
-          fileName: `moneybot-${Date.now()}.jpg`,
+      // merge:true returns to the EXISTING ComposeFeed instance and only adds
+      // the photo param — it does not wipe visibility or reset the wizard.
+      navigation.navigate({
+        name: 'ComposeFeed',
+        params: {
+          capturedPhoto: {
+            uri: photo.uri,
+            width: photo.width,
+            height: photo.height,
+            mimeType: 'image/jpeg',
+            fileName: `moneybot-${Date.now()}.jpg`,
+          },
         },
+        merge: true,
       });
     } catch {
       setCapturing(false);
@@ -113,11 +119,8 @@ export default function CameraCaptureScreen({ navigation }) {
         onCameraReady={() => setReady(true)}
       />
 
-      <View
-        style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-        pointerEvents="box-none"
-      >
-        <View style={styles.topRow}>
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <View style={[styles.topRow, { top: insets.top + 8 }]}>
           <TouchableOpacity
             style={styles.topBtn}
             onPress={() => navigation.goBack()}
@@ -134,7 +137,7 @@ export default function CameraCaptureScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.bottomRow}>
+        <View style={[styles.bottomRow, { bottom: insets.bottom + 24 }]}>
           <View style={styles.sideSlot} />
 
           <TouchableOpacity
@@ -176,16 +179,14 @@ const CONTROL_BG = 'rgba(0,0,0,0.4)';
 
 const makeStyles = (colors) => StyleSheet.create({
   blackFill: { flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
-  },
   topRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 8,
   },
   topBtn: {
     width: 44,
@@ -196,11 +197,13 @@ const makeStyles = (colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   bottomRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 32,
-    paddingBottom: 24,
   },
   sideSlot: {
     width: 60,

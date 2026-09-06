@@ -37,6 +37,11 @@ const STEP_PHOTO = 2;
 const STEP_DETAILS = 3;
 const TOTAL_STEPS = 3;
 
+// In-memory draft so the wizard survives the round-trip to the custom camera
+// screen (which can remount this screen). Only restored when we come back with
+// a captured photo — a fresh open from the Feed always starts clean.
+let composeDraft = null;
+
 function imageFileName(asset) {
   const mime = asset.mimeType || 'image/jpeg';
   const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
@@ -59,13 +64,21 @@ export default function ComposeFeedScreen({ navigation, route }) {
 
   const presetVisibility = route.params?.visibility === 'private' ? 'private' : null;
 
-  const [asset, setAsset] = useState(null);
-  const [caption, setCaption] = useState('');
-  const [link, setLink] = useState('');
-  const [visibility, setVisibility] = useState(presetVisibility || 'public');
+  // Restore the draft only when returning from the camera (a photo is present).
+  const draft = route.params?.capturedPhoto && composeDraft ? composeDraft : null;
+
+  const [asset, setAsset] = useState(draft?.asset ?? null);
+  const [caption, setCaption] = useState(draft?.caption ?? '');
+  const [link, setLink] = useState(draft?.link ?? '');
+  const [visibility, setVisibility] = useState(draft?.visibility ?? (presetVisibility || 'public'));
   // If a visibility was passed in (e.g. "Add a private post"), skip step 1.
-  const [step, setStep] = useState(presetVisibility ? STEP_PHOTO : STEP_VISIBILITY);
+  const [step, setStep] = useState(draft?.step ?? (presetVisibility ? STEP_PHOTO : STEP_VISIBILITY));
   const [submitting, setSubmitting] = useState(false);
+
+  // Keep the in-memory draft in sync so a remount can restore the wizard.
+  useEffect(() => {
+    composeDraft = { asset, caption, link, visibility, step };
+  }, [asset, caption, link, visibility, step]);
 
   const isPrivate = visibility === 'private';
 
@@ -88,6 +101,7 @@ export default function ComposeFeedScreen({ navigation, route }) {
   const goBack = () => {
     if (step === STEP_DETAILS) { setStep(STEP_PHOTO); return; }
     if (step === STEP_PHOTO && !presetVisibility) { setStep(STEP_VISIBILITY); return; }
+    composeDraft = null; // closing the composer — discard the draft
     navigation.goBack();
   };
 
@@ -177,6 +191,7 @@ export default function ComposeFeedScreen({ navigation, route }) {
       await socialApi.createFeedPost(token, formData);
       await invalidateCache(FEED_CACHE_KEYS.mine(user?.id));
       await invalidateCache(FEED_CACHE_KEYS.vault(user?.id));
+      composeDraft = null; // posted successfully — clear the draft
       navigation.navigate('Feed', { posted: true, toVault: isPrivate });
     } catch (e) {
       Alert.alert('Could not post', e.message || 'Try again in a bit.');
@@ -223,7 +238,7 @@ export default function ComposeFeedScreen({ navigation, route }) {
             ))}
           </View>
 
-          <View style={styles.backBtn} />
+          <View style={styles.headerSpacer} />
         </View>
 
         <View style={styles.titleBlock}>
@@ -446,6 +461,12 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Transparent spacer that keeps the progress bar centered without drawing a
+  // visible circle on the right.
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
   progress: {
     flexDirection: 'row',

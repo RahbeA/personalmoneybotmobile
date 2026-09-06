@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +21,7 @@ export default function MoneyChatScreen({ navigation, route }) {
   const { token } = useAuth();
   const { refresh, chatPersonality } = useUserProgress();
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [sessionId, setSessionId] = useState(null);
@@ -175,6 +176,7 @@ export default function MoneyChatScreen({ navigation, route }) {
           composerDisabled={sending}
           placeholder="Reply..."
           keyboardVerticalOffset={8}
+          keyboardBottomInset={insets.bottom}
           footer={passed ? (
             <View style={styles.passedFooter}>
               {bonus && (
