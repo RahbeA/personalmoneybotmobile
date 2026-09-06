@@ -67,6 +67,22 @@ try:
 except ValueError:
     INVITE_REWARD_BOT_BUCKS = 50
 
+# Forced app-update gate. The mobile app polls /api/app-version/ on launch and
+# blocks users whose installed version is older than MIN_SUPPORTED_APP_VERSION.
+# Leave it empty to disable the gate entirely; set it (e.g. "1.1.0") via env var
+# when you ship a mandatory update. No redeploy of the app is needed — only this
+# backend value changes.
+MIN_SUPPORTED_APP_VERSION = os.environ.get('MIN_SUPPORTED_APP_VERSION', '').strip()
+LATEST_APP_VERSION = os.environ.get('LATEST_APP_VERSION', '').strip()
+IOS_APP_STORE_URL = os.environ.get(
+    'IOS_APP_STORE_URL',
+    'https://apps.apple.com/us/app/moneybot-mobile/id6778658807',
+).strip()
+ANDROID_STORE_URL = os.environ.get(
+    'ANDROID_STORE_URL',
+    'https://play.google.com/store/apps/details?id=com.moneybot.app',
+).strip()
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',

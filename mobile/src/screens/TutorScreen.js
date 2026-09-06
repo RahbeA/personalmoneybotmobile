@@ -17,6 +17,7 @@ import ChatThread from '../components/chat/ChatThread';
 import PersonalityChips from '../components/chat/PersonalityChips';
 import { personalityByKey } from '../components/chat/personalities';
 import PuckButton from '../components/PuckButton';
+import ScreenAppBar, { screenAppBarTitleStyles } from '../components/ScreenAppBar';
 import { EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 import { ANALYTICS_EVENTS, track } from '../utils/analytics';
@@ -52,6 +53,7 @@ export default function TutorScreen({ navigation }) {
   const tabBarInset = useTabBarInset(6);
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
+  const titleStyles = useMemo(() => screenAppBarTitleStyles(colors), [colors]);
 
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -151,17 +153,17 @@ export default function TutorScreen({ navigation }) {
       <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <SafeAreaView style={styles.safe} edges={['top']}>
-          <View style={styles.header}>
+          <ScreenAppBar showBack={false}>
             <View style={styles.identity}>
               <View style={styles.identityAvatar}>
                 <Image source={TUTOR_HERO} style={styles.identityImage} />
               </View>
               <View style={styles.identityCopy}>
-                <Text style={styles.heroEyebrow}>AI TUTOR</Text>
-                <Text style={styles.title}>MoneyBot</Text>
+                <Text style={titleStyles.title} numberOfLines={1}>Tutor</Text>
+                <Text style={titleStyles.eyebrow} numberOfLines={1}>Ask MoneyBot anything</Text>
               </View>
             </View>
-          </View>
+          </ScreenAppBar>
 
           <ScrollView
             contentContainerStyle={[styles.emptyScroll, { paddingBottom: tabBarInset }]}
@@ -195,49 +197,58 @@ export default function TutorScreen({ navigation }) {
 
   const hasMessages = messages.length > 0;
   const activeTitle = conversations.find((c) => c.id === conversationId)?.title;
+  const subtitle = keyboardOpen
+    ? 'Ask MoneyBot anything'
+    : `${voice.label} · ${voice.blurb}`;
 
-  const composerAccessory = (
+  const composerAccessory = hasMessages && activeTitle ? (
     <View style={styles.composerToolbar}>
-      <TouchableOpacity style={styles.toolbarBtn} onPress={startNewChat} activeOpacity={0.85}>
-        <Ionicons name="create-outline" size={18} color={colors.primary} />
-        <Text style={styles.toolbarBtnText}>New</Text>
-      </TouchableOpacity>
-      <View style={styles.toolbarDivider} />
-      <TouchableOpacity style={styles.toolbarBtn} onPress={() => setHistoryOpen(true)} activeOpacity={0.85}>
-        <Ionicons name="time-outline" size={18} color={colors.primary} />
-        <Text style={styles.toolbarBtnText}>
-          History{conversations.length > 0 ? ` (${conversations.length})` : ''}
-        </Text>
-      </TouchableOpacity>
-      {hasMessages && activeTitle ? (
-        <>
-          <View style={styles.toolbarDivider} />
-          <Text style={styles.toolbarActive} numberOfLines={1}>{activeTitle}</Text>
-        </>
-      ) : null}
+      <Text style={styles.toolbarActive} numberOfLines={1}>{activeTitle}</Text>
     </View>
-  );
+  ) : null;
 
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}>
+        <ScreenAppBar
+          showBack={false}
+          rightActions={(
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.headerBtn}
+                onPress={startNewChat}
+                activeOpacity={0.85}
+                accessibilityLabel="New chat"
+              >
+                <Ionicons name="create-outline" size={18} color={colors.white} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerBtn}
+                onPress={() => setHistoryOpen(true)}
+                activeOpacity={0.85}
+                accessibilityLabel="Chat history"
+              >
+                <Ionicons name="time-outline" size={18} color={colors.white} />
+              </TouchableOpacity>
+            </View>
+          )}
+        >
           <View style={styles.identity}>
             <View style={[styles.identityAvatar, { borderColor: voice.accent || colors.primary }]}>
               <Image source={TUTOR_HERO} style={styles.identityImage} />
             </View>
             <View style={styles.identityCopy}>
-              <Text style={styles.heroEyebrow}>AI TUTOR</Text>
-              <Text style={styles.title}>MoneyBot</Text>
-              {!keyboardOpen && (
-                <Text style={[styles.heroSub, { color: voice.accent || colors.textSecondary }]}>
-                  {voice.label} · {voice.blurb}
-                </Text>
-              )}
+              <Text style={titleStyles.title} numberOfLines={1}>Tutor</Text>
+              <Text
+                style={[titleStyles.eyebrow, !keyboardOpen && voice.accent ? { color: voice.accent } : null]}
+                numberOfLines={1}
+              >
+                {subtitle}
+              </Text>
             </View>
           </View>
-        </View>
+        </ScreenAppBar>
 
         {!keyboardOpen && (
           <PersonalityChips
@@ -331,36 +342,47 @@ const makeStyles = (colors, isDark) => {
     gradient: { flex: 1 },
     safe: { flex: 1 },
 
-    header: {
+    headerActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingTop: 4,
-      paddingBottom: 8,
+      gap: 8,
     },
-    identity: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-    identityAvatar: {
-      width: 44,
+    headerBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    identity: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      minWidth: 0,
       height: 44,
-      borderRadius: 22,
+    },
+    identityAvatar: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       overflow: 'hidden',
       borderWidth: 2,
       borderColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.surfaceElevated,
+      flexShrink: 0,
     },
-    identityImage: { width: 44, height: 44 },
-    identityCopy: { flex: 1, minWidth: 0 },
-    heroEyebrow: {
-      fontSize: 10,
-      fontWeight: '800',
-      color: colors.textMuted,
-      letterSpacing: 1.2,
-      marginBottom: 1,
+    identityImage: { width: 36, height: 36 },
+    identityCopy: {
+      flex: 1,
+      minWidth: 0,
+      justifyContent: 'center',
     },
-    title: { fontSize: 20, fontWeight: '800', color: colors.white, letterSpacing: -0.6 },
-    heroSub: { fontSize: 13, fontWeight: '600', marginTop: 1 },
 
     composerWrap: {
       marginHorizontal: 12,
@@ -377,23 +399,6 @@ const makeStyles = (colors, isDark) => {
       paddingTop: 10,
       paddingBottom: 4,
       gap: 8,
-    },
-    toolbarBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      paddingVertical: 4,
-      paddingHorizontal: 2,
-    },
-    toolbarBtnText: {
-      fontSize: 13,
-      fontWeight: '700',
-      color: colors.textSecondary,
-    },
-    toolbarDivider: {
-      width: 1,
-      height: 14,
-      backgroundColor: hairline,
     },
     toolbarActive: {
       flex: 1,

@@ -54,6 +54,7 @@ export function isPlausibleLink(url) {
 export const FEED_CACHE_KEYS = {
   approved: () => 'feed:approved:v2',
   mine: (userId) => `feed:mine:v2:${userId || 'me'}`,
+  vault: (userId) => `feed:vault:v1:${userId || 'me'}`,
 };
 
 export const STATUS_LABELS = {

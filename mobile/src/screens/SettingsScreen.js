@@ -14,10 +14,9 @@ import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
-import { BrandHeader, BrandAvatar, BrandToast } from '../components/brand';
+import { BrandAvatar, BrandToast } from '../components/brand';
+import ScreenAppBar, { screenAppBarTitleStyles } from '../components/ScreenAppBar';
 import PuckButton from '../components/PuckButton';
-import PersonalityChips from '../components/chat/PersonalityChips';
-import { personalityByKey } from '../components/chat/personalities';
 import { LEGAL } from '../constants/legal';
 import { GOALS } from '../constants/goals';
 import {
@@ -31,7 +30,6 @@ import {
 } from '../utils/notifications';
 import { getFirstName } from '../utils/displayName';
 import { localDate } from '../utils/localDate';
-import { ANALYTICS_EVENTS, track } from '../utils/analytics';
 
 const GOAL_KEYWORDS = {
   emergency_fund: ['emergenc', 'saving', 'save'],
@@ -83,7 +81,7 @@ export default function SettingsScreen({ navigation }) {
   const { user, isGuest, updateProfile, logout, deleteAccount } = useAuth();
   const {
     xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
-    onboardingGoals, updateGoals, modules, chatPersonality, updatePersonality,
+    onboardingGoals, updateGoals, modules,
     loading: progressLoading,
   } = useUserProgress();
   const { registerPush } = useNotifications();
@@ -91,6 +89,7 @@ export default function SettingsScreen({ navigation }) {
   const { colors, isDark, toggleTheme } = useTheme();
   const tabBarInset = useTabBarInset(24);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
+  const titleStyles = useMemo(() => screenAppBarTitleStyles(colors), [colors]);
 
   const [notifPrefs, setNotifPrefs] = useState({ daily: true, streak: true, newContent: false });
   const [notifLoading, setNotifLoading] = useState(true);
@@ -98,7 +97,7 @@ export default function SettingsScreen({ navigation }) {
   const [permInfo, setPermInfo] = useState({ supported: true, status: 'undetermined', canAskAgain: true });
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [goalToast, setGoalToast] = useState(null);
-  const [savingPersonality, setSavingPersonality] = useState(null);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const celebratedRef = useRef({});
   const goalBaselineReady = useRef(false);
 
@@ -114,7 +113,6 @@ export default function SettingsScreen({ navigation }) {
   const selectedGoals = onboardingGoals || [];
 
   const notifSupported = areNotificationsSupported();
-  const voice = personalityByKey(chatPersonality);
 
   const displayName = getFirstName(user);
   const emailDisplay = isGuest ? 'Guest — progress saved on this device' : (user?.email || '');
@@ -164,19 +162,6 @@ export default function SettingsScreen({ navigation }) {
       setSavingGoalKey(null);
     }
   }, [savingGoalKey, selectedGoals, updateGoals]);
-
-  const handlePersonality = useCallback(async (item) => {
-    if (item.key === chatPersonality) return;
-    setSavingPersonality(item.key);
-    try {
-      await updatePersonality(item.key);
-      track(ANALYTICS_EVENTS.PERSONALITY_CHANGED, { personality: item.key, source: 'settings' });
-    } catch (err) {
-      Alert.alert('Could not update', err.message || 'Try again in a moment.');
-    } finally {
-      setSavingPersonality(null);
-    }
-  }, [chatPersonality, updatePersonality]);
 
   const refreshPermInfo = useCallback(async () => {
     const info = await getNotificationPermissionInfo();
@@ -348,7 +333,29 @@ export default function SettingsScreen({ navigation }) {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <BrandHeader title="Profile" />
+        <ScreenAppBar
+          showBack={false}
+          rightActions={(
+            <TouchableOpacity
+              style={styles.menuBtn}
+              activeOpacity={0.85}
+              onPress={() => setSettingsMenuOpen(true)}
+              accessibilityLabel="Open quick settings"
+            >
+              <Ionicons name="menu" size={20} color={colors.white} />
+            </TouchableOpacity>
+          )}
+        >
+          <View style={styles.identity}>
+            <View style={styles.identityAvatar}>
+              <Ionicons name="person" size={18} color={colors.primary} />
+            </View>
+            <View style={styles.identityCopy}>
+              <Text style={titleStyles.title} numberOfLines={1}>Settings</Text>
+              <Text style={titleStyles.eyebrow} numberOfLines={1}>Profile & preferences</Text>
+            </View>
+          </View>
+        </ScreenAppBar>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
@@ -363,27 +370,37 @@ export default function SettingsScreen({ navigation }) {
               onPress={openProfileEditor}
               accessibilityLabel="Edit name"
             >
-              <Ionicons name="pencil" size={16} color={colors.primary} />
+              <Ionicons name="pencil" size={14} color={colors.primary} />
             </TouchableOpacity>
-            <BrandAvatar character={equippedCharacter} size={72} autoRotate={!!equippedCharacter} />
-            <Text style={styles.heroName}>{displayName}</Text>
-            <Text style={styles.heroEmail}>{emailDisplay}</Text>
-            <View style={styles.chipRow}>
-              {rank && (
-                <View style={[styles.chip, { borderColor: rankMeta.color + '55', backgroundColor: rankMeta.color + '1A' }]}>
-                  <Ionicons name={rankMeta.ionIcon} size={12} color={rankMeta.color} />
-                  <Text style={[styles.chipText, { color: rankMeta.color }]}>{rank.label}</Text>
+
+            <View style={styles.heroTop}>
+              <BrandAvatar character={equippedCharacter} size={52} autoRotate={!!equippedCharacter} />
+              <View style={styles.heroIdentity}>
+                <Text style={styles.heroName} numberOfLines={1}>{displayName}</Text>
+                <Text style={styles.heroEmail} numberOfLines={1}>{emailDisplay}</Text>
+                <View style={styles.chipRow}>
+                  {rank && (
+                    <View style={[styles.chip, { borderColor: rankMeta.color + '55', backgroundColor: rankMeta.color + '1A' }]}>
+                      <Ionicons name={rankMeta.ionIcon} size={11} color={rankMeta.color} />
+                      <Text style={[styles.chipText, { color: rankMeta.color }]}>{rank.label}</Text>
+                    </View>
+                  )}
+                  <View style={styles.chip}>
+                    <Text style={[styles.chipText, { color: colors.primary }]}>Lv {level}</Text>
+                  </View>
                 </View>
-              )}
-              <View style={styles.chip}>
-                <Text style={[styles.chipText, { color: colors.primary }]}>Lv {level}</Text>
               </View>
             </View>
 
             <View style={styles.statsStrip}>
               <View style={styles.stat}>
-                <Text style={styles.statVal}>{xp}</Text>
-                <Text style={styles.statLbl}>XP</Text>
+                <Text style={[styles.statVal, { color: colors.streak }]}>{streakDays}</Text>
+                <Text style={styles.statLbl}>Streak</Text>
+              </View>
+              <View style={styles.statDiv} />
+              <View style={styles.stat}>
+                <Text style={[styles.statVal, { color: colors.botBucks }]}>{botBucks}</Text>
+                <Text style={styles.statLbl}>Bucks</Text>
               </View>
               <View style={styles.statDiv} />
               <View style={styles.stat}>
@@ -392,13 +409,8 @@ export default function SettingsScreen({ navigation }) {
               </View>
               <View style={styles.statDiv} />
               <View style={styles.stat}>
-                <Text style={styles.statVal}>{streakDays}</Text>
-                <Text style={styles.statLbl}>Streak</Text>
-              </View>
-              <View style={styles.statDiv} />
-              <View style={styles.stat}>
-                <Text style={[styles.statVal, { color: colors.botBucks }]}>{botBucks}</Text>
-                <Text style={styles.statLbl}>Bucks</Text>
+                <Text style={styles.statVal}>{xp}</Text>
+                <Text style={styles.statLbl}>XP</Text>
               </View>
             </View>
           </LinearGradient>
@@ -423,112 +435,21 @@ export default function SettingsScreen({ navigation }) {
             </TouchableOpacity>
           )}
 
-          {/* Notifications */}
-          <Text style={styles.sectionTitle}>Notifications</Text>
-          {!notifSupported && (
-            <View style={styles.notifBanner}>
-              <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
-              <Text style={styles.notifBannerText}>
-                Notifications need a native rebuild. Run{' '}
-                <Text style={styles.notifBannerCode}>npx expo run:ios</Text>
-                {' '}from the mobile folder, then reopen the app.
-              </Text>
+          {/* Quick settings entry — notifications + dark mode live in the menu (top-right). */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.85}
+            onPress={() => setSettingsMenuOpen(true)}
+          >
+            <View style={styles.menuRowIcon}>
+              <Ionicons name="options-outline" size={20} color={colors.primary} />
             </View>
-          )}
-          {permDenied && notifSupported && (
-            <View style={styles.notifBanner}>
-              <Ionicons name="notifications-off-outline" size={18} color={colors.primary} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.notifBannerText}>
-                  Notifications are off in iOS Settings. Turn on Alerts for MoneyBot, then return here.
-                </Text>
-                <TouchableOpacity
-                  onPress={() => openSystemNotificationSettings()}
-                  style={styles.openSettingsBtn}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.openSettingsText}>Open Settings</Text>
-                </TouchableOpacity>
-              </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.menuRowTitle}>Notifications & appearance</Text>
+              <Text style={styles.menuRowSub}>Reminders, streak alerts, dark mode</Text>
             </View>
-          )}
-          <View style={[styles.prefCard, !notifSupported && styles.notifGridDisabled]}>
-            <View style={styles.prefRow}>
-              <View style={styles.prefLeft}>
-                <Ionicons
-                  name={notifOn ? 'notifications' : 'notifications-off-outline'}
-                  size={20}
-                  color={colors.primary}
-                />
-                <Text style={styles.prefLabel}>All reminders</Text>
-              </View>
-              {notifLoading ? (
-                <ActivityIndicator color={colors.primary} />
-              ) : (
-                <Switch
-                  value={notifOn}
-                  onValueChange={toggleNotifications}
-                  disabled={notifSyncing}
-                  trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                  thumbColor={notifOn ? colors.primary : colors.textMuted}
-                  ios_backgroundColor={colors.border}
-                />
-              )}
-            </View>
-            {NOTIF_ROWS.map((row, index) => (
-              <View key={row.key} style={[styles.prefRow, styles.prefRowNested, index < NOTIF_ROWS.length - 1 && styles.prefRowBorder]}>
-                <View style={styles.prefLeft}>
-                  <Ionicons name={row.icon} size={18} color={colors.primary} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.prefLabel}>{row.label}</Text>
-                    <Text style={styles.prefHint}>{row.hint}</Text>
-                  </View>
-                </View>
-                <Switch
-                  value={!!notifPrefs[row.key]}
-                  onValueChange={(value) => toggleNotifPref(row.key, value)}
-                  disabled={notifSyncing || notifLoading}
-                  trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                  thumbColor={notifPrefs[row.key] ? colors.primary : colors.textMuted}
-                  ios_backgroundColor={colors.border}
-                />
-              </View>
-            ))}
-          </View>
-          <Text style={styles.notifHint}>
-            {notifSupported
-              ? `Turning a type off cancels those local reminders${notifSyncing ? ' · syncing…' : ''}`
-              : 'Your choice is saved but won\u2019t fire until you rebuild the app.'}
-          </Text>
-
-          {/* Tutor voice */}
-          <Text style={styles.sectionTitle}>Tutor voice</Text>
-          <Text style={styles.sectionSub}>
-            {voice.label} — used in Tutor and Money Chat.
-          </Text>
-          <PersonalityChips
-            selected={chatPersonality || 'chill'}
-            savingKey={savingPersonality}
-            onSelect={handlePersonality}
-            padded={false}
-          />
-
-          {/* Preferences */}
-          <Text style={styles.sectionTitle}>Preferences</Text>
-          <View style={styles.prefCard}>
-            <View style={styles.prefRow}>
-              <View style={styles.prefLeft}>
-                <Ionicons name={isDark ? 'moon' : 'sunny'} size={20} color={colors.primary} />
-                <Text style={styles.prefLabel}>Dark mode</Text>
-              </View>
-              <Switch
-                value={isDark}
-                onValueChange={toggleTheme}
-                trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                thumbColor={isDark ? colors.primary : colors.textMuted}
-              />
-            </View>
-          </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </TouchableOpacity>
 
           {/* Goals */}
           <Text style={styles.sectionTitle}>Your goals</Text>
@@ -603,7 +524,7 @@ export default function SettingsScreen({ navigation }) {
             <LinkTile icon="mail-outline" label="Contact" onPress={() => Linking.openURL(`mailto:${LEGAL.contactEmail}`)} colors={colors} styles={styles} />
             <LinkTile icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://getmoneybot.com')} colors={colors} styles={styles} />
           </View>
-          <Text style={styles.version}>MoneyBot v1.0.5</Text>
+          <Text style={styles.version}>MoneyBot v1.0.7</Text>
 
           {/* Account */}
           <View style={styles.accountSection}>
@@ -690,6 +611,136 @@ export default function SettingsScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Quick settings sheet: all the on/off toggles in one place */}
+      <Modal visible={settingsMenuOpen} transparent animationType="slide" onRequestClose={() => setSettingsMenuOpen(false)}>
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setSettingsMenuOpen(false)}
+        >
+          <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetTitleRow}>
+              <Text style={styles.sheetTitle}>Settings</Text>
+              <TouchableOpacity
+                onPress={() => setSettingsMenuOpen(false)}
+                hitSlop={10}
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
+              {!notifSupported && (
+                <View style={styles.notifBanner}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
+                  <Text style={styles.notifBannerText}>
+                    Notifications need a native rebuild. Run{' '}
+                    <Text style={styles.notifBannerCode}>npx expo run:ios</Text>
+                    {' '}from the mobile folder, then reopen the app.
+                  </Text>
+                </View>
+              )}
+              {permDenied && notifSupported && (
+                <View style={styles.notifBanner}>
+                  <Ionicons name="notifications-off-outline" size={18} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifBannerText}>
+                      Notifications are off in iOS Settings. Turn on Alerts for MoneyBot, then return here.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => openSystemNotificationSettings()}
+                      style={styles.openSettingsBtn}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.openSettingsText}>Open Settings</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              <Text style={styles.sheetLabel}>NOTIFICATIONS</Text>
+              <View style={[styles.prefCard, !notifSupported && styles.notifGridDisabled]}>
+                <View style={styles.prefRow}>
+                  <View style={styles.prefLeft}>
+                    <Ionicons
+                      name={notifOn ? 'notifications' : 'notifications-off-outline'}
+                      size={20}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.prefLabel}>All reminders</Text>
+                  </View>
+                  {notifLoading ? (
+                    <ActivityIndicator color={colors.primary} />
+                  ) : (
+                    <Switch
+                      value={notifOn}
+                      onValueChange={toggleNotifications}
+                      disabled={notifSyncing}
+                      trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                      thumbColor={notifOn ? colors.primary : colors.textMuted}
+                      ios_backgroundColor={colors.border}
+                    />
+                  )}
+                </View>
+                {NOTIF_ROWS.map((row, index) => (
+                  <View key={row.key} style={[styles.prefRow, styles.prefRowNested, index < NOTIF_ROWS.length - 1 && styles.prefRowBorder]}>
+                    <View style={styles.prefLeft}>
+                      <Ionicons name={row.icon} size={18} color={colors.primary} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.prefLabel}>{row.label}</Text>
+                        <Text style={styles.prefHint}>{row.hint}</Text>
+                      </View>
+                    </View>
+                    <Switch
+                      value={!!notifPrefs[row.key]}
+                      onValueChange={(value) => toggleNotifPref(row.key, value)}
+                      disabled={notifSyncing || notifLoading}
+                      trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                      thumbColor={notifPrefs[row.key] ? colors.primary : colors.textMuted}
+                      ios_backgroundColor={colors.border}
+                    />
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.notifHint}>
+                {notifSupported
+                  ? `Turning a type off cancels those local reminders${notifSyncing ? ' · syncing…' : ''}`
+                  : 'Your choice is saved but won\u2019t fire until you rebuild the app.'}
+              </Text>
+
+              <Text style={styles.sheetLabel}>APPEARANCE</Text>
+              <View style={styles.prefCard}>
+                <View style={styles.prefRow}>
+                  <View style={styles.prefLeft}>
+                    <Ionicons name={isDark ? 'moon' : 'sunny'} size={20} color={colors.primary} />
+                    <Text style={styles.prefLabel}>Dark mode</Text>
+                  </View>
+                  <Switch
+                    value={isDark}
+                    onValueChange={toggleTheme}
+                    trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                    thumbColor={isDark ? colors.primary : colors.textMuted}
+                  />
+                </View>
+              </View>
+            </ScrollView>
+
+            <PuckButton
+              color={colors.primary}
+              height={52}
+              borderRadius={16}
+              lip={5}
+              onPress={() => setSettingsMenuOpen(false)}
+              contentStyle={styles.sheetDoneInner}
+            >
+              <Text style={styles.sheetDoneText}>Done</Text>
+            </PuckButton>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       <BrandToast
         visible={!!goalToast}
         message={goalToast}
@@ -704,66 +755,178 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   safe: { flex: 1 },
   scroll: { paddingHorizontal: 20, paddingBottom: tabBarInset },
 
-  heroCard: {
+  identity: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 20,
-    padding: 24,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.25)',
+    gap: 10,
+    minWidth: 0,
+    height: 44,
   },
-  heroEditBtn: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  identityAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceElevated,
+    flexShrink: 0,
+  },
+  identityCopy: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  menuBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.border,
   },
+
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 24,
+  },
+  menuRowIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(61,220,95,0.12)',
+  },
+  menuRowTitle: { fontSize: 15, fontWeight: '800', color: colors.white },
+  menuRowSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+
+  // Quick settings sheet
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 34,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+    maxHeight: '82%',
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    marginBottom: 12,
+  },
+  sheetTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  sheetTitle: { fontSize: 22, fontWeight: '800', color: colors.white, letterSpacing: -0.3 },
+  sheetScroll: { paddingBottom: 8 },
+  sheetLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  sheetDoneInner: { alignItems: 'center', justifyContent: 'center' },
+  sheetDoneText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+
+  heroCard: {
+    borderRadius: 18,
+    padding: 14,
+    paddingTop: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(61,220,95,0.25)',
+  },
+  heroEditBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 1,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+    paddingRight: 28,
+  },
+  heroIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
   heroName: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '800',
     color: colors.white,
-    marginTop: 14,
     letterSpacing: -0.3,
   },
   heroEmail: {
-    fontSize: 13,
+    fontSize: 12,
     color: colors.textSecondary,
-    marginTop: 4,
-    marginBottom: 12,
+    marginTop: 2,
+    marginBottom: 6,
   },
-  chipRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(61,220,95,0.25)',
     backgroundColor: 'rgba(61,220,95,0.1)',
   },
-  chipText: { fontSize: 12, fontWeight: '700' },
+  chipText: { fontSize: 11, fontWeight: '700' },
   statsStrip: {
     flexDirection: 'row',
     width: '100%',
     backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: colors.border,
   },
   stat: { flex: 1, alignItems: 'center' },
-  statVal: { fontSize: 18, fontWeight: '800', color: colors.white },
-  statLbl: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontWeight: '600' },
-  statDiv: { width: 1, backgroundColor: colors.border, marginVertical: 4 },
+  statVal: { fontSize: 15, fontWeight: '800', color: colors.white },
+  statLbl: { fontSize: 9, color: colors.textMuted, marginTop: 1, fontWeight: '600' },
+  statDiv: { width: 1, backgroundColor: colors.border, marginVertical: 2 },
 
   sectionTitle: {
     fontSize: 17,

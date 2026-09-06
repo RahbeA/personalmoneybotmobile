@@ -16,6 +16,7 @@ from . import service
 from .models import (
     ChallengeParticipant,
     FeedPost,
+    FeedPostBookmark,
     FeedPostUpvote,
     Friendship,
     FriendNudge,
@@ -1021,12 +1022,16 @@ FEED_PAGE_SIZE = 30
 def _feed_posts_queryset(request):
     qs = FeedPost.objects.select_related('author').annotate(
         upvote_count=Count('upvotes', distinct=True),
+        bookmark_count=Count('bookmarks', distinct=True),
     )
     user = request.user
     if user.is_authenticated and not getattr(user, 'is_guest', False):
         qs = qs.annotate(
             has_upvoted=Exists(
                 FeedPostUpvote.objects.filter(post_id=OuterRef('pk'), user_id=user.id)
+            ),
+            has_bookmarked=Exists(
+                FeedPostBookmark.objects.filter(post_id=OuterRef('pk'), user_id=user.id)
             ),
         )
     return qs
@@ -1044,7 +1049,10 @@ def feed_list_create(request):
     if request.method == 'GET':
         posts = (
             _feed_posts_queryset(request)
-            .filter(status=FeedPost.STATUS_APPROVED)
+            .filter(
+                status=FeedPost.STATUS_APPROVED,
+                visibility=FeedPost.VISIBILITY_PUBLIC,
+            )
             .order_by('-created_at')[:FEED_PAGE_SIZE]
         )
         return Response({'results': _serialize_feed_posts(posts, request)})
@@ -1053,18 +1061,24 @@ def feed_list_create(request):
     if blocked:
         return blocked
     caption = (request.data.get('caption') or '').strip()
-    if not caption:
-        return Response({'detail': 'caption is required.'}, status=status.HTTP_400_BAD_REQUEST)
     image = request.FILES.get('image')
-    if not image:
-        return Response({'detail': 'image is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    # A post needs at least a caption or an image (text-only quick notes allowed).
+    if not caption and not image:
+        return Response(
+            {'detail': 'Add a caption or a photo.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    is_private = (request.data.get('visibility') or '').strip().lower() == FeedPost.VISIBILITY_PRIVATE
     link = (request.data.get('link') or '').strip()
     post = FeedPost.objects.create(
         author=request.user,
         image=image,
         caption=caption[:280],
         link=link[:2000],
-        status=FeedPost.STATUS_PENDING,
+        # Private MoneyVault posts are only visible to the author, so they skip
+        # moderation and go live instantly; public posts stay pending for review.
+        visibility=FeedPost.VISIBILITY_PRIVATE if is_private else FeedPost.VISIBILITY_PUBLIC,
+        status=FeedPost.STATUS_APPROVED if is_private else FeedPost.STATUS_PENDING,
     )
     from .serializers import FeedPostSerializer
     return Response(
@@ -1104,3 +1118,74 @@ def feed_upvote_toggle(request, post_id):
         upvoted = True
     count = post.upvotes.count()
     return Response({'upvote_count': count, 'has_upvoted': upvoted})
+
+
+def _bookmarkable_post_or_404(user, post_id):
+    """A user may bookmark public+approved posts, or their own private posts."""
+    return get_object_or_404(
+        FeedPost.objects.filter(
+            Q(status=FeedPost.STATUS_APPROVED, visibility=FeedPost.VISIBILITY_PUBLIC)
+            | Q(author=user)
+        ),
+        pk=post_id,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def feed_bookmark_toggle(request, post_id):
+    """Toggle saving a post into the user's MoneyVault."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    post = _bookmarkable_post_or_404(request.user, post_id)
+    existing = FeedPostBookmark.objects.filter(post=post, user=request.user).first()
+    if existing:
+        existing.delete()
+        bookmarked = False
+    else:
+        FeedPostBookmark.objects.create(post=post, user=request.user)
+        bookmarked = True
+    return Response({'has_bookmarked': bookmarked})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def feed_vault(request):
+    """The user's private MoneyVault: their own private posts + saved (bookmarked) posts."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    mine_private = (
+        _feed_posts_queryset(request)
+        .filter(author=request.user, visibility=FeedPost.VISIBILITY_PRIVATE)
+        .order_by('-created_at')[:FEED_PAGE_SIZE]
+    )
+    saved_ids = (
+        FeedPostBookmark.objects
+        .filter(user=request.user)
+        .order_by('-created_at')
+        .values_list('post_id', flat=True)[:FEED_PAGE_SIZE]
+    )
+    saved_ids = list(saved_ids)
+    saved_map = {
+        p.id: p
+        for p in _feed_posts_queryset(request).filter(pk__in=saved_ids)
+    }
+    saved = [saved_map[pid] for pid in saved_ids if pid in saved_map]
+    return Response({
+        'mine_private': _serialize_feed_posts(mine_private, request),
+        'saved': _serialize_feed_posts(saved, request),
+    })
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def feed_delete(request, post_id):
+    """Author deletes their own post (public or private)."""
+    blocked = _reject_guest(request)
+    if blocked:
+        return blocked
+    post = get_object_or_404(FeedPost, pk=post_id, author=request.user)
+    post.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

@@ -1,10 +1,12 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, AppState, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import { PostHogProvider } from 'posthog-react-native';
+import ForceUpdateOverlay from './src/components/ForceUpdateOverlay';
+import { checkForceUpdate } from './src/utils/appVersion';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { UserProgressProvider, useUserProgress } from './src/context/UserProgressContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
@@ -106,6 +108,29 @@ function NotificationForegroundSync() {
   }, [user, streakDays, lastActive]);
 
   return null;
+}
+
+// Polls the backend for a minimum supported version on launch and whenever the
+// app returns to the foreground. Renders a blocking, non-dismissible overlay if
+// this build is too old. Fails open — a network error never blocks anyone.
+function ForceUpdateGate() {
+  const [info, setInfo] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const run = () => {
+      checkForceUpdate().then((result) => {
+        if (mounted && result) setInfo(result);
+      });
+    };
+    run();
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') run();
+    });
+    return () => { mounted = false; sub.remove(); };
+  }, []);
+
+  return <ForceUpdateOverlay visible={!!info} storeUrl={info?.storeUrl} />;
 }
 
 function BootErrorScreen({ message, onRetry }) {
@@ -243,9 +268,20 @@ export default function App() {
 
   useEffect(() => {
     ensureCacheScope()
-      .then(() => {
+      .then(async () => {
         warmModelViewerOnBoot();
         bootstrapNotifications().catch(() => {});
+        if (Platform.OS === 'ios') {
+          try {
+            const { resetHomeScreenWidgets } = await import('./src/widgets/widgetSync');
+            await resetHomeScreenWidgets();
+          } catch (err) {
+            if (__DEV__) {
+              // eslint-disable-next-line no-console
+              console.warn('[MoneyBot] Widget init failed:', err?.message ?? err);
+            }
+          }
+        }
       })
       .finally(() => setCacheReady(true));
   }, []);
@@ -265,6 +301,7 @@ export default function App() {
               <NotificationForegroundSync />
               <RootNavigator />
               <NameCapturePrompt />
+              <ForceUpdateGate />
             </NotificationsProvider>
           </UserProgressProvider>
         </AuthProvider>

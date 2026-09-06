@@ -21,6 +21,7 @@ import { coursesApi } from '../../api/courses';
 import { socialApi } from '../../api/social';
 import { cacheKeys, fetchWithCache, TTL } from '../../utils/apiCache';
 import { BrandAvatar, BrandLoader } from '../../components/brand';
+import ScreenAppBar, { screenAppBarTitleStyles } from '../../components/ScreenAppBar';
 import PuckButton from '../../components/PuckButton';
 import UserProfileSheet from '../../components/social/UserProfileSheet';
 import { useTabBarInset } from '../../navigation/tabBarLayout';
@@ -46,11 +47,16 @@ function ptsOf(entry) {
   return entry?.literacy_points ?? entry?.xp ?? 0;
 }
 
-function HubButton({ icon, label, count, alert, onPress, styles, colors }) {
+function HubButton({ icon, label, count, alert, onPress, styles, colors, color }) {
+  const accent = color || colors.primary;
   return (
-    <TouchableOpacity style={styles.hubTile} activeOpacity={0.75} onPress={onPress}>
-      <View style={styles.hubIcon}>
-        <Ionicons name={icon} size={17} color={colors.primary} />
+    <TouchableOpacity
+      style={[styles.hubTile, color ? { borderColor: accent } : null]}
+      activeOpacity={0.75}
+      onPress={onPress}
+    >
+      <View style={[styles.hubIcon, color ? { backgroundColor: `${accent}22` } : null]}>
+        <Ionicons name={icon} size={17} color={accent} />
         {alert ? <View style={styles.hubAlert} /> : null}
       </View>
       <Text style={styles.hubLabel} numberOfLines={1}>{label}</Text>
@@ -132,6 +138,7 @@ export default function FriendsScreen({ navigation }) {
   const { unreadCount } = useNotifications();
   const tabBarInset = useTabBarInset(18);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
+  const titleStyles = useMemo(() => screenAppBarTitleStyles(colors), [colors]);
 
   const [top, setTop] = useState([]);
   const [rest, setRest] = useState([]);
@@ -315,45 +322,90 @@ export default function FriendsScreen({ navigation }) {
   const loadedCount = top.length + rest.length;
 
   const header = (
-    <View style={styles.header}>
-      <Text style={styles.title}>Leaderboard</Text>
-      <View style={styles.headerActions}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => goSocial('view notifications', 'Notifications')}
-          activeOpacity={0.85}
-          accessibilityLabel="Notifications"
-        >
-          <Ionicons name="notifications-outline" size={18} color={colors.white} />
-          {unreadCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => goSocial('manage friend requests', 'FriendRequests')}
-          activeOpacity={0.85}
-          accessibilityLabel="Friend requests"
-        >
-          <Ionicons name="person-add-outline" size={18} color={colors.white} />
-          {pendingCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
+    <ScreenAppBar
+      showBack={false}
+      rightActions={(
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => goSocial('view notifications', 'Notifications')}
+            activeOpacity={0.85}
+            accessibilityLabel="Notifications"
+          >
+            <Ionicons name="notifications-outline" size={18} color={colors.white} />
+            {unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => goSocial('manage friend requests', 'FriendRequests')}
+            activeOpacity={0.85}
+            accessibilityLabel="Friend requests"
+          >
+            <Ionicons name="person-add-outline" size={18} color={colors.white} />
+            {pendingCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => goSocial('invite from contacts', 'ContactInvite')}
+            activeOpacity={0.85}
+            accessibilityLabel="Invite contacts"
+          >
+            <Ionicons name="share-social-outline" size={18} color={colors.white} />
+          </TouchableOpacity>
+        </View>
+      )}
+    >
+      <View style={styles.identity}>
+        <View style={styles.identityAvatar}>
+          <Ionicons name="trophy" size={18} color={colors.primary} />
+        </View>
+        <View style={styles.identityCopy}>
+          <Text style={titleStyles.title} numberOfLines={1}>Leaderboard</Text>
+          <Text style={titleStyles.eyebrow} numberOfLines={1}>Literacy score rankings</Text>
+        </View>
       </View>
-    </View>
+    </ScreenAppBar>
+  );
+
+  const dailyPuzzleCta = (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      style={styles.puzzleCta}
+      onPress={() => navigation.navigate('HomeTab', { screen: 'DailyBlitz' })}
+      accessibilityLabel="Play the Daily Puzzle"
+    >
+      <LinearGradient
+        colors={['#FFC24B', '#FF8A1F', '#FF6A00']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.puzzleGrad}
+      >
+        <View style={styles.puzzleIconWrap}>
+          <Ionicons name="extension-puzzle" size={22} color="#FFFFFF" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.puzzleCtaTitle}>Daily Puzzle</Text>
+          <Text style={styles.puzzleCtaSub} numberOfLines={1}>Solve today&apos;s challenge · earn Bot Bucks</Text>
+        </View>
+        <View style={styles.puzzlePlay}>
+          <Ionicons name="arrow-forward" size={18} color="#FF7A1F" />
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
   );
 
   const hub = (
     <View style={styles.hubRow}>
       <HubButton icon="people" label="Friends" count={friendCount} onPress={() => goSocial('view friends', 'MyFriends')} styles={styles} colors={colors} />
       <HubButton icon="people-circle" label="Groups" count={groupCount} alert={inviteCount > 0} onPress={() => goSocial('view groups', 'Groups')} styles={styles} colors={colors} />
-      <HubButton icon="newspaper" label="Feed" onPress={() => navigation.navigate('Feed')} styles={styles} colors={colors} />
-      <HubButton icon="share-social" label="Contacts" onPress={() => goSocial('invite from contacts', 'ContactInvite')} styles={styles} colors={colors} />
     </View>
   );
 
@@ -370,6 +422,39 @@ export default function FriendsScreen({ navigation }) {
             {pendingCount} friend request{pendingCount !== 1 ? 's' : ''}
           </Text>
           <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+        </TouchableOpacity>
+      ) : null}
+
+      {me && !search ? (
+        <TouchableOpacity
+          style={styles.youBar}
+          activeOpacity={0.85}
+          onPress={() => openProfile(me)}
+          accessibilityLabel={`Your rank, number ${me.rank}`}
+        >
+          <View style={styles.youBarLabelRow}>
+            <View style={styles.youChip}>
+              <Ionicons name="person" size={11} color={colors.background} />
+              <Text style={styles.youChipText}>You</Text>
+            </View>
+          </View>
+          <View style={styles.youBarBody}>
+            <Text style={styles.youBarRank}>{me.rank}</Text>
+            <BrandAvatar
+              character={me.equipped_character}
+              size={40}
+              autoRotate={!!me.equipped_character}
+            />
+            <View style={styles.youBarMid}>
+              <Text style={styles.youBarName} numberOfLines={1}>
+                {formatDisplayName(me.display_name)}
+              </Text>
+              <Text style={styles.youBarMeta}>
+                {inTop ? `Top ${TOP_DISPLAY} · ${ptsOf(me).toLocaleString()} pts` : 'Keep learning to reach the top 3'}
+              </Text>
+            </View>
+            <Text style={styles.youBarPts}>{ptsOf(me).toLocaleString()}</Text>
+          </View>
         </TouchableOpacity>
       ) : null}
 
@@ -521,7 +606,10 @@ export default function FriendsScreen({ navigation }) {
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
         {header}
-        <View style={styles.hubWrap}>{hub}</View>
+        <View style={styles.hubWrap}>
+          {dailyPuzzleCta}
+          {hub}
+        </View>
         <FlatList
           ref={scrollRef}
           data={search ? matches : rest}
@@ -554,25 +642,6 @@ export default function FriendsScreen({ navigation }) {
             />
           )}
         />
-
-        {me && !search ? (
-          <TouchableOpacity
-            style={styles.youBar}
-            activeOpacity={0.75}
-            onPress={() => openProfile(me)}
-          >
-            <Text style={styles.youBarRank}>{me.rank}</Text>
-            <View style={styles.youBarMid}>
-              <Text style={styles.youBarName} numberOfLines={1}>
-                {formatDisplayName(me.display_name)}
-              </Text>
-              <Text style={styles.youBarMeta}>
-                {inTop ? `Top ${TOP_DISPLAY} · ${ptsOf(me).toLocaleString()} pts` : 'Keep learning to reach the top 3'}
-              </Text>
-            </View>
-            <Text style={styles.youBarPts}>{ptsOf(me).toLocaleString()}</Text>
-          </TouchableOpacity>
-        ) : null}
       </SafeAreaView>
 
       <UserProfileSheet
@@ -592,31 +661,41 @@ export default function FriendsScreen({ navigation }) {
 const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: 16, paddingBottom: 88 },
+  scroll: { paddingHorizontal: 16, paddingBottom: tabBarInset },
   listFooter: {
     paddingTop: 4,
     paddingBottom: 8,
   },
 
-  header: {
+  headerActions: { flexDirection: 'row', gap: 8 },
+  identity: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 10,
+    gap: 10,
+    minWidth: 0,
+    height: 44,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: colors.white,
-    letterSpacing: -0.7,
+  identityAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceElevated,
+    flexShrink: 0,
   },
-  headerActions: { flexDirection: 'row', gap: 8 },
+  identityCopy: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
   headerBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
@@ -640,6 +719,38 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   badgeText: { fontSize: 9, fontWeight: '800', color: colors.background },
 
   hubRow: { flexDirection: 'row', gap: 8 },
+  puzzleCta: { marginBottom: 12 },
+  puzzleGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    shadowColor: '#FF7A1F',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  puzzleIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  puzzleCtaTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.3 },
+  puzzleCtaSub: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.92)', marginTop: 2 },
+  puzzlePlay: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   hubWrap: {
     paddingHorizontal: 16,
     paddingBottom: 12,
@@ -875,33 +986,60 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   },
 
   youBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: tabBarInset,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    marginBottom: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(61,220,95,0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(61,220,95,0.45)',
+    gap: 10,
+  },
+  youBarLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  youChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  youChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.background,
+    letterSpacing: -0.2,
+  },
+  youBarLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  youBarBody: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.surface,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
   },
   youBarRank: {
     width: 28,
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.primary,
     fontVariant: ['tabular-nums'],
   },
   youBarMid: { flex: 1, minWidth: 0 },
-  youBarName: { fontSize: 14, fontWeight: '600', color: colors.white },
+  youBarName: { fontSize: 15, fontWeight: '700', color: colors.white },
   youBarMeta: { fontSize: 12, fontWeight: '500', color: colors.textMuted, marginTop: 2 },
   youBarPts: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.primary,
   },
 
   guestCard: {

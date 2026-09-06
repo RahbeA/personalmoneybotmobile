@@ -50,9 +50,10 @@ export default function AuthScreen({ route, navigation }) {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
 
   const {
-    login, register, googleSignIn, appleSignIn, isGuest,
+    login, register, googleSignIn, appleSignIn, guestSignIn, isGuest,
   } = useAuth();
   // If we opened this screen from an active guest session, upgrading keeps the
   // user signed in (so the root navigator won't swap stacks) — dismiss manually.
@@ -201,6 +202,20 @@ export default function AuthScreen({ route, navigation }) {
     } catch (err) {
       setError('Could not open Google sign-in.');
       setGoogleLoading(false);
+      shake();
+    }
+  }
+
+  async function handleGuest() {
+    if (guestLoading) return;
+    setError('');
+    setGuestLoading(true);
+    try {
+      await guestSignIn();
+      // Root navigator swaps to onboarding/main once the guest session is set.
+    } catch (err) {
+      setGuestLoading(false);
+      setError(err?.message || 'Could not continue as guest. Try again.');
       shake();
     }
   }
@@ -573,6 +588,21 @@ export default function AuthScreen({ route, navigation }) {
                 </LinearGradient>
               </TouchableOpacity>
 
+              {!isGuest && (
+                <TouchableOpacity
+                  style={styles.guestButton}
+                  onPress={handleGuest}
+                  disabled={guestLoading}
+                  activeOpacity={0.85}
+                >
+                  {guestLoading ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <Text style={styles.guestButtonText}>Explore first — no account needed</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+
               <LegalFooter style={styles.legalFooter} />
             </Animated.View>
             </ScrollView>
@@ -822,6 +852,22 @@ const makeStyles = (colors) => StyleSheet.create({
     color: colors.primary,
     fontWeight: '600',
     textDecorationLine: 'underline',
+  },
+  guestButton: {
+    width: '100%',
+    paddingVertical: 15,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  guestButtonText: {
+    color: colors.white,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   legalFooter: {
     marginTop: 8,

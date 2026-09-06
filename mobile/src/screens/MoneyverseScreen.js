@@ -9,7 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import FeaturedCharacter from '../components/FeaturedCharacter';
-import { BrandLoader, BrandHeader, BrandEmptyState } from '../components/brand';
+import { BrandLoader, BrandEmptyState } from '../components/brand';
+import ScreenAppBar, { screenAppBarTitleStyles } from '../components/ScreenAppBar';
 import PuckButton from '../components/PuckButton';
 import { LOADER_MESSAGES, EMPTY_STATES } from '../constants/brandCopy';
 import { useTabBarInset } from '../navigation/tabBarLayout';
@@ -53,6 +54,7 @@ export default function MoneyverseScreen({ navigation }) {
   const { colors, isDark } = useTheme();
   const tabBarInset = useTabBarInset(16);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
+  const titleStyles = useMemo(() => screenAppBarTitleStyles(colors), [colors]);
 
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all');
@@ -130,12 +132,20 @@ export default function MoneyverseScreen({ navigation }) {
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <BrandHeader
-          title="Moneyverse"
-          subtitle={subtitle}
-          style={styles.brandHeader}
-          right={<CoinBadge amount={botBucks} styles={styles} colors={colors} />}
-        />
+        <ScreenAppBar
+          showBack={false}
+          rightActions={<CoinBadge amount={botBucks} styles={styles} colors={colors} />}
+        >
+          <View style={styles.identity}>
+            <View style={styles.identityAvatar}>
+              <Ionicons name="planet" size={18} color={colors.primary} />
+            </View>
+            <View style={styles.identityCopy}>
+              <Text style={titleStyles.title} numberOfLines={1}>Moneyverse</Text>
+              <Text style={titleStyles.eyebrow} numberOfLines={1}>{subtitle}</Text>
+            </View>
+          </View>
+        </ScreenAppBar>
 
         {loading ? (
           <BrandLoader message={LOADER_MESSAGES.moneyverse} />
@@ -201,7 +211,30 @@ export default function MoneyverseScreen({ navigation }) {
 const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  brandHeader: { paddingHorizontal: 20 },
+  identity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+    height: 44,
+  },
+  identityAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceElevated,
+    flexShrink: 0,
+  },
+  identityCopy: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
   coinBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: 'rgba(245,183,43,0.14)', borderWidth: 1, borderColor: 'rgba(245,183,43,0.35)',

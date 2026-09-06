@@ -501,15 +501,27 @@ class FeedPost(models.Model):
         (STATUS_REJECTED, 'Rejected'),
     ]
 
+    VISIBILITY_PUBLIC = 'public'
+    VISIBILITY_PRIVATE = 'private'
+    VISIBILITY_CHOICES = [
+        (VISIBILITY_PUBLIC, 'Public'),
+        (VISIBILITY_PRIVATE, 'Private'),
+    ]
+
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='feed_posts',
     )
-    image = models.ImageField(upload_to='feed/')
+    image = models.ImageField(upload_to='feed/', blank=True, null=True)
     caption = models.CharField(max_length=280)
     link = models.URLField(blank=True, default='')
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    visibility = models.CharField(
+        max_length=16,
+        choices=VISIBILITY_CHOICES,
+        default=VISIBILITY_PUBLIC,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     reviewed_by = models.ForeignKey(
@@ -525,6 +537,7 @@ class FeedPost(models.Model):
         indexes = [
             models.Index(fields=['status', '-created_at']),
             models.Index(fields=['author', '-created_at']),
+            models.Index(fields=['visibility', 'status', '-created_at']),
         ]
 
     def __str__(self):
@@ -560,3 +573,35 @@ class FeedPostUpvote(models.Model):
 
     def __str__(self):
         return f'user {self.user_id} upvoted post {self.post_id}'
+
+
+class FeedPostBookmark(models.Model):
+    """A user saving a feed post into their private MoneyVault."""
+
+    post = models.ForeignKey(
+        FeedPost,
+        on_delete=models.CASCADE,
+        related_name='bookmarks',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='feed_bookmarks',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['post', 'user'],
+                name='unique_feed_post_bookmark',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['post']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'user {self.user_id} bookmarked post {self.post_id}'

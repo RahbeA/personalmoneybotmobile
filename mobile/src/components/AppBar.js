@@ -23,6 +23,7 @@ export default function AppBar({
   onStatsPress,
   onStatPress,
   rightActions,
+  leadingAction,
   showStats = true,
   style,
 }) {
@@ -40,13 +41,18 @@ export default function AppBar({
       <View style={styles.headerRow}>
         <View style={[styles.sideCol, styles.sideColLeft]}>
           {isHome ? (
-            <View style={styles.homeText}>
-              {!!subtitle && (
-                <Text style={styles.greeting} numberOfLines={1}>{subtitle}</Text>
+            <View style={styles.homeLeft}>
+              {!!leadingAction && (
+                <View style={styles.leadingSlot}>{leadingAction}</View>
               )}
-              {!!title && (
-                <Text style={styles.username} numberOfLines={1}>{title}</Text>
-              )}
+              <View style={styles.homeText}>
+                {!!subtitle && (
+                  <Text style={styles.greeting} numberOfLines={1}>{subtitle}</Text>
+                )}
+                {!!title && (
+                  <Text style={styles.username} numberOfLines={1}>{title}</Text>
+                )}
+              </View>
             </View>
           ) : (
             <View style={styles.screenLeft}>
@@ -148,7 +154,17 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  homeLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    height: APP_BAR_ROW_HEIGHT,
+  },
+  leadingSlot: {
+    flexShrink: 0,
+  },
   homeText: {
+    flexShrink: 1,
     justifyContent: 'center',
     height: APP_BAR_ROW_HEIGHT,
   },

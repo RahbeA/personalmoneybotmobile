@@ -2,7 +2,7 @@
   "expo": {
     "name": "MoneyBot",
     "slug": "moneybot",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "scheme": "moneybot",
     "icon": "./assets/logo.png",
@@ -57,6 +57,12 @@
     },
     "plugins": [
       "expo-dev-client",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "MoneyBot uses your camera so you can snap a photo for a Feed post."
+        }
+      ],
       "expo-secure-store",
       "expo-asset",
       [
@@ -73,8 +79,16 @@
         "expo-image-picker",
         {
           "photosPermission": "MoneyBot uses your photos so you can share a money tip in the Feed.",
-          "cameraPermission": false,
+          "cameraPermission": "MoneyBot uses your camera so you can snap a photo for a Feed post.",
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "MoneyBot needs access to save Feed images to your photo library.",
+          "savePhotosPermission": "MoneyBot saves Feed images you choose to your photo library.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       [
@@ -91,7 +105,43 @@
         }
       ],
       "expo-localization",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.moneybot.app.widgets",
+          "groupIdentifier": "group.com.moneybot.app",
+          "widgets": [
+            {
+              "name": "StreakWidget",
+              "displayName": "Streak",
+              "description": "Your MoneyBot learning streak at a glance.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            },
+            {
+              "name": "StatsWidget",
+              "displayName": "Stats",
+              "description": "Bot Bucks, XP, and streak on your home screen.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            },
+            {
+              "name": "DailyRewardWidget",
+              "displayName": "Daily Reward",
+              "description": "See today's Bot Bucks reward and claim status.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            }
+          ]
+        }
+      ]
     ]
   }
 }

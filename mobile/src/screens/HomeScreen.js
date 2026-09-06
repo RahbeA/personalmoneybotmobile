@@ -1,25 +1,26 @@
 import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl, Animated, Easing,
+  View, Text, StyleSheet, ScrollView, RefreshControl, Animated, Easing, TouchableOpacity,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 import { useTabReselect } from '../navigation/tabReselect';
-import { BrandLogo, BrandToast, BrandEmptyState } from '../components/brand';
+import { BrandToast, BrandEmptyState } from '../components/brand';
 import DailyRewardModal from '../components/DailyRewardModal';
 import DailyClaimCelebration from '../components/DailyClaimCelebration';
+import MoneyTipModal from '../components/MoneyTipModal';
 import AppBar from '../components/AppBar';
+import { readTipSeenToday, persistTipSeenToday } from '../utils/moneyTipStore';
 import LessonRoadmap, {
   getNextLesson, getCurrentModuleId, getLockedModuleIds, ROADMAP_GREEN, UnitBanner,
 } from '../components/LessonRoadmap';
-import PuckButton from '../components/PuckButton';
 import { getFirstName } from '../utils/displayName';
 import { API_BASE_URL } from '../config/api';
 
@@ -56,8 +57,16 @@ export default function HomeScreen({ navigation, route }) {
   const [celebration, setCelebration] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [streakModalOpen, setStreakModalOpen] = useState(false);
+  const [moneyTipOpen, setMoneyTipOpen] = useState(false);
   const [stickyModuleId, setStickyModuleId] = useState(null);
+  // Daily gate: the tip auto-pops at most once per calendar day.
+  const [tipSeenToday, setTipSeenToday] = useState(false);
+  const [tipGateLoaded, setTipGateLoaded] = useState(false);
+  const tipUserId = user?.id || 'guest';
   const dismissedStreakRef = useRef(false);
+  // Tracks the first-entry intro sequence (streak -> money tip -> scroll to lesson).
+  const introRef = useRef({ started: false, tipShown: false });
+  const introActiveRef = useRef(false);
   const pendingBadgeRef = useRef(null);
   const scrollRef = useRef(null);
   const sectionLayoutRef = useRef({});
@@ -67,6 +76,9 @@ export default function HomeScreen({ navigation, route }) {
   const stickyAnim = useRef(new Animated.Value(0)).current;
   const scrollRafRef = useRef(null);
   const lastScrollYRef = useRef(0);
+  // Drives the eased "glide to your lesson" scroll (accelerate, then settle).
+  const scrollAnim = useRef(new Animated.Value(0)).current;
+  const scrollAnimListenerRef = useRef(null);
 
   useTabReselect('HomeTab', () => {
     scrollRef.current?.scrollTo({ y: 0, animated: true });
@@ -88,11 +100,132 @@ export default function HomeScreen({ navigation, route }) {
     }, [refresh]),
   );
 
-  useEffect(() => {
-    if (dailyReward?.can_claim && !dismissedStreakRef.current) {
-      setStreakModalOpen(true);
+  useEffect(() => () => {
+    if (scrollAnimListenerRef.current != null) {
+      scrollAnim.removeListener(scrollAnimListenerRef.current);
+      scrollAnimListenerRef.current = null;
     }
-  }, [dailyReward?.can_claim, dailyReward?.current_day]);
+  }, [scrollAnim]);
+
+  // Smoothly glide the scroll view to a target Y with an ease-in-out curve so
+  // it starts gently, speeds up, then eases to a stop (nicer than the default).
+  const animateScrollTo = useCallback((targetY) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const startY = lastScrollYRef.current || 0;
+    const distance = Math.abs(targetY - startY);
+    if (distance < 2) return;
+    // Longer trips animate a touch longer, but stay in a snappy, pleasant range.
+    const duration = Math.max(420, Math.min(950, 260 + distance * 0.55));
+
+    // Tear down any in-flight glide before starting a new one.
+    if (scrollAnimListenerRef.current != null) {
+      scrollAnim.removeListener(scrollAnimListenerRef.current);
+      scrollAnimListenerRef.current = null;
+    }
+    scrollAnim.stopAnimation();
+    scrollAnim.setValue(startY);
+    scrollAnimListenerRef.current = scrollAnim.addListener(({ value }) => {
+      scroller.scrollTo({ y: value, animated: false });
+    });
+    Animated.timing(scrollAnim, {
+      toValue: targetY,
+      duration,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false,
+    }).start(() => {
+      if (scrollAnimListenerRef.current != null) {
+        scrollAnim.removeListener(scrollAnimListenerRef.current);
+        scrollAnimListenerRef.current = null;
+      }
+    });
+  }, [scrollAnim]);
+
+  const scrollToCurrentLesson = useCallback(() => {
+    const targetId = getCurrentModuleId(modules) || getNextLesson(modules)?.module?.id;
+    if (targetId == null) return;
+    // Defer so section layouts are measured before we scroll.
+    setTimeout(() => {
+      const layout = sectionLayoutRef.current[targetId];
+      const y = layout?.y != null ? pathStartYRef.current + layout.y : null;
+      if (y != null && scrollRef.current) {
+        animateScrollTo(Math.max(y - 8, 0));
+      }
+    }, 260);
+  }, [modules, animateScrollTo]);
+
+  // Load today's "already shown" flag once we know the user.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const seen = await readTipSeenToday(tipUserId);
+      if (active) {
+        setTipSeenToday(seen);
+        setTipGateLoaded(true);
+      }
+    })();
+    return () => { active = false; };
+  }, [tipUserId]);
+
+  // Mark the tip as shown for today so it won't auto-pop again until tomorrow.
+  const markTipSeenToday = useCallback(() => {
+    setTipSeenToday(true);
+    persistTipSeenToday(tipUserId);
+  }, [tipUserId]);
+
+  // Manual open from the app-bar button — always allowed, any time of day.
+  const openMoneyTipManual = useCallback(() => {
+    if (!moneyTip?.body) return;
+    introActiveRef.current = false; // not part of the first-entry intro
+    setMoneyTipOpen(true);
+    markTipSeenToday();
+  }, [moneyTip?.body, markTipSeenToday]);
+
+  const advanceFromStreak = useCallback(() => {
+    if (!introActiveRef.current) return;
+    if (moneyTip?.body && !introRef.current.tipShown && !tipSeenToday) {
+      introRef.current.tipShown = true;
+      setMoneyTipOpen(true);
+      markTipSeenToday();
+    } else {
+      introActiveRef.current = false;
+      scrollToCurrentLesson();
+    }
+  }, [moneyTip?.body, tipSeenToday, markTipSeenToday, scrollToCurrentLesson]);
+
+  const closeMoneyTip = useCallback(() => {
+    setMoneyTipOpen(false);
+    // Only glide to the lesson when the tip was part of the first-entry intro;
+    // a manual open shouldn't move the roadmap when dismissed.
+    if (introActiveRef.current) {
+      introActiveRef.current = false;
+      scrollToCurrentLesson();
+    }
+  }, [scrollToCurrentLesson]);
+
+  // First-entry intro: streak pop-up, then money tip pop-up, then scroll to the current lesson.
+  useEffect(() => {
+    if (loading || !modules.length) return;
+    // Wait until we know whether today's tip was already shown, so we don't
+    // flash it before the daily gate resolves.
+    if (!tipGateLoaded) return;
+    if (introRef.current.started) return;
+    introRef.current.started = true;
+    if (dailyReward?.can_claim && !dismissedStreakRef.current) {
+      introActiveRef.current = true;
+      setStreakModalOpen(true);
+    } else if (moneyTip?.body && !tipSeenToday) {
+      introActiveRef.current = true;
+      introRef.current.tipShown = true;
+      setMoneyTipOpen(true);
+      markTipSeenToday();
+    } else {
+      scrollToCurrentLesson();
+    }
+  }, [
+    loading, modules.length, dailyReward?.can_claim, moneyTip?.body,
+    tipGateLoaded, tipSeenToday, markTipSeenToday, scrollToCurrentLesson,
+  ]);
 
   useEffect(() => {
     const milestones = [7, 30, 100];
@@ -109,7 +242,6 @@ export default function HomeScreen({ navigation, route }) {
   }, [refresh]);
 
   const displayName = getFirstName(user);
-  const nextLesson = getNextLesson(modules);
   const tipCategory = moneyTip?.category
     ? (TIP_CATEGORY_LABELS[moneyTip.category] || moneyTip.category)
     : null;
@@ -121,6 +253,7 @@ export default function HomeScreen({ navigation, route }) {
   function handleStatPress(key) {
     if (key === 'streak') {
       dismissedStreakRef.current = false;
+      introActiveRef.current = false;
       setStreakModalOpen(true);
       return;
     }
@@ -233,12 +366,12 @@ export default function HomeScreen({ navigation, route }) {
       const layout = sectionLayoutRef.current[focusModuleId];
       const y = layout?.y != null ? pathStartYRef.current + layout.y : null;
       if (y != null && scrollRef.current) {
-        scrollRef.current.scrollTo({ y: Math.max(y - 8, 0), animated: true });
+        animateScrollTo(Math.max(y - 8, 0));
       }
       navigation.setParams({ focusModuleId: undefined });
     }, 320);
     return () => clearTimeout(timer);
-  }, [focusModuleId, loading, modules, navigation]);
+  }, [focusModuleId, loading, modules, navigation, animateScrollTo]);
 
   async function handleDailyClaim() {
     const claimAmount = dailyReward?.claim_amount ?? 0;
@@ -257,7 +390,9 @@ export default function HomeScreen({ navigation, route }) {
     pendingBadgeRef.current = null;
     if (newKey) {
       navigation.navigate('BadgeReveal', { badgeKey: newKey, mode: 'earned' });
+      return;
     }
+    advanceFromStreak();
   }
 
   return (
@@ -271,6 +406,17 @@ export default function HomeScreen({ navigation, route }) {
           onLogoPress={goToProfile}
           onStatsPress={goToProfile}
           onStatPress={handleStatPress}
+          leadingAction={moneyTip?.body ? (
+            <TouchableOpacity
+              style={styles.tipBtn}
+              onPress={openMoneyTipManual}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="See today's money tip"
+            >
+              <Ionicons name="bulb" size={20} color={colors.primary} />
+            </TouchableOpacity>
+          ) : null}
         />
 
         <View style={styles.scrollHost}>
@@ -311,55 +457,6 @@ export default function HomeScreen({ navigation, route }) {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ROADMAP_GREEN.solid} />
           }
         >
-          {moneyTip?.body ? (
-            <View style={styles.tipWrap}>
-              <BrandLogo size="sm" style={styles.tipLogo} />
-              <View style={styles.tipBody}>
-                <Text style={styles.tipTag}>{tipCategory || 'Money tip'}</Text>
-                <Text style={styles.tipText} numberOfLines={3}>{moneyTip.body}</Text>
-              </View>
-            </View>
-          ) : null}
-
-          <View style={styles.quickRow}>
-            {nextLesson ? (
-              <PuckButton
-                color={ROADMAP_GREEN.solid}
-                height={64}
-                borderRadius={16}
-                lip={5}
-                onPress={() => handleLessonPress(nextLesson.lesson, nextLesson.module)}
-                style={styles.continueCard}
-                contentStyle={styles.continueGrad}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.continueLabel}>CONTINUE</Text>
-                  <Text style={styles.continueTitle} numberOfLines={1}>{nextLesson.lesson.title}</Text>
-                </View>
-                <Ionicons name="play-circle" size={26} color="#FFFFFF" />
-              </PuckButton>
-            ) : (
-              <View style={styles.allDoneCard}>
-                <Ionicons name="trophy" size={18} color={colors.primary} />
-                <Text style={styles.allDoneTitle}>All caught up</Text>
-              </View>
-            )}
-
-            <PuckButton
-              color="#FF8A1F"
-              width={88}
-              height={64}
-              borderRadius={16}
-              lip={5}
-              onPress={() => navigation.navigate('DailyBlitz')}
-              contentStyle={styles.puzzleContent}
-              accessibilityLabel="Daily Puzzle"
-            >
-              <Ionicons name="today" size={18} color="#FFFFFF" />
-              <Text style={styles.puzzleLabel}>Daily Puzzle</Text>
-            </PuckButton>
-          </View>
-
           {loadError ? (
             <BrandEmptyState
               title="Couldn't load courses"
@@ -401,7 +498,16 @@ export default function HomeScreen({ navigation, route }) {
           onDismiss={() => {
             dismissedStreakRef.current = true;
             setStreakModalOpen(false);
+            advanceFromStreak();
           }}
+          colors={colors}
+        />
+
+        <MoneyTipModal
+          visible={moneyTipOpen}
+          tip={moneyTip}
+          categoryLabel={tipCategory}
+          onDismiss={closeMoneyTip}
           colors={colors}
         />
 
@@ -419,6 +525,16 @@ export default function HomeScreen({ navigation, route }) {
 const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
+  tipBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primaryTint,
+    borderWidth: 1,
+    borderColor: colors.primaryTintStrong || colors.primary,
+  },
   scrollHost: { flex: 1, position: 'relative' },
   scrollView: { flex: 1 },
   scroll: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: tabBarInset },
@@ -435,85 +551,5 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 8,
-  },
-
-  tipWrap: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-  },
-  tipLogo: { width: 28, height: 28, marginTop: 2 },
-  tipBody: { flex: 1 },
-  tipTag: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.primary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-    marginBottom: 4,
-  },
-  tipText: { fontSize: 13, color: colors.offWhite, lineHeight: 18, fontWeight: '600' },
-
-  quickRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 10,
-    marginBottom: 8,
-  },
-  continueCard: { flex: 1 },
-  continueGrad: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: 10,
-    paddingHorizontal: 14,
-  },
-  continueLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: 'rgba(255,255,255,0.85)',
-    letterSpacing: 1.1,
-    marginBottom: 2,
-  },
-  continueTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -0.2,
-  },
-  allDoneCard: {
-    flex: 1,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    gap: 8,
-    minHeight: 64,
-  },
-  allDoneTitle: { fontSize: 14, fontWeight: '700', color: colors.white },
-  puzzleContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
-  },
-  puzzleLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    letterSpacing: -0.2,
-    lineHeight: 12,
   },
 });

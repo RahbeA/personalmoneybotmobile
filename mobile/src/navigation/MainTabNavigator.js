@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, Suspense } from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -46,6 +46,7 @@ import { TabReselectProvider, TAB_ROOT_SCREENS, emitTabReselect, useTabReselectC
 const Tab = createBottomTabNavigator();
 const HomeStack = createNativeStackNavigator();
 const MoneyverseStack = createNativeStackNavigator();
+const FeedStack = createNativeStackNavigator();
 const TutorStack = createNativeStackNavigator();
 const SocialStack = createNativeStackNavigator();
 
@@ -76,6 +77,7 @@ function ContactInviteRoute(props) {
 const TABS = [
   { name: 'HomeTab', label: 'Home', icon: 'home', iconOutline: 'home-outline' },
   { name: 'MoneyverseTab', label: 'Moneyverse', icon: 'planet', iconOutline: 'planet-outline' },
+  { name: 'FeedTab', label: 'Feed', icon: 'newspaper', iconOutline: 'newspaper-outline' },
   { name: 'SocialTab', label: 'Leaderboard', icon: 'trophy', iconOutline: 'trophy-outline' },
   { name: 'TutorTab', label: 'Tutor', icon: 'chatbubbles', iconOutline: 'chatbubbles-outline' },
   { name: 'SettingsTab', label: 'Profile', icon: 'person', iconOutline: 'person-outline' },
@@ -86,7 +88,7 @@ const LESSON_ROUTES = new Set([
   'Arcade', 'BudgetBlitz', 'InflationDodge', 'CreditClimb', 'ScamSpotter', 'DailyBlitz', 'DailyLeaderboard',
   'Groups', 'CreateGroup', 'GroupDetail', 'InviteFriends', 'GroupLeaderboard', 'CreateChallenge', 'ChallengeLeaderboard',
   'FriendRequests', 'Notifications', 'MyFriends', 'CharacterDetail',
-  'ComposeFeed',
+  'ComposeFeed', 'CameraCapture',
 ]);
 
 function getDeepestRouteName(route) {
@@ -150,7 +152,7 @@ function CustomTabBar({ state, navigation }) {
             <View style={[styles.iconWrap, isFocused && styles.iconWrapActive]}>
               <Ionicons
                 name={isFocused ? tab.icon : tab.iconOutline}
-                size={28}
+                size={24}
                 color={isDisabled ? colors.textMuted : isFocused ? colors.primary : colors.textSecondary}
               />
               {isFocused && <View style={styles.activeDot} />}
@@ -224,6 +226,27 @@ function MoneyverseStackNavigator() {
   );
 }
 
+// Lazy so expo-camera's native module is only required when the screen opens.
+// Old dev clients that predate expo-camera never evaluate this import.
+const CameraCaptureScreen = React.lazy(() => import('../screens/feed/CameraCaptureScreen'));
+function CameraCaptureRoute(props) {
+  return (
+    <Suspense fallback={<View style={{ flex: 1, backgroundColor: '#000000' }} />}>
+      <CameraCaptureScreen {...props} />
+    </Suspense>
+  );
+}
+
+function FeedStackNavigator() {
+  return (
+    <FeedStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+      <FeedStack.Screen name="Feed" component={FeedScreen} />
+      <FeedStack.Screen name="ComposeFeed" component={ComposeFeedScreen} options={{ animation: 'slide_from_bottom' }} />
+      <FeedStack.Screen name="CameraCapture" component={CameraCaptureRoute} options={{ animation: 'slide_from_bottom' }} />
+    </FeedStack.Navigator>
+  );
+}
+
 function TutorStackNavigator() {
   return (
     <TutorStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
@@ -246,8 +269,6 @@ function SocialStackNavigator() {
       <SocialStack.Screen name="GroupLeaderboard" component={GroupLeaderboardScreen} />
       <SocialStack.Screen name="CreateChallenge" component={CreateChallengeScreen} />
       <SocialStack.Screen name="ChallengeLeaderboard" component={ChallengeLeaderboardScreen} />
-      <SocialStack.Screen name="Feed" component={FeedScreen} />
-      <SocialStack.Screen name="ComposeFeed" component={ComposeFeedScreen} options={{ animation: 'slide_from_bottom' }} />
       <SocialStack.Screen name="ContactInvite" component={ContactInviteRoute} />
     </SocialStack.Navigator>
   );
@@ -271,6 +292,7 @@ export default function MainTabNavigator() {
       >
         <Tab.Screen name="HomeTab" component={HomeStackNavigator} />
         <Tab.Screen name="MoneyverseTab" component={MoneyverseStackNavigator} />
+        <Tab.Screen name="FeedTab" component={FeedStackNavigator} />
         <Tab.Screen name="SocialTab" component={SocialStackNavigator} />
         <Tab.Screen name="TutorTab" component={TutorStackNavigator} options={{ lazy: true }} />
         <Tab.Screen name="SettingsTab" component={SettingsScreen} />
@@ -300,7 +322,7 @@ const makeStyles = (colors) => StyleSheet.create({
     paddingVertical: 6,
   },
   iconWrap: {
-    width: 52,
+    width: 44,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',

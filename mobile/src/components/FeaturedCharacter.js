@@ -70,6 +70,11 @@ export default function FeaturedCharacter({
   }, [safeIndex, count]);
 
   const gestureRef = useRef({ dx: 0, dy: 0 });
+  const stageWidthRef = useRef(0);
+  const countRef = useRef(count);
+  const bumpRef = useRef(bump);
+  countRef.current = count;
+  bumpRef.current = bump;
   const characterRef = useRef(character);
   const onOpenRef = useRef(onOpen);
   characterRef.current = character;
@@ -88,21 +93,32 @@ export default function FeaturedCharacter({
         gestureRef.current = { dx: g.dx, dy: g.dy };
       },
       onPanResponderTerminationRequest: () => false,
-      onPanResponderRelease: (_, g) => {
+      onPanResponderRelease: (evt, g) => {
         const dx = g.dx;
         const dy = g.dy;
         if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
-          if (dx < 0) bump(1);
-          else bump(-1);
+          if (dx < 0) bumpRef.current(1);
+          else bumpRef.current(-1);
           return;
         }
-        // Tap (no meaningful swipe) → open detail / purchase flow.
+        // Tap (no meaningful swipe): left third = previous, right third = next,
+        // center = open detail / purchase flow. Falls back to open if unmeasured.
         if (Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+          const w = stageWidthRef.current;
+          const x = evt.nativeEvent.locationX;
+          if (countRef.current > 1 && w > 0 && x < w * 0.3) {
+            bumpRef.current(-1);
+            return;
+          }
+          if (countRef.current > 1 && w > 0 && x > w * 0.7) {
+            bumpRef.current(1);
+            return;
+          }
           onOpenRef.current?.(characterRef.current);
         }
       },
     }),
-    [bump],
+    [],
   );
 
   // Gentle bob matching the old hero stage.
@@ -215,29 +231,37 @@ export default function FeaturedCharacter({
             />
           </Animated.View>
           {/* Overlay captures swipe + tap — WebView would otherwise eat gestures. */}
-          <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers} />
+          <View
+            style={StyleSheet.absoluteFill}
+            onLayout={(e) => { stageWidthRef.current = e.nativeEvent.layout.width; }}
+            {...panResponder.panHandlers}
+          />
         </View>
 
-        <TouchableOpacity
-          style={[styles.arrow, styles.arrowLeft]}
-          onPress={() => bump(-1)}
-          activeOpacity={0.75}
-          hitSlop={12}
-          accessibilityLabel="Previous character"
-        >
-          <Ionicons name="chevron-back" size={22} color={colors.white} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.arrow, styles.arrowRight]}
-          onPress={() => bump(1)}
-          activeOpacity={0.75}
-          hitSlop={12}
-          accessibilityLabel="Next character"
-        >
-          <Ionicons name="chevron-forward" size={22} color={colors.white} />
-        </TouchableOpacity>
+        {count > 1 ? (
+          <>
+            <TouchableOpacity
+              style={[styles.arrow, styles.arrowLeft]}
+              onPress={() => bump(-1)}
+              activeOpacity={0.75}
+              hitSlop={16}
+              accessibilityLabel="Previous character"
+            >
+              <Ionicons name="chevron-back" size={22} color={colors.white} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.arrow, styles.arrowRight]}
+              onPress={() => bump(1)}
+              activeOpacity={0.75}
+              hitSlop={16}
+              accessibilityLabel="Next character"
+            >
+              <Ionicons name="chevron-forward" size={22} color={colors.white} />
+            </TouchableOpacity>
 
-        <Text style={styles.swipeHint}>Swipe to browse</Text>
+            <Text style={styles.swipeHint}>Swipe to browse</Text>
+          </>
+        ) : null}
       </LinearGradient>
 
       <View style={styles.dock}>

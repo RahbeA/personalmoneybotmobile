@@ -9,6 +9,7 @@ export default function BrandAvatar({
   character,
   size = 40,
   autoRotate = false,
+  allowDrag = false,
   style,
   logoSize,
 }) {
@@ -16,7 +17,7 @@ export default function BrandAvatar({
   const styles = useMemo(() => makeStyles(colors, size), [colors, size]);
   const resolvedLogoSize = logoSize ?? Math.round(size * 0.72);
 
-  if (character?.preview_url && !autoRotate) {
+  if (character?.preview_url && !autoRotate && !allowDrag) {
     return (
       <View style={[styles.wrap, styles.characterWrap, style]}>
         <Image
@@ -35,6 +36,7 @@ export default function BrandAvatar({
           modelUrl={character.model_url}
           previewUrl={character.preview_url}
           autoRotate={autoRotate}
+          allowDrag={allowDrag}
           logoSize={size <= 48 ? 'sm' : 'md'}
         />
       </View>

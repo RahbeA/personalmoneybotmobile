@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useMemo, useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Alert, BackHandler, ScrollView } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { coursesApi } from '../api/courses';
 import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { useTheme } from '../context/ThemeContext';
-import { useUserProgress, getModuleIonIcon } from '../context/UserProgressContext';
+import { useUserProgress } from '../context/UserProgressContext';
 import { BrandAvatar } from '../components/brand';
 import PuckButton from '../components/PuckButton';
 import { CELEBRATIONS } from '../constants/brandCopy';
@@ -31,6 +31,7 @@ export default function LessonIntroScreen({ navigation, route }) {
   const { equippedCharacter } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const isFocused = useIsFocused();
   const [questions, setQuestions] = useState(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -92,14 +93,14 @@ export default function LessonIntroScreen({ navigation, route }) {
             bounces={false}
           >
             <View style={styles.mascotWrap}>
-              <BrandAvatar character={equippedCharacter} size={80} />
+              {/* 3D only while focused — unmount frees the WebView + RAM. */}
+              <BrandAvatar
+                character={equippedCharacter}
+                size={180}
+                autoRotate={isFocused}
+                allowDrag={isFocused}
+              />
               <Text style={styles.cheerText}>{CELEBRATIONS.lessonIntro}</Text>
-            </View>
-
-            <View style={styles.iconWrap}>
-              <LinearGradient colors={[colors.primary, colors.primaryDark]} style={styles.iconGrad}>
-                <Ionicons name={getModuleIonIcon(module)} size={48} color={colors.background} />
-              </LinearGradient>
             </View>
 
             <Text style={styles.moduleLabel}>{module.title}</Text>
@@ -177,16 +178,13 @@ const makeStyles = (colors) => StyleSheet.create({
     justifyContent: 'center',
     paddingBottom: 16,
   },
-  mascotWrap: { alignItems: 'center', marginBottom: 16 },
+  mascotWrap: { alignItems: 'center', marginBottom: 28 },
   cheerText: {
-    marginTop: 10,
+    marginTop: 14,
     fontSize: 16,
     fontWeight: '700',
     color: colors.primary,
   },
-  iconWrap: { marginBottom: 28 },
-  iconGrad: { width: 100, height: 100, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
-  icon: { fontSize: 48 },
   moduleLabel: { fontSize: 14, fontWeight: '600', color: colors.primary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
   lessonTitle: { fontSize: 28, fontWeight: '800', color: colors.white, textAlign: 'center', letterSpacing: -0.5, marginBottom: 24 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginBottom: 36 },

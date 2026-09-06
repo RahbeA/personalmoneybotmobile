@@ -31,5 +31,8 @@ urlpatterns = [
     path('contacts/match/', views.match_contacts, name='social-contacts-match'),
     path('feed/', views.feed_list_create, name='social-feed'),
     path('feed/mine/', views.feed_mine, name='social-feed-mine'),
+    path('feed/vault/', views.feed_vault, name='social-feed-vault'),
     path('feed/<int:post_id>/upvote/', views.feed_upvote_toggle, name='social-feed-upvote'),
+    path('feed/<int:post_id>/bookmark/', views.feed_bookmark_toggle, name='social-feed-bookmark'),
+    path('feed/<int:post_id>/', views.feed_delete, name='social-feed-delete'),
 ]

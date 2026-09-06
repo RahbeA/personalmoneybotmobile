@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
-import { LEGAL } from '../constants/legal';
 
 export default function LegalFooter({ style, centered = true }) {
   const navigation = useNavigation();
@@ -36,7 +35,6 @@ export default function LegalFooter({ style, centered = true }) {
           <Text style={styles.link}>Privacy Policy</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.contact}>Contact: {LEGAL.contactEmail}</Text>
     </View>
   );
 }
@@ -64,10 +62,5 @@ const makeStyles = (colors) => StyleSheet.create({
   separator: {
     fontSize: 12,
     color: colors.textMuted,
-  },
-  contact: {
-    fontSize: 11,
-    color: colors.textMuted,
-    textAlign: 'center',
   },
 });

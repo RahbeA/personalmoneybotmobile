@@ -128,6 +128,8 @@ export const socialApi = {
 
   getMyFeed: (token) => apiRequest('/social/feed/mine/', { token }),
 
+  getVault: (token) => apiRequest('/social/feed/vault/', { token }),
+
   createFeedPost: (token, formData) =>
     apiRequest('/social/feed/', {
       method: 'POST',
@@ -140,5 +142,18 @@ export const socialApi = {
       method: 'POST',
       token,
       body: {},
+    }),
+
+  toggleFeedBookmark: (token, postId) =>
+    apiRequest(`/social/feed/${postId}/bookmark/`, {
+      method: 'POST',
+      token,
+      body: {},
+    }),
+
+  deleteFeedPost: (token, postId) =>
+    apiRequest(`/social/feed/${postId}/`, {
+      method: 'DELETE',
+      token,
     }),
 };

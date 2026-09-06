@@ -1,25 +1,36 @@
-import React, { useMemo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useMemo, useCallback } from 'react';
+import {
+  View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform, ActionSheetIOS, Alert,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BrandAvatar } from '../../components/brand';
-import PuckButton from '../../components/PuckButton';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDisplayName, timeAgo, safeHttpsUrl, STATUS_LABELS } from './feedHelpers';
+
+const LIKE_COLOR = '#FF3B5C';
 
 export default function FeedPostCard({
   post,
   compact = false,
   showStatus = false,
   showUpvote = false,
+  showActions = false,
+  showStats = false,
   onOpenLink,
   onToggleUpvote,
   upvoteDisabled = false,
+  onToggleBookmark,
+  bookmarkDisabled = false,
+  onSaveImage,
+  onDelete,
+  canDelete = false,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const imageUrl = safeHttpsUrl(post?.image_url);
   const linkUrl = safeHttpsUrl(post?.link);
   const author = post?.author || {};
+  const isPrivate = post?.visibility === 'private';
   const statusColor = post?.status === 'rejected'
     ? colors.error
     : post?.status === 'approved'
@@ -27,8 +38,62 @@ export default function FeedPostCard({
       : colors.botBucks;
   const statusLabel = STATUS_LABELS[post?.status] || STATUS_LABELS.pending;
   const upvoteCount = post?.upvote_count ?? 0;
+  const bookmarkCount = post?.bookmark_count ?? 0;
   const hasUpvoted = !!post?.has_upvoted;
-  const showUpvoteButton = showUpvote && !!onToggleUpvote;
+  const hasBookmarked = !!post?.has_bookmarked;
+  const showActionRow = !!onToggleUpvote || !!onToggleBookmark;
+
+  const handleShare = useCallback(async () => {
+    const message = [post?.caption, linkUrl].filter(Boolean).join('\n\n');
+    try {
+      await Share.share({
+        message: message || 'Check out this money tip on MoneyBot',
+        ...(linkUrl ? { url: linkUrl } : imageUrl ? { url: imageUrl } : {}),
+      });
+    } catch {
+      // user dismissed the share sheet
+    }
+  }, [post?.caption, linkUrl, imageUrl]);
+
+  const menuOptions = useMemo(() => {
+    const opts = [];
+    if (imageUrl && onSaveImage) {
+      opts.push({ label: 'Save photo', onPress: () => onSaveImage(post) });
+    }
+    opts.push({ label: 'Share', onPress: handleShare });
+    if (linkUrl && onOpenLink) {
+      opts.push({ label: 'Open link', onPress: () => onOpenLink(linkUrl) });
+    }
+    if (canDelete && onDelete) {
+      opts.push({ label: 'Delete', destructive: true, onPress: () => onDelete(post) });
+    }
+    return opts;
+  }, [imageUrl, onSaveImage, handleShare, linkUrl, onOpenLink, canDelete, onDelete, post]);
+
+  const openMenu = useCallback(() => {
+    if (!menuOptions.length) return;
+    if (Platform.OS === 'ios') {
+      const labels = menuOptions.map((o) => o.label);
+      const destructiveIndex = menuOptions.findIndex((o) => o.destructive);
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: [...labels, 'Cancel'],
+          cancelButtonIndex: labels.length,
+          ...(destructiveIndex >= 0 ? { destructiveButtonIndex: destructiveIndex } : {}),
+        },
+        (i) => { if (i >= 0 && i < menuOptions.length) menuOptions[i].onPress(); },
+      );
+    } else {
+      Alert.alert('Post options', undefined, [
+        ...menuOptions.map((o) => ({
+          text: o.label,
+          style: o.destructive ? 'destructive' : 'default',
+          onPress: o.onPress,
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  }, [menuOptions]);
 
   if (compact) {
     return (
@@ -52,7 +117,7 @@ export default function FeedPostCard({
             <Text style={styles.time}>{timeAgo(post?.created_at)}</Text>
             {upvoteCount > 0 ? (
               <View style={styles.compactUpvote}>
-                <Ionicons name="arrow-up" size={12} color={colors.textMuted} />
+                <Ionicons name="heart" size={12} color={colors.textMuted} />
                 <Text style={styles.compactUpvoteText}>{upvoteCount}</Text>
               </View>
             ) : null}
@@ -76,11 +141,27 @@ export default function FeedPostCard({
           </Text>
           <Text style={styles.time}>{timeAgo(post?.created_at)}</Text>
         </View>
-        {showStatus ? (
+        {isPrivate ? (
+          <View style={[styles.statusChip, { backgroundColor: `${colors.textSecondary}22` }]}>
+            <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
+            <Text style={[styles.statusText, { color: colors.textSecondary }]}>Private</Text>
+          </View>
+        ) : showStatus ? (
           <View style={[styles.statusChip, { backgroundColor: `${statusColor}22` }]}>
             <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
+        ) : null}
+        {menuOptions.length ? (
+          <TouchableOpacity
+            style={styles.menuBtn}
+            onPress={openMenu}
+            hitSlop={10}
+            activeOpacity={0.7}
+            accessibilityLabel="Post options"
+          >
+            <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         ) : null}
       </View>
 
@@ -94,30 +175,66 @@ export default function FeedPostCard({
 
       {!!post?.caption && <Text style={styles.caption}>{post.caption}</Text>}
 
-      {showUpvoteButton ? (
-        <View style={styles.upvoteRow}>
-          <PuckButton
-            color={colors.primary}
-            width={44}
-            height={44}
-            borderRadius={14}
-            lip={4}
-            disabled={upvoteDisabled}
-            onPress={() => onToggleUpvote(post)}
-            accessibilityLabel={hasUpvoted ? 'Remove upvote' : 'Upvote post'}
-          >
-            <Ionicons name="arrow-up" size={22} color="#FFFFFF" />
-          </PuckButton>
-          {upvoteCount > 0 ? (
-            <Text style={styles.upvoteCount}>{upvoteCount}</Text>
+      {showActionRow ? (
+        <View style={styles.actionRow}>
+          {onToggleUpvote ? (
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => onToggleUpvote(post)}
+              disabled={upvoteDisabled}
+              hitSlop={8}
+              activeOpacity={0.7}
+              accessibilityLabel={hasUpvoted ? 'Unlike post' : 'Like post'}
+            >
+              <Ionicons
+                name={hasUpvoted ? 'heart' : 'heart-outline'}
+                size={26}
+                color={hasUpvoted ? LIKE_COLOR : colors.textSecondary}
+              />
+              {upvoteCount > 0 ? (
+                <Text style={[styles.actionCount, hasUpvoted && { color: LIKE_COLOR }]}>{upvoteCount}</Text>
+              ) : null}
+            </TouchableOpacity>
           ) : null}
+
+          {onToggleBookmark ? (
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => onToggleBookmark(post)}
+              disabled={bookmarkDisabled}
+              hitSlop={8}
+              activeOpacity={0.7}
+              accessibilityLabel={hasBookmarked ? 'Remove from MoneyVault' : 'Save to MoneyVault'}
+            >
+              <Ionicons
+                name={hasBookmarked ? 'bookmark' : 'bookmark-outline'}
+                size={23}
+                color={hasBookmarked ? colors.primary : colors.textSecondary}
+              />
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={styles.actionSpacer} />
+        </View>
+      ) : showStats ? (
+        <View style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Ionicons name="heart" size={18} color={LIKE_COLOR} />
+            <Text style={styles.statCount}>{upvoteCount}</Text>
+            <Text style={styles.statLabel}>{upvoteCount === 1 ? 'like' : 'likes'}</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Ionicons name="bookmark" size={17} color={colors.primary} />
+            <Text style={styles.statCount}>{bookmarkCount}</Text>
+            <Text style={styles.statLabel}>{bookmarkCount === 1 ? 'save' : 'saves'}</Text>
+          </View>
         </View>
       ) : upvoteCount > 0 ? (
-        <View style={styles.upvoteRow}>
-          <View style={styles.upvoteButtonStatic}>
-            <Ionicons name="arrow-up" size={20} color={colors.textMuted} />
+        <View style={styles.actionRow}>
+          <View style={styles.actionBtn}>
+            <Ionicons name="heart" size={20} color={colors.textMuted} />
+            <Text style={styles.upvoteCountStatic}>{upvoteCount}</Text>
           </View>
-          <Text style={styles.upvoteCountStatic}>{upvoteCount}</Text>
         </View>
       ) : null}
 
@@ -157,6 +274,13 @@ const makeStyles = (colors) => StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  menuBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   authorName: {
     fontSize: 15,
     fontWeight: '800',
@@ -187,32 +311,55 @@ const makeStyles = (colors) => StyleSheet.create({
     color: colors.white,
     lineHeight: 21,
   },
-  upvoteRow: {
+  actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 14,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
   },
-  upvoteButtonStatic: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  actionBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
-  upvoteCount: {
+  actionSpacer: {
+    flex: 1,
+  },
+  actionCount: {
     fontSize: 14,
     fontWeight: '800',
-    color: colors.primary,
+    color: colors.textSecondary,
   },
   upvoteCountStatic: {
     fontSize: 13,
     fontWeight: '700',
+    color: colors.textMuted,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  statCount: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  statLabel: {
+    fontSize: 13,
+    fontWeight: '600',
     color: colors.textMuted,
   },
   linkChip: {

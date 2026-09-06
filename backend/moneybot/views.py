@@ -1,8 +1,21 @@
 from django.conf import settings
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 
 from .legal_content import LEGAL_DOCUMENTS, LEGAL_META
+
+
+def app_version(request):
+    """Public config the mobile app polls on launch to decide whether to force an update.
+
+    `min_supported_version` empty ⇒ the client leaves the gate disabled.
+    """
+    return JsonResponse({
+        'min_supported_version': settings.MIN_SUPPORTED_APP_VERSION,
+        'latest_version': settings.LATEST_APP_VERSION,
+        'ios_url': settings.IOS_APP_STORE_URL,
+        'android_url': settings.ANDROID_STORE_URL,
+    })
 
 
 def legal_document(request, doc_id):

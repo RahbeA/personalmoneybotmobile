@@ -4,7 +4,9 @@ export const PRODUCTION_API_URL =
 
 // Local Django when running `python manage.py runserver` on the Mac.
 // iOS Simulator can reach localhost; a physical device needs your Mac's LAN IP.
-export const LOCAL_API_URL = 'http://localhost:8000/api';
+// Override with EXPO_PUBLIC_LOCAL_API_URL (see run-mobile-local.sh).
+export const LOCAL_API_URL =
+  process.env.EXPO_PUBLIC_LOCAL_API_URL || 'http://localhost:8000/api';
 
 // In dev builds, default to the local backend. Set EXPO_PUBLIC_USE_PRODUCTION_API=1
 // when you want the dev client to hit Railway instead.

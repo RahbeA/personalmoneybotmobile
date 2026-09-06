@@ -19,6 +19,7 @@ import { GOALS } from '../constants/goals';
 import MoneyBotGuide from '../components/MoneyBotGuide';
 import TypewriterText from '../components/TypewriterText';
 import BrandAvatar from '../components/brand/BrandAvatar';
+import WidgetSetupPromo from '../components/WidgetSetupPromo';
 import {
   areNotificationsSupported,
   getNotificationPermissionInfo,
@@ -283,7 +284,7 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
-  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | character | error | submitError
+  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | widget | character | error | submitError
   const [phase, setPhase] = useState('loading');
   const [questions, setQuestions] = useState([]);
   const [qIndex, setQIndex] = useState(0);
@@ -526,8 +527,17 @@ export default function OnboardingScreen() {
           firstName={getFirstName(user)}
           streakDays={streakDays}
           lastActive={lastActive}
-          onDone={() => setPhase('character')}
+          onDone={() => setPhase(Platform.OS === 'ios' ? 'widget' : 'character')}
         />
+      </OnboardingShell>
+    );
+  }
+
+  // ---- Home Screen widget walkthrough (iOS/WidgetKit only) ----
+  if (phase === 'widget') {
+    return (
+      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
+        <WidgetSetupPromo colors={colors} onDone={() => setPhase('character')} />
       </OnboardingShell>
     );
   }

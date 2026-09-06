@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path, re_path, include
 from django.conf import settings
 
-from .views import panel_index, legal_document, join_invite
+from .views import panel_index, legal_document, join_invite, app_version
 from .media_views import serve_media
 
 urlpatterns = [
@@ -15,6 +15,8 @@ urlpatterns = [
     path('api/daily/', include('daily.urls')),
     path('api/social/', include('social.urls')),
     path('api/admin/', include('adminapi.urls')),
+    # Public: mobile app polls this on launch for the forced-update gate.
+    path('api/app-version/', app_version, name='app-version'),
     # Public legal pages (URLs submitted to Apple App Store Connect).
     path('legal/privacy/', legal_document, {'doc_id': 'privacy'}, name='privacy-policy'),
     path('legal/terms/', legal_document, {'doc_id': 'terms'}, name='terms-of-service'),

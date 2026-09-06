@@ -21,6 +21,7 @@ import {
 import { localDate } from '../utils/localDate';
 import { getFirstName } from '../utils/displayName';
 import { syncStreakNotifications, areNotificationsSupported } from '../utils/notifications';
+import { syncHomeScreenWidgets } from '../widgets/widgetSync';
 
 const UserProgressContext = createContext(null);
 
@@ -204,6 +205,7 @@ export function UserProgressProvider({ children }) {
       }
     }
     refreshStreakNotifications(statsData);
+    syncHomeScreenWidgets(statsData);
   }, [user?.id, refreshStreakNotifications]);
 
   const getBadgeMeta = useCallback((key) => {

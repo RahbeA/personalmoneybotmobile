@@ -1,12 +1,10 @@
-import React, { useRef, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Animated,
-  ActivityIndicator,
-  Alert,
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
@@ -14,10 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
 import { BrandLogo } from '../components/brand';
-import LegalFooter from '../components/LegalFooter';
-import { BRAND_URL, LANDING } from '../constants/brandCopy';
+import { LANDING } from '../constants/brandCopy';
 
 // Keep the hero column readable on iPad / large screens instead of stretching
 // edge-to-edge (which also made the absolute footer collide with Sign In).
@@ -25,25 +21,9 @@ const CONTENT_MAX_WIDTH = 420;
 
 export default function LandingScreen({ navigation }) {
   const { colors, isDark } = useTheme();
-  const { guestSignIn } = useAuth();
   const { height: windowHeight } = useWindowDimensions();
-  const [guestLoading, setGuestLoading] = useState(false);
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  async function handleGuest() {
-    if (guestLoading) return;
-    setGuestLoading(true);
-    try {
-      await guestSignIn();
-      // Root navigator swaps to onboarding/main once the session is set.
-    } catch (err) {
-      setGuestLoading(false);
-      Alert.alert(
-        'Couldn\u2019t continue',
-        err?.message || 'Please check your connection and try again.',
-      );
-    }
-  }
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
   const logoScale = useRef(new Animated.Value(0.7)).current;
@@ -102,7 +82,7 @@ export default function LandingScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
           bounces={false}
         >
-          <View style={styles.hero}>
+          <View style={[styles.hero, { paddingTop: windowHeight * 0.1 }]}>
             <View style={styles.contentColumn}>
               <Animated.View
                 style={[
@@ -134,53 +114,36 @@ export default function LandingScreen({ navigation }) {
                 <View style={styles.dividerLine} />
               </Animated.View>
 
-              <Animated.View style={[styles.buttonContainer, { opacity: buttonOpacity }]}>
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={() => navigation.navigate('Auth', { mode: 'register' })}
-                  activeOpacity={0.85}
-                >
-                  <LinearGradient
-                    colors={[colors.primary, colors.primaryDark]}
-                    style={styles.buttonGradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                  >
-                    <Text style={styles.primaryButtonText}>Get Started</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.guestButton}
-                  onPress={handleGuest}
-                  activeOpacity={0.85}
-                  disabled={guestLoading}
-                >
-                  {guestLoading ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.guestButtonText}>Explore first — no account needed</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.secondaryButton}
-                  onPress={() => navigation.navigate('Auth', { mode: 'login' })}
-                  activeOpacity={0.8}
-                  hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    Already have an account?{' '}
-                    <Text style={styles.secondaryButtonAccent}>Sign In</Text>
-                  </Text>
-                </TouchableOpacity>
-              </Animated.View>
             </View>
           </View>
 
-          <Animated.View style={[styles.footer, { opacity: buttonOpacity }]}>
-            <Text style={styles.footerText}>{BRAND_URL}</Text>
-            <LegalFooter style={styles.legalFooter} />
+          <Animated.View style={[styles.buttonContainer, { opacity: buttonOpacity }]}>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => navigation.navigate('Auth', { mode: 'register' })}
+              activeOpacity={0.85}
+            >
+              <LinearGradient
+                colors={[colors.primary, colors.primaryDark]}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                <Text style={styles.primaryButtonText}>Get Started</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate('Auth', { mode: 'login' })}
+              activeOpacity={0.8}
+              hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
+            >
+              <Text style={styles.secondaryButtonText}>
+                Already have an account?{' '}
+                <Text style={styles.secondaryButtonAccent}>Sign In</Text>
+              </Text>
+            </TouchableOpacity>
           </Animated.View>
         </ScrollView>
       </SafeAreaView>
@@ -210,9 +173,9 @@ const makeStyles = (colors) => StyleSheet.create({
     flexGrow: 1,
     width: '100%',
     maxWidth: CONTENT_MAX_WIDTH,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingBottom: 24,
   },
   contentColumn: {
     width: '100%',
@@ -260,8 +223,11 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   buttonContainer: {
     width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
     alignItems: 'center',
     gap: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   primaryButton: {
     width: '100%',
@@ -284,22 +250,6 @@ const makeStyles = (colors) => StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
   },
-  guestButton: {
-    width: '100%',
-    paddingVertical: 15,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  guestButtonText: {
-    color: colors.white,
-    fontSize: 15,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
   secondaryButton: {
     paddingVertical: 14,
     paddingHorizontal: 8,
@@ -314,21 +264,5 @@ const makeStyles = (colors) => StyleSheet.create({
   secondaryButtonAccent: {
     color: colors.primary,
     fontWeight: '600',
-  },
-  footer: {
-    width: '100%',
-    maxWidth: CONTENT_MAX_WIDTH,
-    alignItems: 'center',
-    paddingTop: 28,
-    gap: 4,
-  },
-  footerText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  legalFooter: {
-    marginTop: 4,
   },
 });

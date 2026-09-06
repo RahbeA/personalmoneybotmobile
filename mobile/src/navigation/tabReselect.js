@@ -6,6 +6,7 @@ export const TAB_RESELECT_EVENT = 'tabReselect';
 export const TAB_ROOT_SCREENS = {
   HomeTab: 'Home',
   MoneyverseTab: 'Moneyverse',
+  FeedTab: 'Feed',
   SocialTab: 'Friends',
   TutorTab: 'Tutor',
   SettingsTab: 'SettingsTab',
