@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, AppState, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, AppState } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -271,17 +271,10 @@ export default function App() {
       .then(async () => {
         warmModelViewerOnBoot();
         bootstrapNotifications().catch(() => {});
-        if (Platform.OS === 'ios') {
-          try {
-            const { resetHomeScreenWidgets } = await import('./src/widgets/widgetSync');
-            await resetHomeScreenWidgets();
-          } catch (err) {
-            if (__DEV__) {
-              // eslint-disable-next-line no-console
-              console.warn('[MoneyBot] Widget init failed:', err?.message ?? err);
-            }
-          }
-        }
+        // Home-screen widgets are kept in sync reactively by UserProgressContext
+        // (which knows the auth state + live progress), so there's no cold-launch
+        // reset here — that only clobbered real values with zeros until stats
+        // reloaded. The widgets persist their last real snapshot across launches.
       })
       .finally(() => setCacheReady(true));
   }, []);

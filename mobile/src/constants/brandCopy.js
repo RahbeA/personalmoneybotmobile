@@ -57,6 +57,6 @@ export const CELEBRATIONS = {
 };
 
 export const LANDING = {
-  tagline: 'Master your money.',
-  subTagline: 'Learn how money really works with quick, fun lessons.',
+  tagline: 'Build money skills for real life.',
+  subTagline: 'Short lessons. No jargon.',
 };

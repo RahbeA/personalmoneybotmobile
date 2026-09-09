@@ -21,7 +21,7 @@ import {
 import { localDate } from '../utils/localDate';
 import { getFirstName } from '../utils/displayName';
 import { syncStreakNotifications, areNotificationsSupported } from '../utils/notifications';
-import { syncHomeScreenWidgets } from '../widgets/widgetSync';
+import { syncHomeScreenWidgets, resetHomeScreenWidgets } from '../widgets/widgetSync';
 
 const UserProgressContext = createContext(null);
 
@@ -205,8 +205,37 @@ export function UserProgressProvider({ children }) {
       }
     }
     refreshStreakNotifications(statsData);
-    syncHomeScreenWidgets(statsData);
   }, [user?.id, refreshStreakNotifications]);
+
+  // Keep the iOS home-screen widgets in lockstep with live progress. This runs
+  // on every relevant change (Bot Bucks, streak, XP, rank, daily reward) — not
+  // just on a full stats fetch — so earning rewards, claiming the daily bonus,
+  // or finishing a game updates the widgets immediately. Logged-out users get
+  // the neutral guest snapshot. (Previously we only synced inside applyStats,
+  // so the many setBotBucks/streak updates elsewhere never reached the widget.)
+  useEffect(() => {
+    if (!token || !user?.id) {
+      resetHomeScreenWidgets();
+      return;
+    }
+    // The backend doesn't send a per-day weekly history, so approximate "active
+    // days this week" from the streak: a streak covers the most recent
+    // consecutive days, capped at the number of days elapsed since Monday.
+    const jsDay = new Date().getDay(); // 0=Sun … 6=Sat
+    const daysSinceMonday = (jsDay + 6) % 7; // 0=Mon … 6=Sun
+    const elapsedThisWeek = daysSinceMonday + 1; // include today
+    const weeklyChecks = Math.max(0, Math.min(streakDays || 0, elapsedThisWeek));
+    syncHomeScreenWidgets({
+      streak_days: streakDays,
+      bot_bucks: botBucks,
+      xp,
+      // `rank` in context is an object ({ key, label, … }); widgets expect a
+      // string, so pass the key (avoids "[object Object]" in the widget).
+      rank: (rank && typeof rank === 'object' ? rank.key : rank) || 'bronze',
+      weekly_checks: weeklyChecks,
+      daily_reward: dailyReward || {},
+    });
+  }, [token, user?.id, streakDays, botBucks, xp, rank, dailyReward]);
 
   const getBadgeMeta = useCallback((key) => {
     const fromCatalog = badgeCatalog.find((b) => b.key === key);

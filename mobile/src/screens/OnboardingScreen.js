@@ -1,25 +1,24 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Animated, Easing, ScrollView, PanResponder, Pressable, Alert, Linking, Image,
-  KeyboardAvoidingView, Keyboard, Platform,
+  Animated, Easing, ScrollView, Pressable, Image, Alert, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../context/AuthContext';
-import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
+import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { coursesApi } from '../api/courses';
-import { cacheKeys, fetchWithCache, TTL } from '../utils/apiCache';
 import { getFirstName } from '../utils/displayName';
 import { localDate } from '../utils/localDate';
-import { GOALS } from '../constants/goals';
-import MoneyBotGuide from '../components/MoneyBotGuide';
-import TypewriterText from '../components/TypewriterText';
-import BrandAvatar from '../components/brand/BrandAvatar';
+import PuckButton from '../components/PuckButton';
 import WidgetSetupPromo from '../components/WidgetSetupPromo';
+import BrandAvatar from '../components/brand/BrandAvatar';
+import TypewriterText from '../components/TypewriterText';
 import {
   areNotificationsSupported,
   getNotificationPermissionInfo,
@@ -28,117 +27,267 @@ import {
   syncNotificationSchedule,
 } from '../utils/notifications';
 
+// Animated MoneyBot mascots (transparent set). Waves hello / points at teaching
+// content / celebrates wins — see usage per phase below.
+const GIF_WAVE = require('../../assets/gifs/moneybot-wave-transparent-2x.gif');
+const GIF_POINT = require('../../assets/gifs/moneybot-point-transparent.gif');
+const GIF_CELEBRATE = require('../../assets/gifs/moneybot-celebrate-transparent.gif');
 const GUIDE_IMAGE = require('../../assets/moneybot-guide.png');
 
-// Bond-prices "up / down" question uses a vertical slider instead of cards.
-const VERTICAL_SCALE_IDS = new Set(['bonds']);
+// ---------------------------------------------------------------------------
+// Copy + content
+// ---------------------------------------------------------------------------
 
-const GREET_MESSAGE =
-  "Hey, I'm MoneyBot. Think of me as a chill finance friend. We'll chat about what matters to you, I'll ask a few easy questions, and then I'll set you up with a free character. Sound good?";
-
-const GOALS_GUIDE_MESSAGE =
-  "First up, what are you hoping to get better at? Pick anything. Totally optional.";
-
-const QUESTION_GUIDE_LINES = [
-  "Cool. Mind if I ask a few easy money questions? No grades, just curious where you're at.",
-  "Nice. Here's another one.",
-  "You're doing great. Almost done with these.",
-  "This one's about rates and prices. Just slide up or down.",
-  "Last one, then I'll share where you're starting from.",
+const GOAL_OPTIONS = [
+  { key: 'saving_money', label: 'Saving money', icon: 'wallet' },
+  { key: 'managing_spending', label: 'Managing spending', icon: 'pie-chart' },
+  { key: 'understanding_credit', label: 'Understanding credit', icon: 'card' },
+  { key: 'investing_basics', label: 'Investing basics', icon: 'trending-up' },
+  { key: 'not_sure', label: 'Not sure yet', icon: 'help-circle' },
 ];
 
-// Short MoneyBot beats between questions (after answering Q0..Q3).
-const BETWEEN_LINES = [
-  "Got it, thanks.",
-  "Cool. Next one when you're ready.",
-  "Nice work.",
-  "Almost there. One more after this.",
+const CONFIDENCE_OPTIONS = [
+  { key: 'fresh', label: 'Starting fresh', blurb: 'I want the basics explained plainly.' },
+  { key: 'some', label: 'Know a little', blurb: 'I get the ideas, the details are fuzzy.' },
+  { key: 'ready', label: 'Ready to practice', blurb: 'Give me the decisions to work through.' },
 ];
 
-// Map each onboarding question to a reliable Ionicon. Raw emoji glyphs (e.g. 💸,
-// 🧺) render as empty "?" boxes on some iOS versions, so we key off the question
-// slug/topic and fall back to a generic money icon.
-const QUESTION_ICON_BY_ID = {
-  interest: 'trending-up',
-  inflation: 'balloon',
-  diversification: 'basket',
-  bonds: 'stats-chart',
-  mortgage: 'home',
-};
+// The three buckets that anchor the whole lesson.
+const BUCKETS = [
+  { key: 'needs', label: 'Needs', pct: 55, color: '#4C8DFF' },
+  { key: 'wants', label: 'Wants', pct: 25, color: '#FF8C42' },
+  { key: 'savings', label: 'Savings', pct: 20, color: '#3DDC5F' },
+];
 
-function questionIcon(question) {
-  if (!question) return 'cash';
-  if (QUESTION_ICON_BY_ID[question.id]) return QUESTION_ICON_BY_ID[question.id];
-  const topic = (question.topic || '').toLowerCase();
-  if (topic.includes('interest')) return 'trending-up';
-  if (topic.includes('inflation')) return 'balloon';
-  if (topic.includes('divers') || topic.includes('risk')) return 'basket';
-  if (topic.includes('bond')) return 'stats-chart';
-  if (topic.includes('loan') || topic.includes('mortgage')) return 'home';
-  if (topic.includes('budget')) return 'pie-chart';
-  if (topic.includes('credit')) return 'card';
-  if (topic.includes('sav')) return 'wallet';
-  if (topic.includes('tax')) return 'receipt';
-  if (topic.includes('invest')) return 'trending-up';
-  return 'cash';
+// Visual-choice plans. Plan B is the only one that leaves room for savings.
+const PLANS = [
+  { id: 'A', name: 'Plan A', n: 70, w: 30, s: 0 },
+  { id: 'B', name: 'Plan B', n: 55, w: 25, s: 20, correct: true },
+  { id: 'C', name: 'Plan C', n: 45, w: 55, s: 0 },
+];
+
+// Tap-to-match: each spending item belongs in exactly one bucket.
+const MATCH_ITEMS = [
+  { id: 'rent', label: 'Rent', bucket: 'needs' },
+  { id: 'sneakers', label: 'New sneakers', bucket: 'wants' },
+  { id: 'emergency', label: 'Emergency fund', bucket: 'savings' },
+];
+
+const LESSON_TOTAL_STEPS = 5;
+
+// ---------------------------------------------------------------------------
+// Small shared building blocks
+// ---------------------------------------------------------------------------
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+function useEnter(deps = []) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    anim.setValue(0);
+    Animated.spring(anim, { toValue: 1, friction: 8, tension: 60, useNativeDriver: true }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return anim;
 }
 
-const confettiLayerStyle = {
-  position: 'absolute', top: 0, left: 0, right: 0, height: '100%', zIndex: 10,
-};
+/** Full-width green 3D CTA matching the app's Duolingo puck style. */
+function PrimaryCTA({ label, icon = 'arrow-forward', onPress, disabled, color, styles }) {
+  return (
+    <PuckButton
+      color={disabled ? '#3A3A3A' : (color || '#3DDC5F')}
+      height={56}
+      borderRadius={18}
+      lip={5}
+      disabled={disabled}
+      onPress={onPress}
+      contentStyle={styles.ctaInner}
+      accessibilityLabel={label}
+    >
+      <Text style={[styles.ctaText, disabled && { color: '#7A7A7A' }]}>{label}</Text>
+      {icon ? <Ionicons name={icon} size={19} color={disabled ? '#7A7A7A' : '#08120B'} /> : null}
+    </PuckButton>
+  );
+}
 
-const CALC_LINES = [
-  'Taking a look at your answers',
-  'Crunching a few numbers',
-  'Figuring out your starting rank',
-];
+/** Animated MoneyBot mascot with a soft glow ring behind it. */
+function MascotGif({ source, size = 150, glow = true, colors }) {
+  const float = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(float, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(float, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ]),
+    ).start();
+  }, [float]);
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center', width: size, height: size }}>
+      {glow && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute', width: size * 0.9, height: size * 0.9, borderRadius: size,
+            backgroundColor: colors.primary, opacity: 0.14,
+          }}
+        />
+      )}
+      <Animated.Image
+        source={source}
+        resizeMode="contain"
+        style={{
+          width: size, height: size,
+          transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [4, -6] }) }],
+        }}
+      />
+    </View>
+  );
+}
+
+function OnboardingShell({ colors, isDark, styles, children }) {
+  return (
+    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        {children}
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+/** Back chevron + a smooth progress bar, like the mockups. */
+function TopBar({ styles, colors, progress, onBack, showBack = true }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: progress, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+    }).start();
+  }, [progress, anim]);
+  return (
+    <View style={styles.topBar}>
+      {showBack ? (
+        <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.7} accessibilityLabel="Back">
+          <Ionicons name="chevron-back" size={24} color={colors.textSecondary} />
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.backBtn} />
+      )}
+      <View style={styles.progressTrack}>
+        <Animated.View
+          style={[
+            styles.progressFill,
+            { width: anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
+          ]}
+        />
+      </View>
+      <View style={styles.backBtn} />
+    </View>
+  );
+}
+
+/** MoneyBot chat bubble used at the top of the goal/confidence screens. */
+function CoachBubble({ styles, message }) {
+  return (
+    <View style={styles.coachRow}>
+      <View style={styles.coachAvatarRing}>
+        <Image source={GUIDE_IMAGE} style={styles.coachAvatar} resizeMode="contain" />
+      </View>
+      <View style={styles.coachBubble}>
+        <Text style={styles.coachText}>{message}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Selectable radio row (goal + confidence pickers). */
+function SelectRow({ styles, colors, title, blurb, icon, selected, onPress }) {
+  return (
+    <Bouncy style={[styles.selectRow, selected && styles.selectRowSel]} onPress={onPress}>
+      {icon ? (
+        <View style={[styles.selectIcon, selected && styles.selectIconSel]}>
+          <Ionicons name={icon} size={20} color={selected ? '#08120B' : colors.textSecondary} />
+        </View>
+      ) : null}
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.selectTitle, selected && styles.selectTitleSel]}>{title}</Text>
+        {blurb ? <Text style={styles.selectBlurb}>{blurb}</Text> : null}
+      </View>
+      <View style={[styles.selectRadio, selected && styles.selectRadioSel]}>
+        {selected && <Ionicons name="checkmark" size={15} color="#08120B" />}
+      </View>
+    </Bouncy>
+  );
+}
+
+function usePressScale(pressedScale = 0.96) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const onPressIn = useCallback(() => {
+    Animated.spring(scale, { toValue: pressedScale, speed: 60, bounciness: 0, useNativeDriver: true }).start();
+  }, [pressedScale, scale]);
+  const onPressOut = useCallback(() => {
+    Animated.spring(scale, { toValue: 1, speed: 18, bounciness: 12, useNativeDriver: true }).start();
+  }, [scale]);
+  return { scale, onPressIn, onPressOut };
+}
+
+function Bouncy({ children, style, onPress, disabled }) {
+  const { scale, onPressIn, onPressOut } = usePressScale(0.97);
+  return (
+    <AnimatedPressable
+      onPress={onPress}
+      disabled={disabled}
+      onPressIn={disabled ? undefined : onPressIn}
+      onPressOut={disabled ? undefined : onPressOut}
+      style={[style, { transform: [{ scale }] }]}
+    >
+      {children}
+    </AnimatedPressable>
+  );
+}
+
+function CountUp({ value, duration = 900, delay = 0, prefix = '', style }) {
+  const [display, setDisplay] = useState(0);
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const id = anim.addListener(({ value: v }) => setDisplay(Math.round(v)));
+    const timer = setTimeout(() => {
+      Animated.timing(anim, { toValue: value, duration, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    }, delay);
+    return () => { clearTimeout(timer); anim.removeListener(id); };
+  }, [value]);
+  return <Text style={style}>{prefix}{display}</Text>;
+}
 
 function ConfettiBurst({ colors }) {
   const palette = [colors.primary, '#F5B72B', '#56C8E8', '#A66BFF', '#FF6B35'];
   const dots = useRef(
-    Array.from({ length: 26 }, (_, i) => ({
+    Array.from({ length: 24 }, (_, i) => ({
       key: i,
       anim: new Animated.Value(0),
       x: (Math.random() - 0.5) * 320,
       rot: Math.random() * 2,
-      delay: Math.random() * 350,
+      delay: Math.random() * 320,
       color: palette[i % palette.length],
       size: 7 + Math.random() * 7,
-    }))
+    })),
   ).current;
-
   useEffect(() => {
-    Animated.stagger(
-      18,
-      dots.map((d) =>
-        Animated.timing(d.anim, {
-          toValue: 1,
-          duration: 1500,
-          delay: d.delay,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        })
-      )
-    ).start();
+    Animated.stagger(16, dots.map((d) => Animated.timing(d.anim, {
+      toValue: 1, duration: 1500, delay: d.delay, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+    }))).start();
   }, []);
-
   return (
-    <View pointerEvents="none" style={confettiLayerStyle}>
+    <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '100%', zIndex: 10 }}>
       {dots.map((d) => (
         <Animated.View
           key={d.key}
           style={{
-            position: 'absolute',
-            top: 0,
-            alignSelf: 'center',
-            width: d.size,
-            height: d.size * 1.4,
-            borderRadius: 2,
-            backgroundColor: d.color,
+            position: 'absolute', top: 0, alignSelf: 'center',
+            width: d.size, height: d.size * 1.4, borderRadius: 2, backgroundColor: d.color,
             opacity: d.anim.interpolate({ inputRange: [0, 0.85, 1], outputRange: [1, 1, 0] }),
             transform: [
               { translateX: d.anim.interpolate({ inputRange: [0, 1], outputRange: [0, d.x] }) },
-              { translateY: d.anim.interpolate({ inputRange: [0, 1], outputRange: [-20, 540] }) },
+              { translateY: d.anim.interpolate({ inputRange: [0, 1], outputRange: [-20, 620] }) },
               { rotate: d.anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${d.rot * 360}deg`] }) },
             ],
           }}
@@ -148,1698 +297,1179 @@ function ConfettiBurst({ colors }) {
   );
 }
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+// ---------------------------------------------------------------------------
+// Phase order (drives the top progress bar + back navigation)
+// ---------------------------------------------------------------------------
 
-function usePressScale(pressedScale = 0.94) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const onPressIn = useCallback(() => {
-    Animated.spring(scale, {
-      toValue: pressedScale,
-      speed: 60,
-      bounciness: 0,
-      useNativeDriver: true,
-    }).start();
-  }, [pressedScale, scale]);
-  const onPressOut = useCallback(() => {
-    Animated.spring(scale, {
-      toValue: 1,
-      speed: 18,
-      bounciness: 12,
-      useNativeDriver: true,
-    }).start();
-  }, [scale]);
-  return { scale, onPressIn, onPressOut };
-}
+const PHASE_ORDER = [
+  'welcome', 'goal', 'confidence', 'lessonIntro', 'lesson', 'lessonComplete',
+  'streak', 'character', 'save', 'reminder', 'widget', 'learningPath',
+];
 
-// Springy press feedback wrapper — makes every tappable feel tactile. Layout
-// styles (flex, width, padding) apply directly to the pressable so it lays out
-// exactly like a plain view.
-function Bouncy({ children, style, onPress, disabled }) {
-  const { scale, onPressIn, onPressOut } = usePressScale(0.95);
-  return (
-    <AnimatedPressable
-      onPress={onPress}
-      disabled={disabled}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      style={[style, { transform: [{ scale }] }]}
-    >
-      {children}
-    </AnimatedPressable>
-  );
-}
-
-/** Full-width CTA with squash/bounce press micro-animation. */
-function PressScaleButton({ style, disabled, onPress, children }) {
-  const { scale, onPressIn, onPressOut } = usePressScale(0.96);
-  return (
-    <AnimatedPressable
-      onPress={onPress}
-      disabled={disabled}
-      onPressIn={disabled ? undefined : onPressIn}
-      onPressOut={disabled ? undefined : onPressOut}
-      style={[style, { transform: [{ scale }] }, disabled && { opacity: 0.7 }]}
-    >
-      {children}
-    </AnimatedPressable>
-  );
-}
-
-/** If typewriter onDone never fires, still reveal the Continue CTA. */
-function useContinueFallback(onReady, ms = 10000) {
-  const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
-  useEffect(() => {
-    const timer = setTimeout(() => onReadyRef.current?.(), ms);
-    return () => clearTimeout(timer);
-  }, [ms]);
-}
-
-function OnboardingShell({ colors, isDark, styles, children, overlay, centered }) {
-  return (
-    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
-      {overlay}
-      <KeyboardAvoidingView
-        style={styles.gradient}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <SafeAreaView style={[styles.safe, centered && styles.center]} edges={['top']}>
-          {children}
-        </SafeAreaView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
-  );
-}
-
-function SegmentFill({ colors, state }) {
-  const anim = useRef(new Animated.Value(state === 'done' ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: state === 'todo' ? 0 : 1,
-      duration: 450,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [state]);
-  return (
-    <Animated.View
-      style={{
-        height: '100%',
-        borderRadius: 4,
-        backgroundColor: colors.primary,
-        width: anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-      }}
-    />
-  );
-}
-
-function SegmentedProgress({ colors, styles, total, current }) {
-  return (
-    <View style={styles.segRow}>
-      {Array.from({ length: total }).map((_, i) => (
-        <View key={i} style={styles.segTrack}>
-          <SegmentFill colors={colors} state={i < current ? 'done' : i === current ? 'active' : 'todo'} />
-        </View>
-      ))}
-    </View>
-  );
-}
+// ---------------------------------------------------------------------------
+// Root
+// ---------------------------------------------------------------------------
 
 export default function OnboardingScreen() {
-  const { token, user } = useAuth();
+  const navigation = useNavigation();
+  const { token, user, isGuest } = useAuth();
   const {
     submitOnboarding,
     finishOnboarding,
-    claimStarterCharacter,
-    rank: ctxRank,
-    dailyReward,
-    claimDailyReward,
-    claimingDaily,
-    streakDays,
-    lastActive,
+    completeLesson,
+    modules,
+    characters,
     equippedCharacter,
+    equipCharacter,
+    purchaseCharacter,
+    claimStarterCharacter,
+    refreshCharacterCache,
+    streakDays,
+    botBucks,
   } = useUserProgress();
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, insets.bottom), [colors, insets.bottom]);
 
-  // loading | greet | goals | question | between | calculating | reveal | reward | streak | notifications | widget | character | error | submitError
-  const [phase, setPhase] = useState('loading');
-  const [questions, setQuestions] = useState([]);
-  const [qIndex, setQIndex] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [goals, setGoals] = useState([]);
-  const [result, setResult] = useState(null);
-  const [calcLine, setCalcLine] = useState(CALC_LINES[0]);
-  const [greetDone, setGreetDone] = useState(false);
+  const [phase, setPhase] = useState('welcome');
+  const [goal, setGoal] = useState(null);
+  const [confidence, setConfidence] = useState(null);
+  const [streakGoalDays, setStreakGoalDays] = useState(7);
+  const [lessonReward, setLessonReward] = useState({ xp: 50, botBucks: 25 });
+  const finishingRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await fetchWithCache(
-          cacheKeys.onboardingQuestions(),
-          () => coursesApi.getOnboardingQuestions(token),
-          { freshMs: TTL.ONBOARDING_MS, staleMs: TTL.ONBOARDING_MS },
-        );
-        if (cancelled) return;
-        setQuestions(data.questions || []);
-        setPhase('greet');
-      } catch (e) {
-        if (!cancelled) setPhase('error');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [token]);
+  const firstName = getFirstName(user);
 
-  const runSubmit = useCallback(async (finalAnswers, finalGoals) => {
-    setPhase('calculating');
-    let i = 0;
-    const ticker = setInterval(() => {
-      i = (i + 1) % CALC_LINES.length;
-      setCalcLine(CALC_LINES[i]);
-    }, 700);
-
-    try {
-      const [res] = await Promise.all([
-        submitOnboarding(finalAnswers, finalGoals),
-        new Promise((r) => setTimeout(r, 1900)),
-      ]);
-      clearInterval(ticker);
-      if (!res) {
-        setPhase('submitError');
-        return;
-      }
-      setResult(res);
-      setPhase('reveal');
-    } catch (e) {
-      clearInterval(ticker);
-      setPhase('submitError');
+  // The real first lesson on the learning path — completing the onboarding
+  // lesson writes to it via completeLesson so it counts on the roadmap.
+  const firstLesson = useMemo(() => {
+    for (const mod of modules || []) {
+      const lesson = (mod.lessons || [])[0];
+      if (lesson) return { lesson, module: mod };
     }
-  }, [submitOnboarding]);
+    return null;
+  }, [modules]);
 
-  const handleAnswer = useCallback((question, optionId) => {
-    const nextAnswers = { ...answers, [question.id]: optionId };
-    setAnswers(nextAnswers);
-    if (qIndex + 1 >= questions.length) {
-      runSubmit(nextAnswers, goals);
-    } else {
-      setPhase('between');
-    }
-  }, [answers, qIndex, questions.length, goals, runSubmit]);
+  const goTo = useCallback((next) => setPhase(next), []);
 
-  const continueFromBetween = useCallback(() => {
-    setQIndex((prev) => prev + 1);
-    setPhase('question');
+  const goBack = useCallback(() => {
+    const idx = PHASE_ORDER.indexOf(phase);
+    if (idx > 0) setPhase(PHASE_ORDER[idx - 1]);
+  }, [phase]);
+
+  const progressFor = useCallback((p) => {
+    const idx = Math.max(0, PHASE_ORDER.indexOf(p));
+    // Small floor so the very first screen still reads as "started".
+    return Math.max(0.08, idx / (PHASE_ORDER.length - 1));
   }, []);
 
-  function toggleGoal(key) {
-    setGoals((prev) => (prev.includes(key) ? prev.filter((g) => g !== key) : [...prev, key]));
-  }
+  // Mark the lesson complete on the backend (awards XP / Bot Bucks / day-1
+  // streak). Runs once when we reach the completion screen.
+  const runComplete = useCallback(async (mistakes) => {
+    if (!firstLesson) return;
+    try {
+      const res = await completeLesson(firstLesson.lesson.id, mistakes);
+      if (res && !res.pending && res.xp_earned) {
+        setLessonReward((prev) => ({ ...prev, xp: res.xp_earned }));
+      }
+    } catch (e) {
+      // Non-fatal — the celebration still shows placeholder rewards.
+    }
+  }, [firstLesson, completeLesson]);
 
-  // ---- Loading ----
-  if (phase === 'loading') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </OnboardingShell>
-    );
-  }
+  // Persist the chosen streak commitment.
+  const saveStreakGoal = useCallback(async (days) => {
+    setStreakGoalDays(days);
+    try { await coursesApi.updateStreakGoal(token, days); } catch (e) { /* best effort */ }
+  }, [token]);
 
-  // ---- Error fallback ----
-  if (phase === 'error') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
-        <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
-        <Text style={styles.errTitle}>Couldn{"'"}t load your money quiz</Text>
-        <Text style={styles.errText}>No worries. You can jump straight in and take it later.</Text>
-        <PrimaryButton styles={styles} colors={colors} label="Continue" onPress={finishOnboarding} />
-      </OnboardingShell>
-    );
-  }
+  // Final exit: record onboarding as complete on the backend (marks the flag +
+  // stores the goals for recommendation weighting), then flip the nav gate.
+  const finishAll = useCallback(async () => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
+    const goals = [goal, confidence ? `confidence:${confidence}` : null].filter(Boolean);
+    try { await submitOnboarding({}, goals); } catch (e) { /* gate still flips below */ }
+    finishOnboarding();
+  }, [goal, confidence, submitOnboarding, finishOnboarding]);
 
-  if (phase === 'submitError') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
-        <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} />
-        <Text style={styles.errTitle}>Couldn{"'"}t save your answers</Text>
-        <Text style={styles.errText}>Check your connection and try again. You{"'"}re not starting over.</Text>
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="Try again"
-          icon="refresh"
-          onPress={() => runSubmit(answers, goals)}
-        />
-      </OnboardingShell>
-    );
-  }
+  const afterLesson = 'lessonComplete';
 
-  // ---- Greet (MoneyBot intro) ----
-  if (phase === 'greet') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <GreetView
-          styles={styles}
-          colors={colors}
-          firstName={getFirstName(user)}
-          typingDone={greetDone}
-          onTypingDone={() => setGreetDone(true)}
-          onContinue={() => setPhase('goals')}
-        />
-      </OnboardingShell>
-    );
-  }
+  // Notifications → widget is iOS-only; Android skips straight to the path.
+  const afterReminder = Platform.OS === 'ios' ? 'widget' : 'learningPath';
 
-  // ---- Goals ----
-  if (phase === 'goals') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <GoalsView
-          styles={styles}
-          colors={colors}
-          selected={goals}
-          onToggle={toggleGoal}
-          onContinue={() => {
-            if (!questions.length) runSubmit(answers, goals);
-            else setPhase('question');
-          }}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Between questions (conversational beat) ----
-  if (phase === 'between') {
-    const betweenMessage = BETWEEN_LINES[qIndex] || BETWEEN_LINES[BETWEEN_LINES.length - 1];
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <BetweenView
-          key={betweenMessage}
-          styles={styles}
-          colors={colors}
-          message={betweenMessage}
-          onContinue={continueFromBetween}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Calculating ----
-  if (phase === 'calculating') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
-        <PulseLogo colors={colors} />
-        <Text style={styles.calcText}>{calcLine}</Text>
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Reveal ----
-  if (phase === 'reveal') {
-    const rank = result?.rank || ctxRank;
-    const score = result?.score;
-    const total = result?.total;
-    return (
-      <OnboardingShell
-        colors={colors}
-        isDark={isDark}
-        styles={styles}
-        overlay={<ConfettiBurst colors={colors} />}
-      >
-        <RevealView
-          styles={styles}
-          colors={colors}
-          rank={rank}
-          score={score}
-          total={total}
-          onDone={() => setPhase('reward')}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Reward (welcome Bot Bucks + XP) ----
-  if (phase === 'reward') {
-    const bonus = result?.onboarding_bonus || { bot_bucks: 25, xp: 10 };
-    return (
-      <OnboardingShell
-        colors={colors}
-        isDark={isDark}
-        styles={styles}
-        overlay={<ConfettiBurst colors={colors} />}
-      >
-        <RewardView
-          styles={styles}
-          colors={colors}
-          botBucks={bonus.bot_bucks ?? 25}
-          xp={bonus.xp ?? 10}
-          onNext={() => setPhase('streak')}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Claim your streak (daily reward) ----
-  if (phase === 'streak') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <StreakClaimView
-          styles={styles}
-          colors={colors}
-          dailyReward={dailyReward}
-          claiming={claimingDaily}
-          onClaim={claimDailyReward}
-          onDone={() => setPhase('notifications')}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Notifications opt-in ----
-  if (phase === 'notifications') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <NotificationsOptInView
-          styles={styles}
-          colors={colors}
-          firstName={getFirstName(user)}
-          streakDays={streakDays}
-          lastActive={lastActive}
-          onDone={() => setPhase(Platform.OS === 'ios' ? 'widget' : 'character')}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Home Screen widget walkthrough (iOS/WidgetKit only) ----
-  if (phase === 'widget') {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-        <WidgetSetupPromo colors={colors} onDone={() => setPhase('character')} />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Free starter character (final step) ----
-  if (phase === 'character') {
-    return (
-      <OnboardingShell
-        colors={colors}
-        isDark={isDark}
-        styles={styles}
-        overlay={<ConfettiBurst colors={colors} />}
-      >
-        <CharacterRewardView
-          styles={styles}
-          colors={colors}
-          claimStarterCharacter={claimStarterCharacter}
-          equippedCharacter={equippedCharacter}
-          onDone={finishOnboarding}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ---- Question ----
-  const question = questions[qIndex];
-  if (!question) {
-    return (
-      <OnboardingShell colors={colors} isDark={isDark} styles={styles} centered>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.calcText}>Getting your next question ready</Text>
-      </OnboardingShell>
-    );
-  }
+  // ---- Render per phase ----
+  // 'lesson' renders its own header (LessonHeader), so it's excluded here.
+  const showTopBar = ['welcome', 'goal', 'confidence', 'lessonIntro'].includes(phase);
 
   return (
     <OnboardingShell colors={colors} isDark={isDark} styles={styles}>
-      <QuestionCard
-        key={question.id}
-        styles={styles}
-        colors={colors}
-        question={question}
-        guideMessage={QUESTION_GUIDE_LINES[qIndex] || QUESTION_GUIDE_LINES[QUESTION_GUIDE_LINES.length - 1]}
-        onAnswer={handleAnswer}
-      />
+      {showTopBar && (
+        <TopBar
+          styles={styles}
+          colors={colors}
+          progress={progressFor(phase)}
+          onBack={goBack}
+          showBack={phase !== 'welcome'}
+        />
+      )}
+
+      {phase === 'welcome' && (
+        <WelcomeView styles={styles} colors={colors} firstName={firstName} onContinue={() => goTo('goal')} />
+      )}
+
+      {phase === 'goal' && (
+        <GoalView
+          styles={styles}
+          colors={colors}
+          selected={goal}
+          onSelect={setGoal}
+          onContinue={() => goTo('confidence')}
+        />
+      )}
+
+      {phase === 'confidence' && (
+        <ConfidenceView
+          styles={styles}
+          colors={colors}
+          selected={confidence}
+          onSelect={setConfidence}
+          onContinue={() => goTo('lessonIntro')}
+        />
+      )}
+
+      {phase === 'lessonIntro' && (
+        <LessonIntroView styles={styles} colors={colors} onStart={() => goTo('lesson')} />
+      )}
+
+      {phase === 'lesson' && (
+        <LessonFlow
+          styles={styles}
+          colors={colors}
+          onExit={() => goTo('lessonIntro')}
+          onComplete={(mistakes) => { runComplete(mistakes); goTo(afterLesson); }}
+        />
+      )}
+
+      {phase === 'lessonComplete' && (
+        <LessonCompleteView
+          styles={styles}
+          colors={colors}
+          reward={lessonReward}
+          streakDays={streakDays || 1}
+          onContinue={() => goTo('streak')}
+        />
+      )}
+
+      {phase === 'streak' && (
+        <StreakCommitView
+          styles={styles}
+          colors={colors}
+          selected={streakGoalDays}
+          onSelect={saveStreakGoal}
+          onContinue={() => goTo('character')}
+        />
+      )}
+
+      {phase === 'character' && (
+        <CharacterMomentView
+          styles={styles}
+          colors={colors}
+          characters={characters}
+          equippedCharacter={equippedCharacter}
+          equipCharacter={equipCharacter}
+          purchaseCharacter={purchaseCharacter}
+          claimStarterCharacter={claimStarterCharacter}
+          refreshCharacterCache={refreshCharacterCache}
+          onDone={() => goTo('save')}
+        />
+      )}
+
+      {phase === 'save' && (
+        <SaveProgressView
+          styles={styles}
+          colors={colors}
+          isGuest={isGuest}
+          firstName={firstName}
+          streakDays={streakDays || 1}
+          botBucks={botBucks}
+          character={equippedCharacter}
+          navigation={navigation}
+          onDone={() => goTo('reminder')}
+        />
+      )}
+
+      {phase === 'reminder' && (
+        <ReminderView
+          styles={styles}
+          colors={colors}
+          firstName={firstName}
+          streakDays={streakDays}
+          onDone={() => goTo(afterReminder)}
+        />
+      )}
+
+      {phase === 'widget' && (
+        <WidgetSetupPromo colors={colors} onDone={() => goTo('learningPath')} />
+      )}
+
+      {phase === 'learningPath' && (
+        <LearningPathView
+          styles={styles}
+          colors={colors}
+          modules={modules}
+          onFinish={finishAll}
+        />
+      )}
     </OnboardingShell>
   );
 }
 
-// Routes each question to its interactive input medium based on input_type.
-function QuestionCard({ styles, colors, question, guideMessage, onAnswer }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const [guideDone, setGuideDone] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [confirmOptionId, setConfirmOptionId] = useState(null);
-  const markGuideDone = useCallback(() => setGuideDone(true), []);
-  useContinueFallback(markGuideDone, 9000);
+// ---------------------------------------------------------------------------
+// 1. Welcome
+// ---------------------------------------------------------------------------
 
+function WelcomeView({ styles, colors, firstName, onContinue }) {
+  const anim = useEnter([]);
+  const [typed, setTyped] = useState(false);
+  const btnAnim = useRef(new Animated.Value(0)).current;
+  const markTyped = useCallback(() => setTyped(true), []);
+  // Fallback so the CTA always appears even if onDone never fires.
   useEffect(() => {
-    anim.setValue(0);
-    setGuideDone(false);
-    setDragging(false);
-    setConfirmOptionId(null);
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 380,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [question.id]);
-
-  const inputType = question.input_type || 'choice';
-  const useVertical = VERTICAL_SCALE_IDS.has(question.id);
-  const needsConfirmFooter = useVertical || inputType === 'scale';
-  const submit = (optionId) => onAnswer(question, optionId);
-
-  return (
-    <Animated.View
-      style={[
-        styles.qWrap,
-        {
-          opacity: anim,
-          transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }],
-        },
-      ]}
-    >
-      <Pressable onPress={markGuideDone}>
-        <MoneyBotGuide
-          message={guideMessage}
-          onDone={markGuideDone}
-          avatarSize={56}
-          style={styles.qGuide}
-        />
-      </Pressable>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-        // Disable page scroll while dragging a slider so the finger stays on the track.
-        scrollEnabled={!dragging}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.qScroll}
-        keyboardDismissMode="on-drag"
-      >
-        {guideDone && (
-          <>
-            <Text style={styles.qPrompt}>{question.prompt}</Text>
-
-            {useVertical && (
-              <VerticalScaleInput
-                styles={styles}
-                colors={colors}
-                question={question}
-                onSubmit={submit}
-                onDragChange={setDragging}
-                showSubmit={false}
-                onSelectionChange={setConfirmOptionId}
-              />
-            )}
-            {!useVertical && inputType === 'truefalse' && (
-              <TrueFalseInput styles={styles} colors={colors} question={question} onSubmit={submit} />
-            )}
-            {!useVertical && inputType === 'scale' && (
-              <ScaleInput
-                styles={styles}
-                colors={colors}
-                question={question}
-                onSubmit={submit}
-                onDragChange={setDragging}
-                showSubmit={false}
-                onSelectionChange={setConfirmOptionId}
-              />
-            )}
-            {!useVertical && (inputType === 'choice' || !['truefalse', 'scale'].includes(inputType)) && (
-              <ChoiceInput styles={styles} colors={colors} question={question} onSubmit={submit} />
-            )}
-          </>
-        )}
-      </ScrollView>
-
-      {guideDone && needsConfirmFooter && (
-        <View style={styles.qFooter}>
-          <PrimaryButton
-            styles={styles}
-            colors={colors}
-            label="Sounds good"
-            icon="checkmark"
-            disabled={!confirmOptionId}
-            onPress={() => confirmOptionId && submit(confirmOptionId)}
-          />
-        </View>
-      )}
-    </Animated.View>
-  );
-}
-
-// --- Medium 1: multiple-choice cards ---
-function ChoiceInput({ styles, colors, question, onSubmit }) {
-  const [sel, setSel] = useState(null);
-
-  function pick(id) {
-    if (sel) return;
-    setSel(id);
-    setTimeout(() => onSubmit(id), 280);
-  }
-
-  return (
-    <View style={styles.options}>
-      {question.options.map((opt) => {
-        const isSel = sel === opt.id;
-        return (
-          <Bouncy
-            key={opt.id}
-            style={[styles.option, isSel && styles.optionSel]}
-            disabled={!!sel}
-            onPress={() => pick(opt.id)}
-          >
-            <View style={[styles.optionRadio, isSel && styles.optionRadioSel]}>
-              {isSel && <Ionicons name="checkmark" size={16} color={colors.background} />}
-            </View>
-            <Text style={[styles.optionText, isSel && styles.optionTextSel]}>{opt.text}</Text>
-          </Bouncy>
-        );
-      })}
-    </View>
-  );
-}
-
-// --- Medium 2: big True / False buttons (extra options shown subtly) ---
-function TrueFalseInput({ styles, colors, question, onSubmit }) {
-  const [sel, setSel] = useState(null);
-  const primary = question.options.slice(0, 2);
-  const extras = question.options.slice(2);
-
-  function pick(id) {
-    if (sel) return;
-    setSel(id);
-    setTimeout(() => onSubmit(id), 260);
-  }
-
-  const ICONS = ['checkmark-circle', 'close-circle'];
-  const TINTS = [colors.primary, '#FF6B6B'];
-
-  return (
-    <View>
-      <View style={styles.tfRow}>
-        {primary.map((opt, i) => {
-          const isSel = sel === opt.id;
-          const tint = TINTS[i] || colors.primary;
-          return (
-            <Bouncy
-              key={opt.id}
-              style={[
-                styles.tfBtn,
-                { borderColor: isSel ? tint : colors.border },
-                isSel && { backgroundColor: `${tint}22` },
-              ]}
-              disabled={!!sel}
-              onPress={() => pick(opt.id)}
-            >
-              <Ionicons name={ICONS[i] || 'ellipse'} size={40} color={tint} />
-              <Text style={styles.tfBtnText}>{opt.text}</Text>
-            </Bouncy>
-          );
-        })}
-      </View>
-
-      {extras.map((opt) => {
-        const isSel = sel === opt.id;
-        return (
-          <Bouncy
-            key={opt.id}
-            style={[styles.tfExtra, isSel && styles.tfExtraSel]}
-            disabled={!!sel}
-            onPress={() => pick(opt.id)}
-          >
-            <Text style={[styles.tfExtraText, isSel && { color: colors.primary }]}>{opt.text}</Text>
-          </Bouncy>
-        );
-      })}
-    </View>
-  );
-}
-
-// --- Medium 3: forgiving horizontal slider ---
-function ScaleInput({
-  styles, colors, question, onSubmit, onDragChange,
-  showSubmit = true, onSelectionChange,
-}) {
-  const options = question.options;
-  const n = options.length;
-  const maxIndex = Math.max(1, n - 1);
-  const [index, setIndex] = useState(Math.floor((n - 1) / 2));
-  const [dragging, setDragging] = useState(false);
-  const trackRef = useRef(null);
-  const trackLayout = useRef({ x: 0, width: 0 });
-  const lastIndex = useRef(index);
-  const onDragChangeRef = useRef(onDragChange);
-  onDragChangeRef.current = onDragChange;
-
-  const readoutAnim = useRef(new Animated.Value(1)).current;
-  const knobScale = useRef(new Animated.Value(1)).current;
-
-  const setDrag = (next) => {
-    setDragging(next);
-    onDragChangeRef.current?.(next);
-  };
-
+    const t = setTimeout(markTyped, 9000);
+    return () => clearTimeout(t);
+  }, [markTyped]);
   useEffect(() => {
-    onSelectionChange?.(options[index]?.id ?? null);
-  }, [index, options, onSelectionChange]);
-
-  useEffect(() => {
-    Animated.spring(knobScale, { toValue: dragging ? 1.25 : 1, speed: 30, bounciness: 10, useNativeDriver: true }).start();
-  }, [dragging]);
-
-  const bumpReadout = () => {
-    readoutAnim.setValue(0.85);
-    Animated.spring(readoutAnim, { toValue: 1, speed: 40, bounciness: 12, useNativeDriver: true }).start();
-  };
-
-  const applyIndex = (next) => {
-    if (next !== lastIndex.current) {
-      lastIndex.current = next;
-      setIndex(next);
-      bumpReadout();
+    if (typed) {
+      Animated.spring(btnAnim, { toValue: 1, friction: 7, tension: 60, useNativeDriver: true }).start();
     }
-  };
-
-  const setFromPageX = (pageX) => {
-    const { x, width } = trackLayout.current;
-    if (!width) return;
-    const ratio = Math.min(1, Math.max(0, (pageX - x) / width));
-    applyIndex(Math.round(ratio * maxIndex));
-  };
-
-  const measureTrack = () => {
-    trackRef.current?.measureInWindow?.((x, _y, width) => {
-      trackLayout.current = { x, width };
-    });
-  };
-
-  const pan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: (evt) => {
-        setDrag(true);
-        measureTrack();
-        setFromPageX(evt.nativeEvent.pageX);
-      },
-      onPanResponderMove: (evt, gesture) => {
-        setFromPageX(gesture.moveX || evt.nativeEvent.pageX);
-      },
-      onPanResponderRelease: () => setDrag(false),
-      onPanResponderTerminate: () => setDrag(false),
-    }),
-  ).current;
-
-  const pct = `${(index / maxIndex) * 100}%`;
-
-  return (
-    <View style={styles.scaleWrap}>
-      <Animated.View style={[styles.scaleReadout, { transform: [{ scale: readoutAnim }] }]}>
-        <Text style={styles.scaleReadoutText}>{options[index]?.text}</Text>
-      </Animated.View>
-
-      <View
-        ref={trackRef}
-        style={styles.scaleTrack}
-        onLayout={measureTrack}
-        hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
-        {...pan.panHandlers}
-      >
-        <View style={styles.scaleBase} pointerEvents="none" />
-        <View style={[styles.scaleFill, { width: pct }]} pointerEvents="none" />
-        {options.map((opt, i) => (
-          <View
-            key={opt.id}
-            style={[
-              styles.scaleTick,
-              { left: `${(i / maxIndex) * 100}%` },
-              i <= index && styles.scaleTickActive,
-            ]}
-            pointerEvents="none"
-          />
-        ))}
-        <Animated.View
-          style={[styles.scaleKnob, { left: pct, transform: [{ scale: knobScale }] }]}
-          pointerEvents="none"
-        >
-          <View style={styles.scaleKnobInner} />
-        </Animated.View>
-      </View>
-
-      <View style={styles.scaleLabels}>
-        {options.map((opt, i) => (
-          <TouchableOpacity
-            key={opt.id}
-            style={styles.scaleLabelBtn}
-            activeOpacity={0.7}
-            onPress={() => applyIndex(i)}
-          >
-            <Text
-              style={[styles.scaleLabelText, i === index && styles.scaleLabelTextActive]}
-              numberOfLines={2}
-            >
-              {opt.text}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {showSubmit && (
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="Sounds good"
-          icon="checkmark"
-          onPress={() => onSubmit(options[index].id)}
-        />
-      )}
-    </View>
-  );
-}
-
-function classifyScaleOption(opt) {
-  const t = (opt.text || '').toLowerCase();
-  if (t.includes('not sure') || t.includes("don't know") || t.includes('unsure')) return 'unsure';
-  if (t.includes('down') || t.includes('less') || t.includes('lower')) return 'down';
-  if (t.includes('up') || t.includes('more') || t.includes('higher')) return 'up';
-  if (t.includes('same') || t.includes('stay') || t.includes('exact')) return 'same';
-  return 'other';
-}
-
-// --- Medium 4: vertical "up / same / down" slider (bond prices) ---
-function VerticalScaleInput({
-  styles, colors, question, onSubmit, onDragChange,
-  showSubmit = true, onSelectionChange,
-}) {
-  const options = question.options || [];
-  const byKind = useMemo(() => {
-    const map = { up: null, same: null, down: null, unsure: null, other: [] };
-    options.forEach((opt) => {
-      const kind = classifyScaleOption(opt);
-      if (kind === 'other') map.other.push(opt);
-      else if (!map[kind]) map[kind] = opt;
-      else map.other.push(opt);
-    });
-    return map;
-  }, [options]);
-
-  const axis = [byKind.up, byKind.same, byKind.down].filter(Boolean);
-  const extras = [byKind.unsure, ...byKind.other].filter(Boolean);
-  const n = axis.length;
-  const maxIndex = Math.max(1, n - 1);
-  const defaultIdx = Math.min(1, maxIndex);
-  const [index, setIndex] = useState(defaultIdx);
-  const [dragging, setDragging] = useState(false);
-  const trackRef = useRef(null);
-  const trackLayout = useRef({ y: 0, height: 0 });
-  const lastIndex = useRef(index);
-  const knobScale = useRef(new Animated.Value(1)).current;
-  const onDragChangeRef = useRef(onDragChange);
-  onDragChangeRef.current = onDragChange;
-
-  const setDrag = (next) => {
-    setDragging(next);
-    onDragChangeRef.current?.(next);
-  };
-
-  const selected = axis[index];
-
-  useEffect(() => {
-    onSelectionChange?.(selected?.id ?? null);
-  }, [selected?.id, onSelectionChange]);
-
-  useEffect(() => {
-    Animated.spring(knobScale, { toValue: dragging ? 1.2 : 1, speed: 30, bounciness: 10, useNativeDriver: true }).start();
-  }, [dragging]);
-
-  const applyIndex = (next) => {
-    if (next !== lastIndex.current) {
-      lastIndex.current = next;
-      setIndex(next);
-    }
-  };
-
-  const setFromPageY = (pageY) => {
-    const { y, height } = trackLayout.current;
-    if (!height) return;
-    const ratio = Math.min(1, Math.max(0, (pageY - y) / height));
-    applyIndex(Math.round(ratio * maxIndex));
-  };
-
-  const measureTrack = () => {
-    trackRef.current?.measureInWindow?.((_x, y, _w, height) => {
-      trackLayout.current = { y, height };
-    });
-  };
-
-  const pan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: (evt) => {
-        setDrag(true);
-        measureTrack();
-        setFromPageY(evt.nativeEvent.pageY);
-      },
-      onPanResponderMove: (evt, gesture) => {
-        setFromPageY(gesture.moveY || evt.nativeEvent.pageY);
-      },
-      onPanResponderRelease: () => setDrag(false),
-      onPanResponderTerminate: () => setDrag(false),
-    }),
-  ).current;
-
-  const pct = `${(index / maxIndex) * 100}%`;
-
-  return (
-    <View style={styles.vScaleWrap}>
-      <View style={styles.vScaleReadout}>
-        <Text style={styles.scaleReadoutText}>{selected?.text || '—'}</Text>
-      </View>
-
-      <View style={styles.vScaleRow}>
-        <View style={styles.vScaleLabelsCol}>
-          {axis.map((opt, i) => (
-            <TouchableOpacity key={opt.id} onPress={() => applyIndex(i)} activeOpacity={0.7} style={styles.vScaleLabelBtn}>
-              <Text style={[styles.vScaleLabelText, i === index && styles.scaleLabelTextActive]} numberOfLines={2}>
-                {opt.text}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View
-          ref={trackRef}
-          style={styles.vScaleTrack}
-          onLayout={measureTrack}
-          hitSlop={{ top: 20, bottom: 20, left: 36, right: 36 }}
-          {...pan.panHandlers}
-        >
-          <View style={styles.vScaleBase} pointerEvents="none" />
-          <View style={[styles.vScaleFill, { height: pct }]} pointerEvents="none" />
-          {axis.map((opt, i) => (
-            <View
-              key={opt.id}
-              style={[
-                styles.vScaleTick,
-                { top: `${(i / maxIndex) * 100}%` },
-                i === index && styles.scaleTickActive,
-              ]}
-              pointerEvents="none"
-            />
-          ))}
-          <Animated.View
-            style={[styles.vScaleKnob, { top: pct, transform: [{ scale: knobScale }] }]}
-            pointerEvents="none"
-          >
-            <View style={styles.scaleKnobInner} />
-          </Animated.View>
-        </View>
-      </View>
-
-      {extras.map((opt) => (
-        <TouchableOpacity
-          key={opt.id}
-          style={styles.tfExtra}
-          activeOpacity={0.8}
-          onPress={() => onSubmit(opt.id)}
-        >
-          <Text style={styles.tfExtraText}>{opt.text}</Text>
-        </TouchableOpacity>
-      ))}
-
-      {showSubmit && (
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="Sounds good"
-          icon="checkmark"
-          onPress={() => selected && onSubmit(selected.id)}
-        />
-      )}
-    </View>
-  );
-}
-
-function GoalChip({ styles, colors, goal, index, selected, onToggle }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 360,
-      delay: index * 45,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  return (
-    <Animated.View
-      style={{
-        width: '48%',
-        marginBottom: 12,
-        opacity: anim,
-        transform: [
-          { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) },
-          { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) },
-        ],
-      }}
-    >
-      <Bouncy
-        style={[styles.goalChip, selected && styles.goalChipSel]}
-        onPress={() => onToggle(goal.key)}
-      >
-        <View style={[styles.goalIconWrap, selected && styles.goalIconWrapSel]}>
-          <Ionicons name={goal.icon} size={22} color={selected ? colors.background : colors.primary} />
-        </View>
-        <Text style={[styles.goalLabel, selected && styles.goalLabelSel]}>{goal.label}</Text>
-        {selected && (
-          <View style={styles.goalCheck}>
-            <Ionicons name="checkmark" size={12} color={colors.background} />
-          </View>
-        )}
-      </Bouncy>
-    </Animated.View>
-  );
-}
-
-function GoalsView({ styles, colors, selected, onToggle, onContinue }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const [guideDone, setGuideDone] = useState(false);
-  const markGuideDone = useCallback(() => setGuideDone(true), []);
-  useContinueFallback(markGuideDone, 9000);
-
-  useEffect(() => {
-    Animated.timing(anim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-  }, []);
-
-  const count = selected.length;
-
-  return (
-    <Animated.View
-      style={[
-        styles.goalsWrap,
-        {
-          opacity: anim,
-          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
-        },
-      ]}
-    >
-      <Pressable style={styles.goalsHeader} onPress={markGuideDone}>
-        <MoneyBotGuide
-          message={GOALS_GUIDE_MESSAGE}
-          onDone={markGuideDone}
-          avatarSize={64}
-        />
-      </Pressable>
-
-      {guideDone && (
-        <>
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.goalsScroll}
-          >
-            <View style={styles.goalsGrid}>
-              {GOALS.map((g, i) => (
-                <GoalChip
-                  key={g.key}
-                  styles={styles}
-                  colors={colors}
-                  goal={g}
-                  index={i}
-                  selected={selected.includes(g.key)}
-                  onToggle={onToggle}
-                />
-              ))}
-            </View>
-          </ScrollView>
-
-          <View style={styles.goalsFooter}>
-            <PrimaryButton
-              styles={styles}
-              colors={colors}
-              label={count > 0 ? `Continue${count > 1 ? ` · ${count} goals` : ''}` : 'Skip for now'}
-              icon="arrow-forward"
-              onPress={onContinue}
-            />
-          </View>
-        </>
-      )}
-    </Animated.View>
-  );
-}
-
-function GreetView({ styles, colors, firstName, typingDone, onTypingDone, onContinue }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useContinueFallback(onTypingDone, 12000);
-  useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 7, tension: 55, useNativeDriver: true }).start();
-  }, []);
+  }, [typed, btnAnim]);
 
   const message = firstName
-    ? `Hey ${firstName}, I'm MoneyBot. Think of me as a chill finance friend. We'll chat about what matters to you, I'll ask a few easy questions, and then I'll set you up with a free character. Sound good?`
-    : GREET_MESSAGE;
+    ? `Hey ${firstName}, I'm MoneyBot. Give me three minutes and I'll teach you your first money skill.`
+    : "Hey, I'm MoneyBot. Give me three minutes and I'll teach you your first money skill.";
+
+  const PROMISES = [
+    { icon: 'time', text: 'Three minutes, one real lesson' },
+    { icon: 'heart', text: 'No lives, no penalties' },
+    { icon: 'gift', text: 'A free character at the end' },
+  ];
 
   return (
-    <ScrollView
-      style={styles.flexFill}
-      contentContainerStyle={styles.greetScroll}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      bounces={false}
-    >
-      <View style={styles.greetWrap}>
-        <Animated.View
-          style={{
-            alignItems: 'center',
-            opacity: anim,
-            transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }],
-          }}
-        >
-          <View style={styles.greetAvatarRing}>
-            <Image source={GUIDE_IMAGE} style={styles.greetAvatar} resizeMode="contain" />
+    <View style={styles.welcomeWrap}>
+      <ScrollView contentContainerStyle={styles.welcomeScroll} showsVerticalScrollIndicator={false} bounces={false}>
+        <Animated.View style={{ opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }] }}>
+          {/* Speech bubble on top — greeting types out. Tail points DOWN to MoneyBot. */}
+          <Pressable style={styles.speechBubble} onPress={markTyped}>
+            <TypewriterText
+              key={message}
+              text={message}
+              style={styles.speechText}
+              speed={26}
+              onDone={markTyped}
+            />
+          </Pressable>
+          <View style={styles.speechTailDownWrap}>
+            <View style={styles.speechTailDownBorder} />
+            <View style={styles.speechTailDownFill} />
           </View>
-          <Text style={styles.rewardKicker}>MEET YOUR COACH</Text>
-          <Text style={styles.greetTitle}>MoneyBot</Text>
+
+          {/* MoneyBot answering below the bubble, with the coach label beside it. */}
+          <View style={styles.coachIntroRow}>
+            <MascotGif source={GIF_WAVE} size={150} colors={colors} glow={false} />
+            <View style={styles.coachIntroText}>
+              <Text style={styles.kickerLeft}>YOUR COACH</Text>
+              <Text style={styles.coachName}>MoneyBot</Text>
+            </View>
+          </View>
+
+          {/* Three promises fill the space and set expectations up front. */}
+          <View style={styles.promiseList}>
+            {PROMISES.map((p) => (
+              <View key={p.icon} style={styles.promiseRow}>
+                <View style={styles.promiseIcon}>
+                  <Ionicons name={p.icon} size={18} color={colors.primary} />
+                </View>
+                <Text style={styles.promiseText}>{p.text}</Text>
+              </View>
+            ))}
+          </View>
         </Animated.View>
+      </ScrollView>
 
-        <Pressable onPress={onTypingDone} style={styles.greetBubble}>
-          <TypewriterText
-            key={message}
-            text={message}
-            style={styles.greetMessage}
-            speed={24}
-            onDone={onTypingDone}
-          />
-        </Pressable>
-
-        {typingDone && (
-          <PrimaryButton
-            styles={styles}
-            colors={colors}
-            label="Let's go"
-            icon="arrow-forward"
-            onPress={onContinue}
-          />
+      <View style={styles.footer}>
+        {typed && (
+          <Animated.View
+            style={{
+              opacity: btnAnim,
+              transform: [{ translateY: btnAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+            }}
+          >
+            <PrimaryCTA styles={styles} label="LET'S GO" icon={null} onPress={onContinue} />
+          </Animated.View>
         )}
       </View>
-    </ScrollView>
-  );
-}
-
-function BetweenView({ styles, colors, message, onContinue }) {
-  const [typed, setTyped] = useState(false);
-  const advanced = useRef(false);
-  const markTyped = useCallback(() => setTyped(true), []);
-  useContinueFallback(markTyped, 8000);
-
-  const go = useCallback(() => {
-    if (advanced.current) return;
-    advanced.current = true;
-    onContinue();
-  }, [onContinue]);
-
-  useEffect(() => {
-    advanced.current = false;
-    setTyped(false);
-  }, [message]);
-
-  useEffect(() => {
-    if (!typed || advanced.current) return undefined;
-    const timer = setTimeout(go, 3000);
-    return () => clearTimeout(timer);
-  }, [typed, go]);
-
-  return (
-    <View style={styles.betweenWrap}>
-      <Pressable onPress={markTyped}>
-        <MoneyBotGuide
-          key={message}
-          message={message}
-          onDone={markTyped}
-          avatarSize={72}
-          style={styles.betweenGuide}
-        />
-      </Pressable>
-      {typed && (
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="Continue"
-          icon="arrow-forward"
-          onPress={go}
-        />
-      )}
     </View>
   );
 }
 
-function CharacterRewardView({ styles, colors, claimStarterCharacter, equippedCharacter, onDone }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const [status, setStatus] = useState('loading'); // loading | ready | error
-  const [character, setCharacter] = useState(null);
-  const [typed, setTyped] = useState(false);
-  const claimedRef = useRef(false);
+// ---------------------------------------------------------------------------
+// 2. Goal
+// ---------------------------------------------------------------------------
 
-  const showCharacter = useCallback((granted) => {
-    setCharacter(granted);
-    setStatus('ready');
-    anim.setValue(0);
-    Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
-  }, [anim]);
-
-  const retryClaim = useCallback(async () => {
-    setStatus('loading');
-    try {
-      const result = await claimStarterCharacter();
-      const granted = result?.character || equippedCharacter;
-      if (granted) {
-        showCharacter(granted);
-      } else {
-        setStatus('error');
-      }
-    } catch (e) {
-      if (equippedCharacter) {
-        showCharacter(equippedCharacter);
-      } else {
-        setStatus('error');
-      }
-    }
-  }, [claimStarterCharacter, equippedCharacter, showCharacter]);
-
-  useEffect(() => {
-    if (claimedRef.current) return;
-    claimedRef.current = true;
-    retryClaim();
-  }, [retryClaim]);
-
-  useEffect(() => {
-    if (status === 'error' && equippedCharacter) {
-      showCharacter(equippedCharacter);
-    }
-  }, [status, equippedCharacter, showCharacter]);
-
-  const markTyped = useCallback(() => setTyped(true), []);
-  useContinueFallback(markTyped, 10000);
-
-  if (status === 'loading') {
-    return (
-      <View style={[styles.rewardWrap, styles.center]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.calcText}>Picking your starter character</Text>
-      </View>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <View style={styles.rewardWrap}>
-        <Text style={styles.rewardTitle}>One sec</Text>
-        <Text style={styles.rewardSub}>
-          Couldn{"'"}t grab your free character. Try again. It{"'"}s waiting for you.
-        </Text>
-        <PrimaryButton styles={styles} colors={colors} label="Try again" icon="refresh" onPress={retryClaim} />
-        <TouchableOpacity style={styles.notifSkip} activeOpacity={0.7} onPress={onDone}>
-          <Text style={styles.notifSkipText}>Skip for now</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const name = character?.name || 'your new friend';
-  const message = `Meet ${name}, your first MoneyBot friend. On the house. Head to the Moneyverse to hang out.`;
-
+function GoalView({ styles, colors, selected, onSelect, onContinue }) {
+  const anim = useEnter([]);
   return (
-    <View style={styles.rewardWrap}>
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
-        }}
-      >
-        <Text style={styles.rewardKicker}>FREE CHARACTER</Text>
-        <View style={styles.charRevealFrame}>
-          <BrandAvatar character={character} size={140} autoRotate logoSize={72} />
+    <Animated.View style={[styles.flexFill, { opacity: anim }]}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <CoachBubble styles={styles} message="Pick one thing to aim at. I'll lead with it — everything else stays open." />
+        <Text style={styles.screenTitle}>What would you like to feel better about?</Text>
+        <View style={{ gap: 12, marginTop: 6 }}>
+          {GOAL_OPTIONS.map((g) => (
+            <SelectRow
+              key={g.key}
+              styles={styles}
+              colors={colors}
+              title={g.label}
+              icon={g.icon}
+              selected={selected === g.key}
+              onPress={() => onSelect(g.key)}
+            />
+          ))}
         </View>
-        <Text style={styles.rewardTitle}>{name}</Text>
-      </Animated.View>
-
-      <Pressable onPress={markTyped} style={styles.greetBubble}>
-        <View style={styles.charGuideRow}>
-          <Image source={GUIDE_IMAGE} style={styles.charGuideThumb} resizeMode="contain" />
-          <TypewriterText
-            key={message}
-            text={message}
-            style={styles.greetMessage}
-            speed={22}
-            onDone={markTyped}
-          />
-        </View>
-      </Pressable>
-
-      {typed && (
-        <PrimaryButton
-          styles={styles}
-          colors={colors}
-          label="See them in the Moneyverse"
-          icon="planet"
-          onPress={onDone}
-        />
-      )}
-    </View>
-  );
-}
-
-function RevealView({ styles, colors, rank, score, total, onDone }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const meta = getRankMeta(rank?.key);
-
-  useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
-  }, []);
-
-  return (
-    <ScrollView
-      style={styles.flexFill}
-      contentContainerStyle={styles.greetScroll}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      bounces={false}
-    >
-      <View style={styles.revealWrap}>
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
-        }}
-      >
-        <Text style={styles.revealKicker}>YOUR STARTING RANK</Text>
-        <LinearGradient colors={meta.gradient} style={styles.revealBadge}>
-          <Ionicons name={meta.ionIcon} size={56} color="#fff" />
-        </LinearGradient>
-        <Text style={[styles.revealRank, { color: meta.color }]}>{rank?.label || 'Money Rookie'}</Text>
-        {typeof score === 'number' && (
-          <Text style={styles.revealScore}>You nailed {score}/{total} right</Text>
-        )}
-      </Animated.View>
-
-      <View style={styles.revealCard}>
-        <View style={styles.revealCardRow}>
-          <Ionicons name="trending-up" size={18} color={colors.primary} />
-          <Text style={styles.revealCardText}>
-            {rank?.next_label
-              ? `This is just the start. Earn ${rank.points_to_next} more points to reach ${rank.next_label}.`
-              : `You're already at the top tier. Keep learning to stay sharp.`}
-          </Text>
-        </View>
-        <View style={styles.revealCardRow}>
-          <Ionicons name="gift" size={18} color={colors.primary} />
-          <Text style={styles.revealCardText}>
-            There{"'"}s a welcome bonus waiting for you. Let{"'"}s grab it next.
-          </Text>
-        </View>
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label="Continue" onPress={onContinue} disabled={!selected} />
       </View>
-
-      <PrimaryButton styles={styles} colors={colors} label="Claim my rewards" icon="arrow-forward" onPress={onDone} />
-    </View>
-    </ScrollView>
-  );
-}
-
-// Animated number that counts up from 0 to `value` for a satisfying reward pop.
-function CountUp({ value, duration = 1000, delay = 0, prefix = '', style }) {
-  const [display, setDisplay] = useState(0);
-  const anim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const id = anim.addListener(({ value: v }) => setDisplay(Math.round(v)));
-    const timer = setTimeout(() => {
-      Animated.timing(anim, {
-        toValue: value,
-        duration,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start();
-    }, delay);
-    return () => {
-      clearTimeout(timer);
-      anim.removeListener(id);
-    };
-  }, [value]);
-
-  return <Text style={style}>{prefix}{display}</Text>;
-}
-
-// A single reward pill (icon + counting value + label) that springs in.
-function RewardPill({ styles, colors, icon, iconColor, value, label, delay }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.spring(anim, {
-      toValue: 1,
-      friction: 6,
-      tension: 70,
-      delay,
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  return (
-    <Animated.View
-      style={[
-        styles.rewardPill,
-        {
-          opacity: anim,
-          transform: [
-            { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) },
-            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
-          ],
-        },
-      ]}
-    >
-      <View style={[styles.rewardPillIcon, { backgroundColor: `${iconColor}1F` }]}>
-        <Ionicons name={icon} size={26} color={iconColor} />
-      </View>
-      <CountUp value={value} prefix="+" delay={delay + 150} style={styles.rewardPillValue} />
-      <Text style={styles.rewardPillLabel}>{label}</Text>
     </Animated.View>
   );
 }
 
-function RewardView({ styles, colors, botBucks, xp, onNext }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 500,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, []);
+// ---------------------------------------------------------------------------
+// 3. Confidence
+// ---------------------------------------------------------------------------
 
+function ConfidenceView({ styles, colors, selected, onSelect, onContinue }) {
+  const anim = useEnter([]);
   return (
-    <ScrollView
-      style={styles.flexFill}
-      contentContainerStyle={styles.greetScroll}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      bounces={false}
-    >
-    <View style={styles.rewardWrap}>
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
-        }}
-      >
-        <View style={styles.rewardBadge}>
-          <Ionicons name="gift" size={48} color={colors.primary} />
+    <Animated.View style={[styles.flexFill, { opacity: anim }]}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <Text style={styles.screenTitle}>How comfortable do you feel with money basics?</Text>
+        <Text style={styles.screenSub}>This sets the pace of the hints, nothing else. You can change it any time.</Text>
+        <View style={{ gap: 12, marginTop: 18 }}>
+          {CONFIDENCE_OPTIONS.map((c) => (
+            <SelectRow
+              key={c.key}
+              styles={styles}
+              colors={colors}
+              title={c.label}
+              blurb={c.blurb}
+              selected={selected === c.key}
+              onPress={() => onSelect(c.key)}
+            />
+          ))}
         </View>
-        <Text style={styles.rewardKicker}>WELCOME BONUS</Text>
-        <Text style={styles.rewardTitle}>You{"'"}re all set</Text>
-        <Text style={styles.rewardSub}>
-          Here{"'"}s a head start for finishing your money check-in.
-        </Text>
-      </Animated.View>
-
-      <View style={styles.rewardPillRow}>
-        <RewardPill
-          styles={styles}
-          colors={colors}
-          icon="logo-bitcoin"
-          iconColor={colors.botBucks || '#F5B72B'}
-          value={botBucks}
-          label="Bot Bucks"
-          delay={300}
-        />
-        <RewardPill
-          styles={styles}
-          colors={colors}
-          icon="flash"
-          iconColor={colors.primary}
-          value={xp}
-          label="XP"
-          delay={450}
-        />
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label="Continue" onPress={onContinue} disabled={!selected} />
       </View>
-
-      <PrimaryButton styles={styles} colors={colors} label="Nice, keep going" icon="arrow-forward" onPress={onNext} />
-    </View>
-    </ScrollView>
+    </Animated.View>
   );
 }
 
-const STREAK_GOAL_OPTIONS = [
+// ---------------------------------------------------------------------------
+// 4. Lesson intro
+// ---------------------------------------------------------------------------
+
+function LessonIntroView({ styles, colors, onStart }) {
+  const anim = useEnter([]);
+  return (
+    <View style={styles.centerWrap}>
+      <Animated.View style={{ alignItems: 'center', opacity: anim, transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }] }}>
+        <MascotGif source={GIF_WAVE} size={150} colors={colors} />
+        <View style={styles.sectionPill}>
+          <Text style={styles.sectionPillText}>SECTION 1 · LESSON 1</Text>
+        </View>
+        <Text style={styles.bigTitle}>Plan your spending</Text>
+        <Text style={styles.bodyText}>
+          Five quick steps, about three minutes. I'll teach first, then ask. Get one wrong and we just try again.
+        </Text>
+        <View style={styles.noteRow}>
+          <Ionicons name="ribbon" size={16} color={colors.primary} />
+          <Text style={styles.noteText}>This is a real lesson — it counts on your path.</Text>
+        </View>
+      </Animated.View>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label="Start lesson" icon="play" onPress={onStart} />
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4a–4e. The lesson itself (teaching + 4 interactions), no lives
+// ---------------------------------------------------------------------------
+
+function LessonSegments({ styles, colors, current }) {
+  return (
+    <View style={styles.lessonSegs}>
+      {Array.from({ length: LESSON_TOTAL_STEPS }).map((_, i) => (
+        <View key={i} style={styles.lessonSeg}>
+          <View
+            style={[
+              styles.lessonSegFill,
+              { backgroundColor: i <= current ? colors.primary : 'transparent' },
+            ]}
+          />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function LessonHeader({ styles, colors, step, onExit }) {
+  return (
+    <View style={styles.lessonHeader}>
+      <TouchableOpacity style={styles.backBtn} onPress={onExit} activeOpacity={0.7}>
+        <Ionicons name="chevron-back" size={24} color={colors.textSecondary} />
+      </TouchableOpacity>
+      <LessonSegments styles={styles} colors={colors} current={step} />
+      <Text style={styles.lessonCount}>{step + 1}/{LESSON_TOTAL_STEPS}</Text>
+    </View>
+  );
+}
+
+/** Green success / retry hint banner that slides up from the footer. */
+function FeedbackBanner({ styles, colors, tone, title, body }) {
+  const anim = useEnter([tone, title, body]);
+  const ok = tone === 'success';
+  return (
+    <Animated.View
+      style={[
+        styles.feedback,
+        { borderColor: ok ? colors.primary : '#FF6B6B', backgroundColor: ok ? 'rgba(61,220,95,0.12)' : 'rgba(255,107,107,0.12)' },
+        { opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] },
+      ]}
+    >
+      <Ionicons name={ok ? 'checkmark-circle' : 'bulb'} size={22} color={ok ? colors.primary : '#FF6B6B'} />
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.feedbackTitle, { color: ok ? colors.primary : '#FF8C8C' }]}>{title}</Text>
+        {body ? <Text style={styles.feedbackBody}>{body}</Text> : null}
+      </View>
+    </Animated.View>
+  );
+}
+
+function BucketBar({ styles, label, pct, color }) {
+  return (
+    <View style={styles.bucketRow}>
+      <View style={styles.bucketHead}>
+        <Text style={styles.bucketLabel}>{label}</Text>
+        <Text style={[styles.bucketPct, { color }]}>{pct}%</Text>
+      </View>
+      <View style={styles.bucketTrack}>
+        <View style={[styles.bucketFill, { width: `${pct}%`, backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
+
+function LessonFlow({ styles, colors, onExit, onComplete }) {
+  const [step, setStep] = useState(0);
+  const [mistakes, setMistakes] = useState(0);
+  const addMistake = useCallback(() => setMistakes((m) => m + 1), []);
+
+  const next = useCallback(() => {
+    if (step + 1 >= LESSON_TOTAL_STEPS) onComplete(mistakes);
+    else setStep((s) => s + 1);
+  }, [step, mistakes, onComplete]);
+
+  const back = useCallback(() => {
+    if (step === 0) onExit();
+    else setStep((s) => s - 1);
+  }, [step, onExit]);
+
+  return (
+    <View style={styles.flexFill}>
+      <LessonHeader styles={styles} colors={colors} step={step} onExit={back} />
+      {step === 0 && <TeachingCard key="t" styles={styles} colors={colors} onNext={next} />}
+      {step === 1 && <VisualChoice key="v" styles={styles} colors={colors} onNext={next} onMistake={addMistake} />}
+      {step === 2 && <TapToMatch key="m" styles={styles} colors={colors} onNext={next} onMistake={addMistake} />}
+      {step === 3 && <WordBank key="w" styles={styles} colors={colors} onNext={next} onMistake={addMistake} />}
+      {step === 4 && <Application key="a" styles={styles} colors={colors} onNext={next} onMistake={addMistake} />}
+    </View>
+  );
+}
+
+// 4a. Teaching card
+function TeachingCard({ styles, colors, onNext }) {
+  const anim = useEnter([]);
+  return (
+    <View style={styles.flexFill}>
+      <Animated.View style={[styles.lessonBody, { opacity: anim }]}>
+        <View style={styles.pointRow}>
+          <Image source={GIF_POINT} style={styles.pointMascot} resizeMode="contain" />
+          <Text style={styles.lessonKicker}>TEACHING</Text>
+        </View>
+        <Text style={styles.lessonTitle}>Give every dollar a job</Text>
+        <Text style={styles.lessonPara}>
+          A spending plan is just deciding where money goes <Text style={styles.bold}>before</Text> you spend it. Three buckets cover most of it.
+        </Text>
+        <View style={styles.teachCard}>
+          {BUCKETS.map((b) => (
+            <BucketBar key={b.key} styles={styles} label={b.label} pct={b.pct} color={b.color} />
+          ))}
+        </View>
+        <Text style={styles.lessonPara}>
+          The exact split is yours. What matters is that savings gets a slice before the fun money does.
+        </Text>
+      </Animated.View>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label="Got it" icon="checkmark" onPress={onNext} />
+      </View>
+    </View>
+  );
+}
+
+// 4b. Visual choice
+function VisualChoice({ styles, colors, onNext, onMistake }) {
+  const [sel, setSel] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const correct = sel && PLANS.find((p) => p.id === sel)?.correct;
+
+  function check() {
+    if (correct) { setChecked(true); }
+    else { onMistake(); setChecked('wrong'); }
+  }
+
+  return (
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.lessonScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.lessonKicker}>PICK ONE</Text>
+        <Text style={styles.lessonTitle}>Which plan leaves room for savings?</Text>
+        <View style={styles.planRow}>
+          {PLANS.map((p) => {
+            const isSel = sel === p.id;
+            const isRight = checked === true && p.correct;
+            return (
+              <Bouncy
+                key={p.id}
+                style={[styles.planCard, isSel && styles.planCardSel, isRight && styles.planCardRight]}
+                disabled={checked === true}
+                onPress={() => { setSel(p.id); if (checked === 'wrong') setChecked(false); }}
+              >
+                <View style={styles.planHead}>
+                  <Text style={styles.planName}>{p.name}</Text>
+                  {isRight && <Ionicons name="checkmark-circle" size={16} color={colors.primary} />}
+                </View>
+                <MiniBar styles={styles} letter="N" pct={p.n} color="#4C8DFF" />
+                <MiniBar styles={styles} letter="W" pct={p.w} color="#FF8C42" />
+                <MiniBar styles={styles} letter="S" pct={p.s} color="#3DDC5F" />
+              </Bouncy>
+            );
+          })}
+        </View>
+        <Text style={styles.planLegend}>N = needs · W = wants · S = savings</Text>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {checked === true ? (
+          <>
+            <FeedbackBanner
+              styles={styles}
+              colors={colors}
+              tone="success"
+              title="Nice."
+              body="Plan B keeps 20% for savings, so money is set aside before the spending starts."
+            />
+            <PrimaryCTA styles={styles} label="Continue" onPress={onNext} />
+          </>
+        ) : (
+          <>
+            {checked === 'wrong' && (
+              <FeedbackBanner
+                styles={styles}
+                colors={colors}
+                tone="hint"
+                title="Not quite — check the S bar."
+                body="Look for the plan where savings still gets a real slice. Try again."
+              />
+            )}
+            <PrimaryCTA styles={styles} label="Check" icon={null} onPress={check} disabled={!sel} />
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function MiniBar({ styles, letter, pct, color }) {
+  return (
+    <View style={styles.miniRow}>
+      <Text style={styles.miniLetter}>{letter}</Text>
+      <View style={styles.miniTrack}>
+        <View style={[styles.miniFill, { width: `${pct}%`, backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
+
+// 4c. Tap to match
+function TapToMatch({ styles, colors, onNext, onMistake }) {
+  const [activeItem, setActiveItem] = useState(null);
+  const [matched, setMatched] = useState({}); // itemId -> bucketKey
+  const [wrong, setWrong] = useState(null); // bucketKey briefly flashed red
+  const allMatched = Object.keys(matched).length === MATCH_ITEMS.length;
+
+  function tapBucket(bucketKey) {
+    if (!activeItem) return;
+    const item = MATCH_ITEMS.find((i) => i.id === activeItem);
+    if (item.bucket === bucketKey) {
+      setMatched((m) => ({ ...m, [item.id]: bucketKey }));
+      setActiveItem(null);
+    } else {
+      onMistake();
+      setWrong(bucketKey);
+      setTimeout(() => setWrong(null), 500);
+    }
+  }
+
+  return (
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.lessonScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.lessonKicker}>TAP TO MATCH</Text>
+        <Text style={styles.lessonTitle}>Sort each one into its bucket</Text>
+        <Text style={styles.lessonPara}>Tap an item, then tap where it belongs.</Text>
+
+        <View style={styles.chipWrap}>
+          {MATCH_ITEMS.map((item) => {
+            const done = !!matched[item.id];
+            const active = activeItem === item.id;
+            return (
+              <Bouncy
+                key={item.id}
+                disabled={done}
+                style={[styles.matchChip, active && styles.matchChipActive, done && styles.matchChipDone]}
+                onPress={() => setActiveItem(active ? null : item.id)}
+              >
+                {done && <Ionicons name="checkmark" size={14} color={colors.primary} />}
+                <Text style={[styles.matchChipText, done && { color: colors.textMuted, textDecorationLine: 'line-through' }]}>
+                  {item.label}
+                </Text>
+              </Bouncy>
+            );
+          })}
+        </View>
+
+        <View style={{ gap: 12, marginTop: 8 }}>
+          {BUCKETS.map((b) => {
+            const filled = MATCH_ITEMS.filter((i) => matched[i.id] === b.key);
+            const isWrong = wrong === b.key;
+            return (
+              <TouchableOpacity
+                key={b.key}
+                activeOpacity={0.85}
+                onPress={() => tapBucket(b.key)}
+                style={[
+                  styles.bucketDrop,
+                  { borderColor: isWrong ? '#FF6B6B' : (activeItem ? b.color : colors.border) },
+                ]}
+              >
+                <View style={[styles.bucketDot, { backgroundColor: b.color }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.bucketDropLabel}>{b.label}</Text>
+                  {filled.length > 0 && (
+                    <Text style={styles.bucketDropItems}>{filled.map((i) => i.label).join(' · ')}</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {allMatched ? (
+          <>
+            <FeedbackBanner styles={styles} colors={colors} tone="success" title="All sorted." body="Rent is a need, sneakers are a want, and the emergency fund is savings." />
+            <PrimaryCTA styles={styles} label="Continue" onPress={onNext} />
+          </>
+        ) : (
+          <Text style={styles.helperCenter}>
+            {activeItem ? 'Now tap the right bucket.' : 'Tap an item to start.'}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// 4d. Word bank
+const WORD_BANK = [
+  { word: 'before', correct: true },
+  { word: 'after', correct: false },
+  { word: 'while', correct: false },
+];
+
+function WordBank({ styles, colors, onNext, onMistake }) {
+  const [pick, setPick] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const isCorrect = pick && WORD_BANK.find((w) => w.word === pick)?.correct;
+
+  function check() {
+    if (isCorrect) setChecked(true);
+    else { onMistake(); setChecked('wrong'); }
+  }
+
+  return (
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.lessonScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.lessonKicker}>FILL THE BLANK</Text>
+        <Text style={styles.lessonTitle}>Finish the rule</Text>
+        <View style={styles.sentenceCard}>
+          <Text style={styles.sentenceText}>
+            A spending plan decides where money goes{'  '}
+            <Text style={[styles.blankChip, pick && styles.blankChipFilled]}>
+              {pick || '______'}
+            </Text>
+            {'  '}you spend it.
+          </Text>
+        </View>
+        <View style={styles.chipWrap}>
+          {WORD_BANK.map((w) => {
+            const sel = pick === w.word;
+            return (
+              <Bouncy
+                key={w.word}
+                disabled={checked === true}
+                style={[styles.wordChip, sel && styles.wordChipSel]}
+                onPress={() => { setPick(w.word); if (checked === 'wrong') setChecked(false); }}
+              >
+                <Text style={[styles.wordChipText, sel && styles.wordChipTextSel]}>{w.word}</Text>
+              </Bouncy>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {checked === true ? (
+          <>
+            <FeedbackBanner styles={styles} colors={colors} tone="success" title="Exactly." body="Deciding before you spend is what turns wishes into a plan." />
+            <PrimaryCTA styles={styles} label="Continue" onPress={onNext} />
+          </>
+        ) : (
+          <>
+            {checked === 'wrong' && (
+              <FeedbackBanner styles={styles} colors={colors} tone="hint" title="Close — think about timing." body="A plan works when you choose ahead of time, not once the money's gone." />
+            )}
+            <PrimaryCTA styles={styles} label="Check" icon={null} onPress={check} disabled={!pick} />
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// 4e. Application
+const APPLY_OPTIONS = [
+  { id: 'save', text: 'Move $20 to savings first, then budget the rest', correct: true },
+  { id: 'wants', text: 'Spend on wants now, save whatever is left', correct: false },
+  { id: 'wait', text: 'Cover needs only and decide about savings later', correct: false },
+];
+
+function Application({ styles, colors, onNext, onMistake }) {
+  const [sel, setSel] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const isCorrect = sel && APPLY_OPTIONS.find((o) => o.id === sel)?.correct;
+
+  function check() {
+    if (isCorrect) setChecked(true);
+    else { onMistake(); setChecked('wrong'); }
+  }
+
+  return (
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.lessonScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.lessonKicker}>YOUR MOVE</Text>
+        <Text style={styles.lessonTitle}>You just got $100. Using 50/30/20, what happens first?</Text>
+        <View style={{ gap: 12, marginTop: 12 }}>
+          {APPLY_OPTIONS.map((o) => {
+            const isSel = sel === o.id;
+            const showRight = checked === true && o.correct;
+            return (
+              <Bouncy
+                key={o.id}
+                disabled={checked === true}
+                style={[styles.applyOption, isSel && styles.applyOptionSel, showRight && styles.applyOptionRight]}
+                onPress={() => { setSel(o.id); if (checked === 'wrong') setChecked(false); }}
+              >
+                <View style={[styles.selectRadio, isSel && styles.selectRadioSel]}>
+                  {isSel && <Ionicons name="checkmark" size={15} color="#08120B" />}
+                </View>
+                <Text style={[styles.applyText, isSel && { color: colors.white }]}>{o.text}</Text>
+              </Bouncy>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {checked === true ? (
+          <>
+            <FeedbackBanner styles={styles} colors={colors} tone="success" title="That's the habit." body="Pay your savings first — $20 of every $100 — and the rest of the plan falls into place." />
+            <PrimaryCTA styles={styles} label="Finish lesson" icon="checkmark" onPress={onNext} />
+          </>
+        ) : (
+          <>
+            {checked === 'wrong' && (
+              <FeedbackBanner styles={styles} colors={colors} tone="hint" title="Remember the order." body="Savings gets its slice before the fun money. Try again." />
+            )}
+            <PrimaryCTA styles={styles} label="Check" icon={null} onPress={check} disabled={!sel} />
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 5. Lesson complete
+// ---------------------------------------------------------------------------
+
+function LessonCompleteView({ styles, colors, reward, streakDays, onContinue }) {
+  const anim = useEnter([]);
+  return (
+    <View style={styles.flexFill}>
+      <ConfettiBurst colors={colors} />
+      <ScrollView contentContainerStyle={styles.centerScroll} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ alignItems: 'center', opacity: anim, transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }] }}>
+          <MascotGif source={GIF_CELEBRATE} size={150} colors={colors} />
+          <Text style={styles.bigTitle}>Lesson 1 complete</Text>
+          <Text style={styles.screenSub}>Plan your spending · Section 1</Text>
+
+          <View style={styles.xpBanner}>
+            <Ionicons name="flash" size={26} color={colors.primary} />
+            <CountUp value={reward.xp} prefix="+" style={styles.xpValue} />
+            <Text style={styles.xpLabel}>XP EARNED</Text>
+          </View>
+
+          <View style={styles.rewardRow}>
+            <View style={styles.rewardTile}>
+              <Ionicons name="logo-bitcoin" size={22} color={colors.botBucks} />
+              <CountUp value={reward.botBucks} prefix="+" style={styles.rewardTileValue} />
+              <Text style={styles.rewardTileLabel}>Bot Bucks</Text>
+            </View>
+            <View style={styles.rewardTile}>
+              <Ionicons name="flame" size={22} color={colors.streak} />
+              <Text style={styles.rewardTileValue}>{streakDays}</Text>
+              <Text style={styles.rewardTileLabel}>Day streak</Text>
+            </View>
+          </View>
+          <Text style={styles.finePrint}>Your streak counts days you finish a lesson, not days you open the app.</Text>
+        </Animated.View>
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label="Continue" onPress={onContinue} />
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 6. Streak commitment
+// ---------------------------------------------------------------------------
+
+const STREAK_GOALS = [
   { days: 7, label: 'Casual', blurb: 'Easy does it' },
   { days: 14, label: 'Regular', blurb: 'Build the habit' },
   { days: 30, label: 'Serious', blurb: 'Real momentum' },
   { days: 60, label: 'Intense', blurb: 'All in' },
 ];
 
-function StreakClaimView({ styles, colors, dailyReward, claiming, onClaim, onDone }) {
-  const anim = useRef(new Animated.Value(0)).current;
+function StreakCommitView({ styles, colors, selected, onSelect, onContinue }) {
+  const anim = useEnter([]);
   const flame = useRef(new Animated.Value(1)).current;
-  const claimBurst = useRef(new Animated.Value(0)).current;
-  const cardPop = useRef(new Animated.Value(1)).current;
-  const [claimed, setClaimed] = useState(dailyReward?.claimed_today ?? false);
-  const [earned, setEarned] = useState(0);
-  const [goalDays, setGoalDays] = useState(7);
-  const flameLoop = useRef(null);
-
-  const amount = dailyReward?.claim_amount ?? dailyReward?.tiers?.[0]?.bot_bucks ?? 5;
-  const selectedGoal = STREAK_GOAL_OPTIONS.find((o) => o.days === goalDays) || STREAK_GOAL_OPTIONS[0];
-
   useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }).start();
-    flameLoop.current = Animated.loop(
+    Animated.loop(
       Animated.sequence([
         Animated.timing(flame, { toValue: 1.12, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
         Animated.timing(flame, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
-    );
-    flameLoop.current.start();
-    return () => flameLoop.current?.stop();
-  }, []);
-
-  async function handleClaim() {
-    try {
-      const result = await onClaim({ streakGoal: goalDays });
-      if (!result) {
-        Alert.alert('Couldn\u2019t claim Day 1', 'Give it another tap in a second.');
-        return;
-      }
-      const got = result?.bot_bucks_earned ?? amount;
-      setEarned(got);
-      setClaimed(true);
-
-      // Flame whoosh + reward card pop on successful claim.
-      flameLoop.current?.stop();
-      claimBurst.setValue(0);
-      Animated.parallel([
-        Animated.sequence([
-          Animated.spring(flame, { toValue: 1.45, friction: 4, tension: 120, useNativeDriver: true }),
-          Animated.spring(flame, { toValue: 1.08, friction: 5, tension: 80, useNativeDriver: true }),
-        ]),
-        Animated.timing(claimBurst, {
-          toValue: 1,
-          duration: 700,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.sequence([
-          Animated.spring(cardPop, { toValue: 1.06, friction: 5, tension: 140, useNativeDriver: true }),
-          Animated.spring(cardPop, { toValue: 1, friction: 6, tension: 100, useNativeDriver: true }),
-        ]),
-      ]).start();
-    } catch (e) {
-      Alert.alert('Couldn\u2019t claim Day 1', 'Give it another tap in a second.');
-    }
-  }
-
-  function pickGoal(days) {
-    setGoalDays(days);
-    Animated.sequence([
-      Animated.spring(cardPop, { toValue: 0.97, friction: 8, tension: 200, useNativeDriver: true }),
-      Animated.spring(cardPop, { toValue: 1, friction: 5, tension: 160, useNativeDriver: true }),
-    ]).start();
-  }
-
+    ).start();
+  }, [flame]);
   return (
-    <ScrollView
-      style={styles.streakWrap}
-      contentContainerStyle={styles.streakScroll}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      bounces={false}
-    >
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
-        }}
-      >
-        <View style={styles.streakBadgeWrap}>
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.streakBurstRing,
-              {
-                opacity: claimBurst.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0.55, 0] }),
-                transform: [{
-                  scale: claimBurst.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.8] }),
-                }],
-              },
-            ]}
-          />
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ alignItems: 'center', opacity: anim }}>
           <Animated.View style={[styles.streakBadge, { transform: [{ scale: flame }] }]}>
-            <Ionicons name="flame" size={54} color="#fff" />
+            <Ionicons name="flame" size={46} color="#fff" />
           </Animated.View>
-        </View>
-        <Text style={styles.rewardKicker}>DAY 1 STREAK</Text>
-        <Text style={styles.rewardTitle}>{claimed ? 'Streak started' : 'Commit to a streak'}</Text>
-        <Text style={styles.rewardSub}>
-          {claimed
-            ? `You're going for ${goalDays} days. Come back tomorrow to keep it alive.`
-            : 'How many days in a row can you show up? Pick a goal, then claim Day 1.'}
-        </Text>
-      </Animated.View>
+          <Text style={styles.kicker}>YOUR COMMITMENT</Text>
+          <Text style={styles.bigTitle}>Pick a streak goal</Text>
+          <Text style={styles.bodyText}>How many days in a row will you show up? You can change it later.</Text>
+        </Animated.View>
 
-      {!claimed && (
-        <View style={styles.streakGoalList}>
-          {STREAK_GOAL_OPTIONS.map((opt) => {
-            const selected = opt.days === goalDays;
+        <View style={{ gap: 10, marginTop: 20 }}>
+          {STREAK_GOALS.map((o) => {
+            const isSel = selected === o.days;
             return (
               <Bouncy
-                key={opt.days}
-                style={[styles.streakGoalRow, selected && styles.streakGoalRowSel]}
-                onPress={() => pickGoal(opt.days)}
+                key={o.days}
+                style={[styles.streakRow, isSel && styles.streakRowSel]}
+                onPress={() => onSelect(o.days)}
               >
-                <View style={styles.streakGoalTextWrap}>
-                  <Text style={[styles.streakGoalLabel, selected && styles.streakGoalLabelSel]}>
-                    {opt.label}
-                  </Text>
-                  <Text style={styles.streakGoalBlurb}>{opt.blurb}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.streakLabel, isSel && { color: colors.streak }]}>{o.label}</Text>
+                  <Text style={styles.streakBlurb}>{o.blurb}</Text>
                 </View>
-                <Text style={[styles.streakGoalDays, selected && styles.streakGoalDaysSel]}>
-                  {opt.days} days
-                </Text>
-                <View style={[styles.streakGoalRadio, selected && styles.streakGoalRadioSel]}>
-                  {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                <Text style={[styles.streakDays, isSel && { color: colors.streak }]}>{o.days} days</Text>
+                <View style={[styles.streakRadio, isSel && styles.streakRadioSel]}>
+                  {isSel && <Ionicons name="checkmark" size={14} color="#fff" />}
                 </View>
               </Bouncy>
             );
           })}
         </View>
-      )}
-
-      <Animated.View style={[styles.streakCard, { transform: [{ scale: cardPop }] }]}>
-        {claimed ? (
-          <View style={styles.streakClaimedCol}>
-            <View style={styles.streakClaimedRow}>
-              <View style={styles.streakCheck}>
-                <Ionicons name="checkmark" size={18} color={colors.background} />
-              </View>
-              <Text style={styles.streakClaimedText}>
-                <CountUp value={earned} prefix="+" style={styles.streakClaimedText} /> Bot Bucks added
-              </Text>
-            </View>
-            <Text style={styles.streakGoalCommitted}>
-              Goal: {selectedGoal.label} · {goalDays} days
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.streakAmountRow}>
-            <Ionicons name="logo-bitcoin" size={24} color={colors.botBucks || '#F5B72B'} />
-            <Text style={styles.streakAmount}>+{amount}</Text>
-            <Text style={styles.streakAmountLabel}>Bot Bucks today</Text>
-          </View>
-        )}
-      </Animated.View>
-
-      {claimed ? (
-        <PrimaryButton styles={styles} colors={colors} label="Keep going" icon="arrow-forward" onPress={onDone} />
-      ) : (
-        <PressScaleButton style={styles.primaryBtn} onPress={handleClaim} disabled={claiming}>
-          <LinearGradient
-            colors={['#FF8C42', '#FF6B35']}
-            style={styles.primaryBtnGrad}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-          >
-            {claiming ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Text style={[styles.primaryBtnText, { color: '#fff' }]}>
-                  Claim Day 1 · {amount} Bot Bucks
-                </Text>
-                <Ionicons name="flame" size={19} color="#fff" />
-              </>
-            )}
-          </LinearGradient>
-        </PressScaleButton>
-      )}
-    </ScrollView>
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label={`Commit to ${selected} days`} icon="flame" color={colors.streak} onPress={onContinue} />
+      </View>
+    </View>
   );
 }
 
-// Persuasive notification opt-in — the last onboarding step. We push hard for
-// "Allow" (big animated bell, benefit bullets, glowing CTA) but always leave an
-// honest, low-friction escape hatch so the user can decline.
+// ---------------------------------------------------------------------------
+// 7. Character moment
+// ---------------------------------------------------------------------------
+
+function CharacterMomentView({
+  styles, colors, characters, equippedCharacter, equipCharacter, purchaseCharacter,
+  claimStarterCharacter, refreshCharacterCache, onDone,
+}) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!characters || characters.length === 0) {
+      refreshCharacterCache?.(false);
+    }
+  }, []);
+
+  // Build the roster: equipped = "Yours", free (price 0) = selectable,
+  // everything else = locked shop item.
+  const roster = useMemo(() => {
+    const list = [...(characters || [])].sort((a, b) => (a.price || 0) - (b.price || 0));
+    // Guarantee the equipped character is shown even if it's not in the list.
+    if (equippedCharacter && !list.some((c) => c.id === equippedCharacter.id)) {
+      list.unshift(equippedCharacter);
+    }
+    return list.map((c) => {
+      const equipped = equippedCharacter && c.id === equippedCharacter.id;
+      const free = !equipped && (c.is_owned || (c.price || 0) === 0);
+      return {
+        ...c,
+        _state: equipped ? 'equipped' : free ? 'free' : 'shop',
+      };
+    });
+  }, [characters, equippedCharacter]);
+
+  async function choose() {
+    if (busy) return;
+    if (!selectedId) { onDone(); return; }
+    const c = roster.find((x) => x.id === selectedId);
+    if (!c || c._state === 'shop') { onDone(); return; }
+    setBusy(true);
+    try {
+      if (!c.is_owned && (c.price || 0) === 0) {
+        try { await purchaseCharacter(c.id); } catch (e) { await claimStarterCharacter?.(); }
+      }
+      await equipCharacter(c.id);
+    } catch (e) {
+      try { await claimStarterCharacter?.(); } catch (e2) { /* ignore */ }
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  }
+
+  return (
+    <View style={styles.flexFill}>
+      <View style={styles.charHeader}>
+        <Text style={styles.bigTitleLeft}>Pick a starter character</Text>
+        <Text style={styles.screenSub}>One is free and yours to keep. Nothing here costs your Bot Bucks.</Text>
+      </View>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, gap: 12 }} showsVerticalScrollIndicator={false}>
+        {roster.length === 0 && (
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        )}
+        {roster.map((c) => {
+          const isSel = selectedId === c.id;
+          const locked = c._state === 'shop';
+          const selectable = c._state === 'free';
+          return (
+            <Bouncy
+              key={c.id}
+              disabled={!selectable}
+              style={[styles.charCard, isSel && styles.charCardSel, locked && { opacity: 0.6 }]}
+              onPress={() => selectable && setSelectedId(c.id)}
+            >
+              <View style={styles.charAvatar}>
+                <BrandAvatar character={c} size={60} logoSize={34} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.charNameRow}>
+                  <Text style={styles.charName}>{c.name}</Text>
+                  {c._state === 'equipped' && <View style={[styles.tag, { backgroundColor: 'rgba(61,220,95,0.18)' }]}><Text style={[styles.tagText, { color: colors.primary }]}>Yours</Text></View>}
+                  {c._state === 'free' && <View style={[styles.tag, { backgroundColor: 'rgba(61,220,95,0.18)' }]}><Text style={[styles.tagText, { color: colors.primary }]}>Free</Text></View>}
+                  {c._state === 'shop' && <View style={[styles.tag, { backgroundColor: 'rgba(245,183,43,0.18)' }]}><Text style={[styles.tagText, { color: colors.botBucks }]}>In the shop · {c.price}</Text></View>}
+                </View>
+                <Text style={styles.charDesc} numberOfLines={2}>
+                  {c.description || (c._state === 'shop' ? 'Unlock later with Bot Bucks you earn.' : 'A friendly starter build.')}
+                </Text>
+              </View>
+              {selectable && (
+                <View style={[styles.selectRadio, isSel && styles.selectRadioSel]}>
+                  {isSel && <Ionicons name="checkmark" size={15} color="#08120B" />}
+                </View>
+              )}
+            </Bouncy>
+          );
+        })}
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA
+          styles={styles}
+          label={busy ? 'Saving…' : 'Choose a character'}
+          icon={busy ? null : 'checkmark'}
+          onPress={choose}
+          disabled={busy || !selectedId}
+        />
+        <TouchableOpacity style={styles.linkBtn} activeOpacity={0.7} onPress={onDone} disabled={busy}>
+          <Text style={styles.linkText}>Keep {equippedCharacter?.name || 'MoneyBot'}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 8. Save progress (account creation) — only for guests
+// ---------------------------------------------------------------------------
+
+function SaveProgressView({ styles, colors, isGuest, firstName, streakDays, botBucks, character, navigation, onDone }) {
+  const anim = useEnter([]);
+  const { appleSignIn } = useAuth();
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Full accounts already have their progress saved — skip straight through.
+  useEffect(() => {
+    if (!isGuest) onDone();
+  }, [isGuest]);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      AppleAuthentication.isAvailableAsync().then(setAppleAvailable).catch(() => setAppleAvailable(false));
+    }
+  }, []);
+
+  const handleApple = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      await appleSignIn({
+        identityToken: credential.identityToken,
+        email: credential.email,
+        fullName: credential.fullName,
+      });
+      onDone();
+    } catch (e) {
+      if (e?.code !== 'ERR_REQUEST_CANCELED' && e?.code !== 'ERR_CANCELED') {
+        Alert.alert('Sign in failed', 'Could not sign in with Apple. You can keep going as a guest.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, appleSignIn, onDone]);
+
+  if (!isGuest) {
+    return (
+      <View style={[styles.flexFill, styles.center]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  const rows = [
+    { icon: 'school', color: colors.primary, label: 'Lesson 1 complete', value: 'Section 1' },
+    { icon: 'flame', color: colors.streak, label: 'Day streak', value: `${streakDays} day${streakDays === 1 ? '' : 's'}` },
+    { icon: 'logo-bitcoin', color: colors.botBucks, label: 'Bot Bucks', value: String(botBucks || 0) },
+    { icon: 'happy', color: colors.primary, label: 'Your character', value: character?.name || 'MoneyBot' },
+  ];
+
+  return (
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ opacity: anim }}>
+          <Text style={styles.bigTitleLeft}>Save what you just earned</Text>
+          <Text style={styles.screenSub}>An account keeps your progress if you switch phones.</Text>
+
+          <View style={styles.summaryCard}>
+            {rows.map((r, i) => (
+              <View key={r.label} style={[styles.summaryRow, i < rows.length - 1 && styles.summaryDivider]}>
+                <View style={[styles.summaryIcon, { backgroundColor: `${r.color}22` }]}>
+                  <Ionicons name={r.icon} size={18} color={r.color} />
+                </View>
+                <Text style={styles.summaryLabel}>{r.label}</Text>
+                <Text style={styles.summaryValue}>{r.value}</Text>
+              </View>
+            ))}
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {appleAvailable && (
+          <TouchableOpacity style={styles.appleBtn} activeOpacity={0.85} onPress={handleApple} disabled={busy}>
+            <Ionicons name="logo-apple" size={20} color="#000" />
+            <Text style={styles.appleBtnText}>Continue with Apple</Text>
+          </TouchableOpacity>
+        )}
+        <PrimaryCTA styles={styles} label="Sign up with email" icon="mail" onPress={() => navigation.navigate('AuthUpgrade', { mode: 'register', lockMode: true })} disabled={busy} />
+        <TouchableOpacity style={styles.linkBtn} activeOpacity={0.7} onPress={onDone} disabled={busy}>
+          <Text style={styles.linkText}>Continue as guest</Text>
+        </TouchableOpacity>
+        <Text style={styles.finePrint}>As a guest, everything stays on this device only.</Text>
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 9. Reminder (notifications opt-in)
+// ---------------------------------------------------------------------------
+
 const NOTIF_BENEFITS = [
   { icon: 'flame', tint: '#FF6B35', text: 'A nudge before your streak breaks at midnight.' },
   { icon: 'logo-bitcoin', tint: '#F5B72B', text: "Reminders so you don't miss free Bot Bucks." },
   { icon: 'trophy', tint: '#A66BFF', text: 'Heads up when new lessons and challenges drop.' },
 ];
 
-function NotificationBenefit({ styles, colors, icon, tint, text, delay }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 7, tension: 60, delay, useNativeDriver: true }).start();
-  }, []);
-  return (
-    <Animated.View
-      style={[
-        styles.notifBenefitRow,
-        {
-          opacity: anim,
-          transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
-        },
-      ]}
-    >
-      <View style={[styles.notifBenefitIcon, { backgroundColor: `${tint}22` }]}>
-        <Ionicons name={icon} size={20} color={tint} />
-      </View>
-      <Text style={styles.notifBenefitText}>{text}</Text>
-    </Animated.View>
-  );
-}
-
-function NotificationsOptInView({ styles, colors, firstName, streakDays, lastActive, onDone }) {
-  const anim = useRef(new Animated.Value(0)).current;
+function ReminderView({ styles, colors, firstName, streakDays, onDone }) {
+  const anim = useEnter([]);
   const bell = useRef(new Animated.Value(0)).current;
-  const glow = useRef(new Animated.Value(0)).current;
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 7, tension: 55, useNativeDriver: true }).start();
-    // Gentle repeating "ring" wobble to draw the eye to the bell.
     Animated.loop(
       Animated.sequence([
         Animated.delay(1200),
@@ -1849,59 +1479,27 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
         Animated.timing(bell, { toValue: 0, duration: 100, useNativeDriver: true }),
       ]),
     ).start();
-    // Soft pulsing glow behind the primary button.
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(glow, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(glow, { toValue: 0, duration: 1100, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ]),
-    ).start();
-  }, []);
-
-  const finish = useCallback(() => {
-    if (busy) return;
-    onDone();
-  }, [busy, onDone]);
+  }, [bell]);
 
   const handleAllow = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     try {
-      if (!areNotificationsSupported()) {
-        Alert.alert(
-          'Almost there',
-          "Notifications aren't available in this build yet. Rebuild the dev client to enable them:\n\ncd mobile && npx expo run:ios",
-          [{ text: 'Continue', onPress: onDone }],
-        );
-        return;
-      }
-
+      if (!areNotificationsSupported()) { onDone(); return; }
       const info = await getNotificationPermissionInfo();
-      console.log('[Onboarding][notif] permission before request:', info);
-
       const saveAndSync = async () => {
         const prefs = await loadNotificationPrefs();
         const next = { ...prefs, daily: true, streak: true };
         await saveNotificationPrefs(next);
-        const result = await syncNotificationSchedule(next, {
-          firstName,
-          streakDays,
-          activeToday: lastActive === localDate(),
+        await syncNotificationSchedule(next, {
+          firstName, streakDays, activeToday: true,
         });
-        console.log('[Onboarding][notif] sync result:', result);
       };
-
-      if (info.status === 'granted') {
-        await saveAndSync();
-        onDone();
-        return;
-      }
-
-      // Already decided at the OS level: iOS won't show the system prompt again.
+      if (info.status === 'granted') { await saveAndSync(); onDone(); return; }
       if (info.status === 'denied' || !info.canAskAgain) {
         Alert.alert(
           'Turn on in Settings',
-          "Notifications are currently off for MoneyBot. iOS only asks once, so open Settings to switch them on. You can keep going either way.",
+          'Notifications are off for MoneyBot. iOS only asks once, so open Settings to switch them on. You can keep going either way.',
           [
             { text: 'Not now', style: 'cancel', onPress: onDone },
             { text: 'Open Settings', onPress: () => { Linking.openSettings(); onDone(); } },
@@ -1909,485 +1507,347 @@ function NotificationsOptInView({ styles, colors, firstName, streakDays, lastAct
         );
         return;
       }
-
       await saveAndSync();
       onDone();
-    } catch (err) {
-      console.log('[Onboarding][notif] error:', err?.message || err);
+    } catch (e) {
       onDone();
     } finally {
       setBusy(false);
     }
-  }, [busy, firstName, streakDays, lastActive, onDone]);
+  }, [busy, firstName, streakDays, onDone]);
 
   const bellRotate = bell.interpolate({ inputRange: [-1, 1], outputRange: ['-16deg', '16deg'] });
 
   return (
-    <ScrollView
-      style={styles.notifWrap}
-      contentContainerStyle={styles.notifScroll}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      bounces={false}
-    >
-      <Animated.View
-        style={{
-          alignItems: 'center',
-          opacity: anim,
-          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
-        }}
-      >
-        <View style={styles.notifBadge}>
-          <Animated.View style={{ transform: [{ rotate: bellRotate }] }}>
-            <Ionicons name="notifications" size={48} color={colors.primary} />
-          </Animated.View>
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ alignItems: 'center', opacity: anim }}>
+          <View style={styles.notifBadge}>
+            <Animated.View style={{ transform: [{ rotate: bellRotate }] }}>
+              <Ionicons name="notifications" size={46} color={colors.primary} />
+            </Animated.View>
+          </View>
+          <Text style={styles.kicker}>STAY ON TRACK</Text>
+          <Text style={styles.bigTitle}>{firstName ? `Keep it going, ${firstName}` : 'Keep it going'}</Text>
+          <Text style={styles.bodyText}>Turn on reminders so we can protect your streak and nudge you before you lose progress.</Text>
+        </Animated.View>
+
+        <View style={{ gap: 12, marginTop: 26 }}>
+          {NOTIF_BENEFITS.map((b) => (
+            <View key={b.icon} style={styles.benefitRow}>
+              <View style={[styles.benefitIcon, { backgroundColor: `${b.tint}22` }]}>
+                <Ionicons name={b.icon} size={20} color={b.tint} />
+              </View>
+              <Text style={styles.benefitText}>{b.text}</Text>
+            </View>
+          ))}
         </View>
-        <Text style={styles.rewardKicker}>ONE LAST THING</Text>
-        <Text style={styles.rewardTitle}>
-          {firstName ? `Stay on track, ${firstName}` : 'Stay on track'}
-        </Text>
-        <Text style={styles.rewardSub}>
-          Turn on notifications so we can keep your streak alive and remind you before you lose progress.
-        </Text>
-      </Animated.View>
-
-      <View style={styles.notifBenefits}>
-        {NOTIF_BENEFITS.map((b, i) => (
-          <NotificationBenefit
-            key={b.icon}
-            styles={styles}
-            colors={colors}
-            icon={b.icon}
-            tint={b.tint}
-            text={b.text}
-            delay={250 + i * 120}
-          />
-        ))}
-      </View>
-
-      <View style={styles.notifCta}>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.notifGlow,
-            {
-              opacity: glow.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.5] }),
-              transform: [{ scale: glow.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1.03] }) }],
-            },
-          ]}
-        />
-        <PressScaleButton style={styles.primaryBtn} onPress={handleAllow} disabled={busy}>
-          <LinearGradient
-            colors={[colors.primary, colors.primaryDark]}
-            style={styles.primaryBtnGrad}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-          >
-            {busy ? (
-              <ActivityIndicator color={colors.background} />
-            ) : (
-              <>
-                <Ionicons name="notifications" size={20} color={colors.background} />
-                <Text style={styles.primaryBtnText}>Turn on notifications</Text>
-              </>
-            )}
-          </LinearGradient>
-        </PressScaleButton>
-        <Text style={styles.notifReassure}>Tap Allow when your phone asks. You can change this anytime.</Text>
-        <TouchableOpacity style={styles.notifSkip} activeOpacity={0.7} onPress={finish} disabled={busy}>
-          <Text style={styles.notifSkipText}>Maybe later</Text>
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label={busy ? 'One sec…' : 'Turn on reminders'} icon={busy ? null : 'notifications'} onPress={handleAllow} disabled={busy} />
+        <TouchableOpacity style={styles.linkBtn} activeOpacity={0.7} onPress={onDone} disabled={busy}>
+          <Text style={styles.linkText}>Maybe later</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+    </View>
   );
 }
 
-function PrimaryButton({ styles, colors, label, icon, onPress, disabled }) {
+// ---------------------------------------------------------------------------
+// 10. Learning path (final)
+// ---------------------------------------------------------------------------
+
+function LearningPathView({ styles, colors, modules, onFinish }) {
+  const anim = useEnter([]);
+  const [busy, setBusy] = useState(false);
+
+  // Show the first module's lessons as the path ahead; lesson 1 is done.
+  const firstModule = (modules || [])[0];
+  const lessons = (firstModule?.lessons || []).slice(0, 4);
+  const fallback = [
+    { id: 'l1', title: 'Plan your spending' },
+    { id: 'l2', title: 'Track where it goes' },
+    { id: 'l3', title: 'Save on autopilot' },
+    { id: 'l4', title: 'Smart with credit' },
+  ];
+  const path = lessons.length ? lessons : fallback;
+
+  async function finish() {
+    if (busy) return;
+    setBusy(true);
+    await onFinish();
+  }
+
   return (
-    <PressScaleButton
-      style={styles.primaryBtn}
-      onPress={() => {
-        Keyboard.dismiss();
-        onPress?.();
-      }}
-      disabled={disabled}
-    >
-      <LinearGradient
-        colors={[colors.primary, colors.primaryDark]}
-        style={styles.primaryBtnGrad}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-      >
-        <Text style={styles.primaryBtnText}>{label}</Text>
-        {icon && <Ionicons name={icon} size={20} color={colors.background} />}
-      </LinearGradient>
-    </PressScaleButton>
+    <View style={styles.flexFill}>
+      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <Animated.View style={{ opacity: anim }}>
+          <View style={{ alignItems: 'center' }}>
+            <MascotGif source={GIF_CELEBRATE} size={130} colors={colors} />
+          </View>
+          <Text style={styles.bigTitle}>Your learning path</Text>
+          <Text style={styles.bodyText}>{firstModule?.title || 'Budgeting Basics'} is up first. Here's what's ahead.</Text>
+
+          <View style={{ marginTop: 22, gap: 10 }}>
+            {path.map((l, i) => {
+              const done = i === 0;
+              return (
+                <View key={l.id} style={styles.pathRow}>
+                  <View style={[styles.pathNode, done && styles.pathNodeDone, i === 1 && styles.pathNodeNext]}>
+                    {done
+                      ? <Ionicons name="checkmark" size={16} color="#08120B" />
+                      : <Text style={styles.pathNum}>{i + 1}</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pathTitle, done && { color: colors.textMuted }]}>{l.title}</Text>
+                    <Text style={styles.pathMeta}>{done ? 'Completed' : i === 1 ? 'Up next' : 'Locked'}</Text>
+                  </View>
+                  {!done && i !== 1 && <Ionicons name="lock-closed" size={16} color={colors.textMuted} />}
+                </View>
+              );
+            })}
+          </View>
+        </Animated.View>
+      </ScrollView>
+      <View style={styles.footer}>
+        <PrimaryCTA styles={styles} label={busy ? 'Setting up…' : 'Start learning'} icon={busy ? null : 'arrow-forward'} onPress={finish} disabled={busy} />
+      </View>
+    </View>
   );
 }
 
-function PulseLogo({ colors }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, { toValue: 1, duration: 650, useNativeDriver: true }),
-        Animated.timing(anim, { toValue: 0, duration: 650, useNativeDriver: true }),
-      ])
-    ).start();
-  }, []);
-  return (
-    <Animated.View
-      style={{
-        width: 96, height: 96, borderRadius: 48,
-        alignItems: 'center', justifyContent: 'center',
-        backgroundColor: 'rgba(61,220,95,0.12)',
-        borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)',
-        transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] }) }],
-        marginBottom: 22,
-      }}
-    >
-      <Ionicons name="sparkles" size={42} color={colors.primary} />
-    </Animated.View>
-  );
-}
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const makeStyles = (colors, bottomInset = 16) => {
   const footerPad = Math.max(bottomInset, 16);
   return StyleSheet.create({
-  gradient: { flex: 1 },
-  safe: { flex: 1 },
-  flexFill: { flex: 1 },
-  center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 32, paddingBottom: footerPad },
+    gradient: { flex: 1 },
+    safe: { flex: 1 },
+    flexFill: { flex: 1 },
+    center: { alignItems: 'center', justifyContent: 'center' },
 
-  // Goals
-  goalsWrap: { flex: 1, paddingTop: 12 },
-  goalsHeader: { paddingHorizontal: 20, marginBottom: 18 },
-  introIcon: {
-    width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 18,
-  },
-  introTitle: { fontSize: 26, fontWeight: '800', color: colors.white, textAlign: 'center', letterSpacing: -0.5, marginBottom: 10 },
-  introSub: { fontSize: 15, color: colors.textSecondary, textAlign: 'center', lineHeight: 22 },
-  goalsScroll: { paddingHorizontal: 20, paddingBottom: 12 },
-  goalsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  goalChip: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 16,
-    borderWidth: 1.5, borderColor: colors.border, gap: 8, minHeight: 104, justifyContent: 'center',
-  },
-  goalChipSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  goalIconWrap: {
-    width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)',
-  },
-  goalIconWrapSel: { backgroundColor: colors.primary },
-  goalLabel: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, lineHeight: 19 },
-  goalLabelSel: { color: colors.white },
-  goalCheck: {
-    position: 'absolute', top: 10, right: 10, width: 20, height: 20, borderRadius: 10,
-    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
-  },
-  goalsFooter: { paddingHorizontal: 24, paddingTop: 10, paddingBottom: footerPad },
+    // Top bar / progress
+    topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 48, gap: 8 },
+    backBtn: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
+    progressTrack: { flex: 1, height: 10, borderRadius: 5, backgroundColor: colors.surfaceElevated, overflow: 'hidden' },
+    progressFill: { height: '100%', borderRadius: 5, backgroundColor: colors.primary },
 
-  // Greet
-  greetWrap: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 8, justifyContent: 'center', gap: 22 },
-  greetScroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: footerPad },
-  greetAvatarRing: {
-    width: 132, height: 132, borderRadius: 66, overflow: 'hidden', marginBottom: 16,
-    borderWidth: 2, borderColor: 'rgba(61,220,95,0.45)', backgroundColor: colors.surfaceElevated,
-  },
-  greetAvatar: { width: '100%', height: '100%' },
-  greetTitle: { fontSize: 32, fontWeight: '900', color: colors.white, letterSpacing: -0.6, marginBottom: 4 },
-  greetBubble: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 16,
-    borderWidth: 1, borderColor: colors.border, marginBottom: 8,
-  },
-  greetMessage: { fontSize: 16, fontWeight: '600', color: colors.white, lineHeight: 24 },
-  betweenWrap: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingBottom: footerPad,
-    justifyContent: 'center',
-    gap: 28,
-  },
-  betweenGuide: { marginBottom: 4 },
-  charGuideRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  charGuideThumb: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.primaryTintStrong,
-  },
-  charRevealFrame: {
-    width: 168, height: 168, borderRadius: 28, overflow: 'hidden', marginBottom: 14, marginTop: 8,
-    backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
+    // Generic layout
+    centerWrap: { flex: 1, justifyContent: 'space-between' },
+    centerScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingTop: 8 },
+    scrollBody: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, flexGrow: 1 },
+    footer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: footerPad, gap: 10 },
 
-  // Progress
-  progressHeader: { paddingHorizontal: 24, paddingTop: 8, paddingBottom: 4, gap: 10 },
-  progressCount: { fontSize: 13, fontWeight: '700', color: colors.textSecondary, textAlign: 'center' },
-  segRow: { flexDirection: 'row', gap: 6 },
-  segTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.surfaceElevated, overflow: 'hidden' },
+    kicker: { fontSize: 12, fontWeight: '800', letterSpacing: 1.4, color: colors.primary, marginTop: 20, marginBottom: 6 },
 
-  // Question
-  qWrap: { flex: 1 },
-  qScroll: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
-  qFooter: {
-    paddingHorizontal: 24,
-    paddingTop: 8,
-    paddingBottom: footerPad,
-  },
-  qGuide: { paddingHorizontal: 24, paddingTop: 12 },
-  qPrompt: { fontSize: 19, fontWeight: '700', color: colors.white, textAlign: 'center', lineHeight: 26, marginBottom: 16 },
-  options: { gap: 12 },
-  option: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 16,
-    borderWidth: 1.5, borderColor: colors.border,
-  },
-  optionSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  optionRadio: {
-    width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border,
-  },
-  optionRadioSel: { backgroundColor: colors.primary, borderColor: colors.primary },
-  optionText: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.white },
-  optionTextSel: { color: colors.white },
+    // Welcome layout
+    welcomeWrap: { flex: 1 },
+    welcomeScroll: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 20 },
 
-  // True / False
-  tfRow: { flexDirection: 'row', gap: 14, marginBottom: 12 },
-  tfBtn: {
-    flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: 20, paddingVertical: 30,
-    alignItems: 'center', gap: 12, borderWidth: 2,
-  },
-  tfBtnText: { fontSize: 18, fontWeight: '800', color: colors.white },
-  tfExtra: {
-    alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 14,
-    backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, marginTop: 4,
-  },
-  tfExtraSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
-  tfExtraText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+    // Duolingo-style speech bubble. Greeting types out; tail points DOWN at
+    // MoneyBot below. Two stacked triangles = a crisp outlined tail (border
+    // triangle behind, slightly smaller fill triangle in front).
+    speechBubble: {
+      alignSelf: 'stretch',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: 22,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      paddingVertical: 20,
+      paddingHorizontal: 22,
+      minHeight: 108,
+      justifyContent: 'center',
+    },
+    speechText: { fontSize: 21, fontWeight: '800', color: colors.white, lineHeight: 29, letterSpacing: -0.3 },
+    speechTailDownWrap: { alignSelf: 'center', marginTop: -1, height: 15, width: 28, zIndex: 2 },
+    speechTailDownBorder: {
+      position: 'absolute', top: 0, alignSelf: 'center', width: 0, height: 0,
+      borderLeftWidth: 13, borderRightWidth: 13, borderTopWidth: 15,
+      borderLeftColor: 'transparent', borderRightColor: 'transparent',
+      borderTopColor: colors.border,
+    },
+    speechTailDownFill: {
+      position: 'absolute', top: 0, alignSelf: 'center', width: 0, height: 0,
+      borderLeftWidth: 11, borderRightWidth: 11, borderTopWidth: 12,
+      borderLeftColor: 'transparent', borderRightColor: 'transparent',
+      borderTopColor: colors.surfaceElevated,
+    },
 
-  // Scale slider (forgiving touch target)
-  scaleWrap: { marginTop: 6 },
-  scaleReadout: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 22, paddingHorizontal: 18,
-    borderWidth: 1.5, borderColor: colors.primary, marginBottom: 30, minHeight: 72, justifyContent: 'center',
-  },
-  scaleReadoutText: { fontSize: 20, fontWeight: '800', color: colors.white, textAlign: 'center' },
-  scaleTrack: { height: 56, justifyContent: 'center', marginBottom: 6, paddingHorizontal: 4 },
-  scaleBase: {
-    position: 'absolute', left: 4, right: 4, height: 12, borderRadius: 6, backgroundColor: colors.border,
-  },
-  scaleFill: { position: 'absolute', left: 4, height: 12, borderRadius: 6, backgroundColor: colors.primary },
-  scaleTick: {
-    position: 'absolute', width: 14, height: 14, borderRadius: 7, marginLeft: -7,
-    backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border,
-  },
-  scaleTickActive: { borderColor: colors.primary, backgroundColor: colors.primary },
-  scaleKnob: {
-    position: 'absolute', width: 40, height: 40, borderRadius: 20, marginLeft: -20,
-    backgroundColor: colors.white, borderWidth: 4, borderColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 5,
-  },
-  scaleKnobInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
-  scaleLabels: { flexDirection: 'row', marginTop: 4, marginBottom: 26 },
-  scaleLabelBtn: { flex: 1, paddingHorizontal: 2, paddingVertical: 10 },
-  scaleLabelText: { fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'center', lineHeight: 14 },
-  scaleLabelTextActive: { color: colors.primary, fontWeight: '800' },
+    // Coach intro (mascot + label beside it)
+    coachIntroRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6 },
+    coachIntroText: { alignItems: 'flex-start' },
+    kickerLeft: { fontSize: 12, fontWeight: '800', letterSpacing: 1.4, color: colors.primary, marginBottom: 2 },
+    coachName: { fontSize: 26, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
 
-  // Vertical scale
-  vScaleWrap: { marginTop: 6, gap: 14 },
-  vScaleReadout: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 18,
-    borderWidth: 1.5, borderColor: colors.primary, minHeight: 64, justifyContent: 'center',
-  },
-  vScaleRow: { flexDirection: 'row', alignItems: 'stretch', gap: 14, minHeight: 200, flexShrink: 1 },
-  vScaleLabelsCol: { flex: 1, justifyContent: 'space-between', paddingVertical: 4 },
-  vScaleLabelBtn: { paddingVertical: 8 },
-  vScaleLabelText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, lineHeight: 18 },
-  vScaleTrack: {
-    width: 72, borderRadius: 36, backgroundColor: colors.surfaceElevated,
-    borderWidth: 1, borderColor: colors.border, justifyContent: 'flex-start', overflow: 'visible',
-  },
-  vScaleBase: {
-    position: 'absolute', top: 16, bottom: 16, left: 28, width: 16, borderRadius: 8, backgroundColor: colors.border,
-  },
-  vScaleFill: {
-    position: 'absolute', top: 16, left: 28, width: 16, borderRadius: 8, backgroundColor: colors.primary,
-  },
-  vScaleTick: {
-    position: 'absolute', left: 22, width: 28, height: 28, borderRadius: 14, marginTop: -14,
-    backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border,
-  },
-  vScaleKnob: {
-    position: 'absolute', left: 12, width: 48, height: 48, borderRadius: 24, marginTop: -24,
-    backgroundColor: colors.white, borderWidth: 4, borderColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 5,
-  },
+    // Promises
+    promiseList: { gap: 14, marginTop: 24, paddingHorizontal: 4 },
+    promiseRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    promiseIcon: {
+      width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: 'rgba(61,220,95,0.14)',
+    },
+    promiseText: { flex: 1, fontSize: 16, fontWeight: '700', color: colors.white },
+    bigTitle: { fontSize: 30, fontWeight: '900', color: colors.white, letterSpacing: -0.6, textAlign: 'center', marginBottom: 12 },
+    bigTitleLeft: { fontSize: 27, fontWeight: '900', color: colors.white, letterSpacing: -0.5, marginBottom: 8 },
+    bodyText: { fontSize: 15, fontWeight: '500', color: colors.textSecondary, textAlign: 'center', lineHeight: 22, paddingHorizontal: 12 },
+    screenTitle: { fontSize: 25, fontWeight: '900', color: colors.white, letterSpacing: -0.5, marginTop: 20, marginBottom: 4 },
+    screenSub: { fontSize: 14, fontWeight: '500', color: colors.textSecondary, lineHeight: 20, marginTop: 4 },
 
-  // Calculating
-  calcText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
+    ctaInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    ctaText: { fontSize: 17, fontWeight: '800', color: '#08120B' },
+    linkBtn: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 20, minHeight: 44, justifyContent: 'center' },
+    linkText: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
+    finePrint: { fontSize: 12, fontWeight: '500', color: colors.textMuted, textAlign: 'center', lineHeight: 17, marginTop: 4 },
 
-  // Reveal
-  revealWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: footerPad, justifyContent: 'center' },
-  revealKicker: { fontSize: 13, fontWeight: '800', color: colors.textMuted, letterSpacing: 1.5, marginBottom: 18 },
-  revealBadge: {
-    width: 128, height: 128, borderRadius: 64, alignItems: 'center', justifyContent: 'center',
-    marginBottom: 18,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14, elevation: 10,
-  },
-  revealRank: { fontSize: 30, fontWeight: '900', letterSpacing: -0.5, marginBottom: 8 },
-  revealScore: { fontSize: 15, color: colors.textSecondary, fontWeight: '600' },
-  revealCard: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 18, gap: 14,
-    borderWidth: 1, borderColor: colors.border, marginTop: 30, marginBottom: 24,
-  },
-  revealCardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  revealCardText: { flex: 1, fontSize: 14, color: colors.offWhite, lineHeight: 20 },
+    // Coach bubble
+    coachRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 8 },
+    coachAvatarRing: { width: 56, height: 56, borderRadius: 28, overflow: 'hidden', borderWidth: 2, borderColor: colors.primaryTintStrong, backgroundColor: colors.surfaceElevated },
+    coachAvatar: { width: '100%', height: '100%' },
+    coachBubble: { flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: 18, borderTopLeftRadius: 6, padding: 14, borderWidth: 1, borderColor: colors.border },
+    coachText: { fontSize: 15, fontWeight: '600', color: colors.white, lineHeight: 21 },
 
-  // Reward (welcome bonus)
-  rewardWrap: { flex: 1, paddingHorizontal: 24, paddingBottom: footerPad, justifyContent: 'center' },
-  rewardBadge: {
-    width: 104, height: 104, borderRadius: 52, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 20,
-  },
-  rewardKicker: { fontSize: 13, fontWeight: '800', color: colors.textMuted, letterSpacing: 1.5, marginBottom: 10 },
-  rewardTitle: { fontSize: 30, fontWeight: '900', color: colors.white, letterSpacing: -0.5, marginBottom: 10, textAlign: 'center' },
-  rewardSub: { fontSize: 15, color: colors.textSecondary, textAlign: 'center', lineHeight: 22, paddingHorizontal: 12 },
-  rewardPillRow: { flexDirection: 'row', gap: 14, marginTop: 34, marginBottom: 30 },
-  rewardPill: {
-    flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: 20, paddingVertical: 22,
-    alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.border,
-  },
-  rewardPillIcon: {
-    width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 4,
-  },
-  rewardPillValue: { fontSize: 30, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
-  rewardPillLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    // Select rows
+    selectRow: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 16, borderWidth: 1.5, borderColor: colors.border, minHeight: 66 },
+    selectRowSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.10)' },
+    selectIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+    selectIconSel: { backgroundColor: colors.primary },
+    selectTitle: { fontSize: 16, fontWeight: '800', color: colors.white },
+    selectTitleSel: { color: colors.white },
+    selectBlurb: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginTop: 2 },
+    selectRadio: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+    selectRadioSel: { backgroundColor: colors.primary, borderColor: colors.primary },
 
-  // Streak claim
-  streakWrap: { flex: 1 },
-  streakScroll: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: footerPad,
-    justifyContent: 'center',
-  },
-  streakBadgeWrap: {
-    width: 120, height: 120, alignItems: 'center', justifyContent: 'center', marginBottom: 14,
-  },
-  streakBurstRing: {
-    position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: '#FF8C42',
-    backgroundColor: 'rgba(255,107,53,0.25)',
-  },
-  streakBadge: {
-    width: 100, height: 100, borderRadius: 50, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#FF6B35',
-    shadowColor: '#FF6B35', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 10,
-  },
-  streakGoalList: { marginTop: 22, gap: 10 },
-  streakGoalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  streakGoalRowSel: {
-    borderColor: '#FF6B35',
-    backgroundColor: 'rgba(255,107,53,0.12)',
-  },
-  streakGoalTextWrap: { flex: 1, minWidth: 0 },
-  streakGoalLabel: { fontSize: 16, fontWeight: '800', color: colors.white, marginBottom: 2 },
-  streakGoalLabelSel: { color: '#FF8C42' },
-  streakGoalBlurb: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  streakGoalDays: { fontSize: 14, fontWeight: '800', color: colors.textMuted },
-  streakGoalDaysSel: { color: '#FF8C42' },
-  streakGoalRadio: {
-    width: 24, height: 24, borderRadius: 12,
-    borderWidth: 2, borderColor: colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  streakGoalRadioSel: { backgroundColor: '#FF6B35', borderColor: '#FF6B35' },
-  streakCard: {
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 18,
-    borderWidth: 1, borderColor: colors.border, marginTop: 18, marginBottom: 20, alignItems: 'center',
-  },
-  streakAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  streakAmount: { fontSize: 28, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
-  streakAmountLabel: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
-  streakClaimedCol: { alignItems: 'center', gap: 10 },
-  streakClaimedRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  streakCheck: {
-    width: 30, height: 30, borderRadius: 15, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  streakClaimedText: { fontSize: 17, fontWeight: '800', color: colors.white },
-  streakGoalCommitted: { fontSize: 13, fontWeight: '700', color: '#FF8C42' },
+    // Lesson intro
+    sectionPill: { backgroundColor: 'rgba(61,220,95,0.14)', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 10 },
+    sectionPillText: { fontSize: 12, fontWeight: '800', letterSpacing: 1, color: colors.primary },
+    noteRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 },
+    noteText: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
 
-  // Notifications opt-in
-  notifWrap: { flex: 1 },
-  notifScroll: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingBottom: footerPad,
-    justifyContent: 'center',
-  },
-  notifBadge: {
-    width: 104, height: 104, borderRadius: 52, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginBottom: 20,
-  },
-  notifBenefits: { marginTop: 30, marginBottom: 26, gap: 14 },
-  notifBenefitRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 16,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  notifBenefitIcon: {
-    width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-  },
-  notifBenefitText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.offWhite, lineHeight: 20 },
-  notifCta: { alignItems: 'stretch' },
-  notifGlow: {
-    position: 'absolute', left: 0, right: 0, top: 0, height: 54, borderRadius: 16,
-    backgroundColor: colors.primary,
-  },
-  notifReassure: {
-    fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: 14, lineHeight: 18,
-  },
-  notifSkip: {
-    alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginTop: 4,
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  notifSkipText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
+    // Lesson chrome
+    lessonHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 48, gap: 10 },
+    lessonSegs: { flex: 1, flexDirection: 'row', gap: 5 },
+    lessonSeg: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.surfaceElevated, overflow: 'hidden' },
+    lessonSegFill: { flex: 1, borderRadius: 4 },
+    lessonCount: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, width: 34, textAlign: 'right' },
+    lessonBody: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
+    lessonScroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, flexGrow: 1 },
+    lessonKicker: { fontSize: 12, fontWeight: '800', letterSpacing: 1.2, color: colors.textMuted, marginTop: 8 },
+    lessonTitle: { fontSize: 23, fontWeight: '900', color: colors.white, letterSpacing: -0.4, marginTop: 6, marginBottom: 12, lineHeight: 29 },
+    lessonPara: { fontSize: 15, fontWeight: '500', color: colors.offWhite, lineHeight: 22, marginBottom: 14 },
+    bold: { fontWeight: '900', color: colors.white },
+    pointRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    pointMascot: { width: 34, height: 34 },
 
-  // Shared
-  primaryBtn: { borderRadius: 16, overflow: 'hidden' },
-  primaryBtnGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 17,
-  },
-  primaryBtnText: { fontSize: 17, fontWeight: '800', color: colors.background },
+    // Teaching bucket card
+    teachCard: { backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 18, borderWidth: 1, borderColor: colors.border, gap: 16, marginBottom: 16 },
+    bucketRow: { gap: 8 },
+    bucketHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    bucketLabel: { fontSize: 15, fontWeight: '800', color: colors.white },
+    bucketPct: { fontSize: 15, fontWeight: '900' },
+    bucketTrack: { height: 10, borderRadius: 5, backgroundColor: colors.surface, overflow: 'hidden' },
+    bucketFill: { height: '100%', borderRadius: 5 },
 
-  // Error
-  errTitle: { fontSize: 20, fontWeight: '800', color: colors.white, textAlign: 'center' },
-  errText: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 21, marginBottom: 8 },
-});
+    // Visual choice
+    planRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
+    planCard: { flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 12, borderWidth: 1.5, borderColor: colors.border, gap: 8 },
+    planCardSel: { borderColor: colors.primary },
+    planCardRight: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.10)' },
+    planHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    planName: { fontSize: 14, fontWeight: '800', color: colors.white },
+    planLegend: { fontSize: 12, fontWeight: '600', color: colors.textMuted, textAlign: 'center', marginTop: 16 },
+    miniRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    miniLetter: { fontSize: 11, fontWeight: '800', color: colors.textMuted, width: 12 },
+    miniTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.surface, overflow: 'hidden' },
+    miniFill: { height: '100%', borderRadius: 4, minWidth: 2 },
+
+    // Feedback banner
+    feedback: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, borderRadius: 16, borderWidth: 1.5, padding: 14 },
+    feedbackTitle: { fontSize: 16, fontWeight: '900' },
+    feedbackBody: { fontSize: 13, fontWeight: '500', color: colors.offWhite, lineHeight: 19, marginTop: 3 },
+    helperCenter: { fontSize: 14, fontWeight: '600', color: colors.textMuted, textAlign: 'center', paddingVertical: 16 },
+
+    // Tap to match
+    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16, marginBottom: 18 },
+    matchChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.surfaceElevated, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1.5, borderColor: colors.border },
+    matchChipActive: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
+    matchChipDone: { borderColor: colors.border, backgroundColor: colors.surface },
+    matchChipText: { fontSize: 14, fontWeight: '700', color: colors.white },
+    bucketDrop: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 16, borderWidth: 1.5, minHeight: 60 },
+    bucketDot: { width: 14, height: 14, borderRadius: 7 },
+    bucketDropLabel: { fontSize: 15, fontWeight: '800', color: colors.white },
+    bucketDropItems: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
+
+    // Word bank
+    sentenceCard: { backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 18, borderWidth: 1, borderColor: colors.border, marginTop: 16 },
+    sentenceText: { fontSize: 17, fontWeight: '600', color: colors.white, lineHeight: 30 },
+    blankChip: { fontWeight: '900', color: colors.textMuted, backgroundColor: colors.surface, borderRadius: 6, overflow: 'hidden' },
+    blankChipFilled: { color: colors.primary },
+    wordChip: { backgroundColor: colors.surfaceElevated, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 20, borderWidth: 1.5, borderColor: colors.border },
+    wordChipSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.12)' },
+    wordChipText: { fontSize: 15, fontWeight: '800', color: colors.white },
+    wordChipTextSel: { color: colors.primary },
+
+    // Application
+    applyOption: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 16, borderWidth: 1.5, borderColor: colors.border },
+    applyOptionSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.10)' },
+    applyOptionRight: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.14)' },
+    applyText: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.offWhite, lineHeight: 21 },
+
+    // Lesson complete
+    xpBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(61,220,95,0.10)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', paddingVertical: 22, paddingHorizontal: 28, marginTop: 18, marginBottom: 16 },
+    xpValue: { fontSize: 40, fontWeight: '900', color: colors.primary, letterSpacing: -1 },
+    xpLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 1, color: colors.primary },
+    rewardRow: { flexDirection: 'row', gap: 14 },
+    rewardTile: { flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: 18, paddingVertical: 18, alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border },
+    rewardTileValue: { fontSize: 26, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
+    rewardTileLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+
+    // Streak commit
+    streakBadge: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.streak, marginTop: 12, marginBottom: 4, shadowColor: colors.streak, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
+    streakRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.surfaceElevated, borderRadius: 16, paddingVertical: 15, paddingHorizontal: 16, borderWidth: 1.5, borderColor: colors.border },
+    streakRowSel: { borderColor: colors.streak, backgroundColor: 'rgba(255,107,53,0.10)' },
+    streakLabel: { fontSize: 16, fontWeight: '800', color: colors.white },
+    streakBlurb: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginTop: 2 },
+    streakDays: { fontSize: 14, fontWeight: '800', color: colors.textMuted },
+    streakRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+    streakRadioSel: { backgroundColor: colors.streak, borderColor: colors.streak },
+
+    // Character moment
+    charHeader: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 10 },
+    charCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: colors.border },
+    charCardSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.08)' },
+    charAvatar: { width: 60, height: 60 },
+    charNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    charName: { fontSize: 16, fontWeight: '800', color: colors.white },
+    charDesc: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, marginTop: 3, lineHeight: 18 },
+    tag: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+    tagText: { fontSize: 11, fontWeight: '800' },
+
+    // Save progress
+    summaryCard: { backgroundColor: colors.surfaceElevated, borderRadius: 18, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 16, marginTop: 22 },
+    summaryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 15 },
+    summaryDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+    summaryIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+    summaryLabel: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.white },
+    summaryValue: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+    appleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FFFFFF', borderRadius: 18, height: 56 },
+    appleBtnText: { fontSize: 17, fontWeight: '800', color: '#000' },
+
+    // Reminder
+    notifBadge: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(61,220,95,0.12)', borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', marginTop: 12, marginBottom: 4 },
+    benefitRow: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: colors.border },
+    benefitIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    benefitText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.offWhite, lineHeight: 20 },
+
+    // Learning path
+    pathRow: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surfaceElevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border },
+    pathNode: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border },
+    pathNodeDone: { backgroundColor: colors.primary, borderColor: colors.primary },
+    pathNodeNext: { borderColor: colors.primary },
+    pathNum: { fontSize: 14, fontWeight: '800', color: colors.textSecondary },
+    pathTitle: { fontSize: 15, fontWeight: '800', color: colors.white },
+    pathMeta: { fontSize: 12, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
+  });
 };

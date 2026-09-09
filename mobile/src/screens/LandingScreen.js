@@ -1,19 +1,28 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   TouchableOpacity,
   Animated,
+  Easing,
   ScrollView,
+  ActivityIndicator,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
-import { BrandLogo } from '../components/brand';
-import { LANDING } from '../constants/brandCopy';
+import { useAuth } from '../context/AuthContext';
+import PuckButton from '../components/PuckButton';
+import { BRAND_NAME, LANDING } from '../constants/brandCopy';
+
+// MoneyBot landing mascot (transparent hero art).
+const MASCOT_GIF = require('../../assets/moneybot-landing-hero.png');
+const BRAND_MARK = require('../../assets/logo.png');
 
 // Keep the hero column readable on iPad / large screens instead of stretching
 // edge-to-edge (which also made the absolute footer collide with Sign In).
@@ -21,18 +30,39 @@ const CONTENT_MAX_WIDTH = 420;
 
 export default function LandingScreen({ navigation }) {
   const { colors, isDark } = useTheme();
+  const { guestSignIn } = useAuth();
   const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [starting, setStarting] = useState(false);
+
+  // "Get started" drops the user straight into onboarding — no auth up front.
+  // A silent guest session backs their progress; they create a real account at
+  // the end of onboarding (the Save-progress step).
+  const handleGetStarted = async () => {
+    if (starting) return;
+    setStarting(true);
+    try {
+      await guestSignIn();
+      // Root navigator swaps to the Onboarding screen once the session is set.
+    } catch (e) {
+      setStarting(false);
+      Alert.alert(
+        'Could not get started',
+        'Something went wrong starting your session. Check your connection and try again.',
+      );
+    }
+  };
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
-  const logoScale = useRef(new Animated.Value(0.7)).current;
+  const mascotScale = useRef(new Animated.Value(0.8)).current;
   const buttonOpacity = useRef(new Animated.Value(0)).current;
+  const float = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.sequence([
       Animated.parallel([
-        Animated.spring(logoScale, {
+        Animated.spring(mascotScale, {
           toValue: 1,
           tension: 60,
           friction: 8,
@@ -57,17 +87,34 @@ export default function LandingScreen({ navigation }) {
         }),
       ]),
     ]).start();
+
+    // Gentle idle float on the mascot.
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(float, {
+          toValue: 1,
+          duration: 1600,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(float, {
+          toValue: 0,
+          duration: 1600,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
   }, []);
 
+  const floatY = float.interpolate({ inputRange: [0, 1], outputRange: [5, -7] });
+
   return (
-    <LinearGradient
-      colors={colors.bgGradient}
-      style={styles.gradient}
-    >
+    <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         {/*
-          Do NOT use position:absolute for the legal footer. On iPad (and tall
+          Do NOT use position:absolute for the footer. On iPad (and tall
           phones) a centered CTA stack collides with an absolute bottom footer,
           which is exactly what App Review flagged: Sign In under Privacy Policy.
           Footer lives in normal layout flow under the hero column instead.
@@ -82,66 +129,63 @@ export default function LandingScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
           bounces={false}
         >
-          <View style={[styles.hero, { paddingTop: windowHeight * 0.1 }]}>
-            <View style={styles.contentColumn}>
-              <Animated.View
-                style={[
-                  styles.logoContainer,
-                  { opacity: fadeAnim, transform: [{ scale: logoScale }] },
-                ]}
-              >
-                <BrandLogo size="hero" />
-              </Animated.View>
+          <Animated.View style={[styles.wordmarkRow, { opacity: fadeAnim }]}>
+            <Image source={BRAND_MARK} style={styles.wordmarkLogo} resizeMode="contain" />
+            <Text style={styles.wordmark}>{BRAND_NAME.toUpperCase()}</Text>
+          </Animated.View>
 
-              <Animated.View
-                style={[
-                  styles.taglineContainer,
-                  {
-                    opacity: fadeAnim,
-                    transform: [{ translateY: slideAnim }],
-                  },
-                ]}
-              >
-                <Text style={styles.tagline}>{LANDING.tagline}</Text>
-                <Text style={styles.subTagline}>
-                  {LANDING.subTagline}
-                </Text>
-              </Animated.View>
+          <View style={styles.hero}>
+            <Animated.Image
+              source={MASCOT_GIF}
+              resizeMode="contain"
+              style={[
+                styles.mascot,
+                {
+                  opacity: fadeAnim,
+                  transform: [{ scale: mascotScale }, { translateY: floatY }],
+                },
+              ]}
+            />
 
-              <Animated.View style={[styles.divider, { opacity: fadeAnim }]}>
-                <View style={styles.dividerLine} />
-                <View style={styles.dividerDot} />
-                <View style={styles.dividerLine} />
-              </Animated.View>
-
-            </View>
+            <Animated.View
+              style={[
+                styles.taglineContainer,
+                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+              ]}
+            >
+              <Text style={styles.tagline}>{LANDING.tagline}</Text>
+              <Text style={styles.subTagline}>{LANDING.subTagline}</Text>
+            </Animated.View>
           </View>
 
           <Animated.View style={[styles.buttonContainer, { opacity: buttonOpacity }]}>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => navigation.navigate('Auth', { mode: 'register' })}
-              activeOpacity={0.85}
+            <PuckButton
+              color={colors.primary}
+              height={58}
+              borderRadius={29}
+              lip={5}
+              onPress={handleGetStarted}
+              disabled={starting}
+              contentStyle={styles.buttonInner}
+              accessibilityLabel="Get started"
             >
-              <LinearGradient
-                colors={[colors.primary, colors.primaryDark]}
-                style={styles.buttonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Text style={styles.primaryButtonText}>Get Started</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+              {starting ? (
+                <ActivityIndicator color="#08120B" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Get started</Text>
+              )}
+            </PuckButton>
 
             <TouchableOpacity
               style={styles.secondaryButton}
-              onPress={() => navigation.navigate('Auth', { mode: 'login' })}
+              onPress={() => navigation.navigate('Auth', { mode: 'login', lockMode: true })}
               activeOpacity={0.8}
+              disabled={starting}
               hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
             >
               <Text style={styles.secondaryButtonText}>
-                Already have an account?{' '}
-                <Text style={styles.secondaryButtonAccent}>Sign In</Text>
+                I already have an account{' '}
+                <Text style={styles.secondaryButtonAccent}>Sign in</Text>
               </Text>
             </TouchableOpacity>
           </Animated.View>
@@ -163,95 +207,81 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 32,
-    paddingTop: 12,
-    paddingBottom: 20,
-    justifyContent: 'space-between',
+    paddingHorizontal: 28,
+    paddingTop: 20,
+    paddingBottom: 24,
     alignItems: 'center',
+  },
+  wordmarkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  wordmarkLogo: {
+    width: 24,
+    height: 24,
+  },
+  wordmark: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 4,
+    color: colors.primary,
+    textAlign: 'center',
   },
   hero: {
     flexGrow: 1,
     width: '100%',
     maxWidth: CONTENT_MAX_WIDTH,
-    justifyContent: 'flex-start',
     alignItems: 'center',
-    paddingBottom: 24,
+    justifyContent: 'center',
   },
-  contentColumn: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 28,
+  mascot: {
+    width: 200,
+    height: 200,
+    marginBottom: 20,
   },
   taglineContainer: {
     alignItems: 'center',
-    marginBottom: 24,
+    paddingHorizontal: 8,
   },
   tagline: {
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 34,
+    fontWeight: '900',
     color: colors.white,
     textAlign: 'center',
-    letterSpacing: 0.3,
-    marginBottom: 8,
+    letterSpacing: -0.6,
+    lineHeight: 40,
+    marginBottom: 12,
   },
   subTagline: {
-    fontSize: 15,
+    fontSize: 16,
+    fontWeight: '500',
     color: colors.textSecondary,
     textAlign: 'center',
     letterSpacing: 0.2,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 28,
-    width: '80%',
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-    marginHorizontal: 10,
   },
   buttonContainer: {
     width: '100%',
     maxWidth: CONTENT_MAX_WIDTH,
     alignItems: 'center',
-    gap: 14,
+    gap: 8,
     paddingTop: 12,
-    paddingBottom: 8,
   },
-  primaryButton: {
-    width: '100%',
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  buttonGradient: {
-    paddingVertical: 16,
+  buttonInner: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 14,
+    justifyContent: 'center',
   },
   primaryButtonText: {
-    color: colors.background,
+    color: '#08120B',
     fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 0.4,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   secondaryButton: {
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 8,
     minHeight: 44,
     justifyContent: 'center',
@@ -259,10 +289,11 @@ const makeStyles = (colors) => StyleSheet.create({
   secondaryButtonText: {
     color: colors.textSecondary,
     fontSize: 15,
+    fontWeight: '500',
     textAlign: 'center',
   },
   secondaryButtonAccent: {
     color: colors.primary,
-    fontWeight: '600',
+    fontWeight: '800',
   },
 });

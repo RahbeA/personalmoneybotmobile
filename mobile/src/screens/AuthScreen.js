@@ -38,6 +38,9 @@ export default function AuthScreen({ route, navigation }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const initialMode = route?.params?.mode || 'login';
+  // When locked (e.g. Landing "Sign in" = login only, or the end-of-onboarding
+  // "Sign up with email" = register only), hide the mode toggle + guest option.
+  const lockMode = route?.params?.lockMode ?? false;
   const [mode, setMode] = useState(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -343,21 +346,23 @@ export default function AuthScreen({ route, navigation }) {
               </Text>
             </Animated.View>
 
-            {/* Mode Toggle Tabs */}
-            <Animated.View style={[styles.tabContainer, { opacity: fadeAnim }]}>
-              <TouchableOpacity
-                style={[styles.tab, isLogin && styles.tabActive]}
-                onPress={() => switchMode('login')}
-              >
-                <Text style={[styles.tabText, isLogin && styles.tabTextActive]}>Sign In</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tab, !isLogin && styles.tabActive]}
-                onPress={() => switchMode('register')}
-              >
-                <Text style={[styles.tabText, !isLogin && styles.tabTextActive]}>Sign Up</Text>
-              </TouchableOpacity>
-            </Animated.View>
+            {/* Mode Toggle Tabs — hidden when the screen is locked to one mode */}
+            {!lockMode && (
+              <Animated.View style={[styles.tabContainer, { opacity: fadeAnim }]}>
+                <TouchableOpacity
+                  style={[styles.tab, isLogin && styles.tabActive]}
+                  onPress={() => switchMode('login')}
+                >
+                  <Text style={[styles.tabText, isLogin && styles.tabTextActive]}>Sign In</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.tab, !isLogin && styles.tabActive]}
+                  onPress={() => switchMode('register')}
+                >
+                  <Text style={[styles.tabText, !isLogin && styles.tabTextActive]}>Sign Up</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            )}
 
             {/* Form */}
             <Animated.View
@@ -588,7 +593,7 @@ export default function AuthScreen({ route, navigation }) {
                 </LinearGradient>
               </TouchableOpacity>
 
-              {!isGuest && (
+              {!isGuest && !lockMode && (
                 <TouchableOpacity
                   style={styles.guestButton}
                   onPress={handleGuest}

@@ -10,13 +10,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../context/AuthContext';
-import { useUserProgress, getRankMeta } from '../context/UserProgressContext';
+import { useUserProgress } from '../context/UserProgressContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { useTabBarInset } from '../navigation/tabBarLayout';
 import { BrandAvatar, BrandToast } from '../components/brand';
-import ScreenAppBar, { screenAppBarTitleStyles } from '../components/ScreenAppBar';
-import PuckButton from '../components/PuckButton';
 import { LEGAL } from '../constants/legal';
 import { GOALS } from '../constants/goals';
 import {
@@ -40,13 +38,14 @@ const GOAL_KEYWORDS = {
   save_big_goal: ['saving', 'save', 'emergenc'],
 };
 
-const NOTIF_ROWS = [
-  { key: 'daily', label: 'Daily reminders', hint: 'A 6pm ping to hop into a lesson', icon: 'sunny-outline' },
-  { key: 'streak', label: 'Streak alerts', hint: 'Only when your streak is actually at risk', icon: 'flame-outline' },
-  { key: 'newContent', label: 'Product updates', hint: 'New lessons and MoneyBot news', icon: 'megaphone-outline' },
+// The two reminder toggles shown in the REMINDERS card (map to notif prefs).
+const REMINDER_ROWS = [
+  { key: 'daily', label: 'Daily reminder', hint: '6pm nudge to do a lesson', icon: 'sunny-outline' },
+  { key: 'streak', label: 'Streak alerts', hint: 'Get warned when your streak is at risk', icon: 'flame-outline' },
 ];
 
 const GOAL_CELEB_KEY = 'goalCelebratedV1';
+const REDUCE_MOTION_KEY = 'reduceMotionV1';
 
 function goalLessonProgress(goalKey, modules = []) {
   const needles = GOAL_KEYWORDS[goalKey] || [];
@@ -68,36 +67,26 @@ function goalLessonProgress(goalKey, modules = []) {
   return { done, total };
 }
 
-function LinkTile({ icon, label, onPress, colors, styles }) {
-  return (
-    <TouchableOpacity style={styles.linkTile} activeOpacity={0.8} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={colors.primary} />
-      <Text style={styles.linkTileLabel}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
 export default function SettingsScreen({ navigation }) {
   const { user, isGuest, updateProfile, logout, deleteAccount } = useAuth();
   const {
-    xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter, rank,
+    xp, streakDays, lastActive, level, lessonsCompleted, botBucks, equippedCharacter,
+    xpInCurrentLevel, XP_PER_LEVEL, xpProgress,
     onboardingGoals, updateGoals, modules,
     loading: progressLoading,
   } = useUserProgress();
   const { registerPush } = useNotifications();
-  const rankMeta = getRankMeta(rank?.key);
   const { colors, isDark, toggleTheme } = useTheme();
   const tabBarInset = useTabBarInset(24);
   const styles = useMemo(() => makeStyles(colors, tabBarInset), [colors, tabBarInset]);
-  const titleStyles = useMemo(() => screenAppBarTitleStyles(colors), [colors]);
 
   const [notifPrefs, setNotifPrefs] = useState({ daily: true, streak: true, newContent: false });
   const [notifLoading, setNotifLoading] = useState(true);
   const [notifSyncing, setNotifSyncing] = useState(false);
   const [permInfo, setPermInfo] = useState({ supported: true, status: 'undetermined', canAskAgain: true });
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [goalToast, setGoalToast] = useState(null);
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const celebratedRef = useRef({});
   const goalBaselineReady = useRef(false);
 
@@ -115,7 +104,10 @@ export default function SettingsScreen({ navigation }) {
   const notifSupported = areNotificationsSupported();
 
   const displayName = getFirstName(user);
-  const emailDisplay = isGuest ? 'Guest — progress saved on this device' : (user?.email || '');
+  const emailDisplay = isGuest ? 'Guest — saved on this device' : (user?.email || '');
+
+  const xpPct = Math.max(0, Math.min(1, xpProgress || 0));
+  const xpToNext = Math.max(0, (XP_PER_LEVEL || 200) - (xpInCurrentLevel || 0));
 
   function goToCreateAccount() {
     const rootNav = navigation.getParent?.() ?? navigation;
@@ -174,12 +166,24 @@ export default function SettingsScreen({ navigation }) {
     rootNav.navigate('Legal', { document });
   }
 
+  const setReduceMotionPref = useCallback((value) => {
+    setReduceMotion(value);
+    SecureStore.setItemAsync(REDUCE_MOTION_KEY, value ? '1' : '0').catch(() => {});
+  }, []);
+
+  function comingSoon(feature) {
+    Alert.alert(feature, 'More options are on the way. English is the only language for now.');
+  }
+
   useEffect(() => {
     loadNotificationPrefs().then((prefs) => {
       setNotifPrefs(prefs);
       setNotifLoading(false);
     });
     refreshPermInfo();
+    SecureStore.getItemAsync(REDUCE_MOTION_KEY).then((raw) => {
+      if (raw === '1') setReduceMotion(true);
+    }).catch(() => {});
     SecureStore.getItemAsync(GOAL_CELEB_KEY).then((raw) => {
       try {
         celebratedRef.current = raw ? JSON.parse(raw) : {};
@@ -233,7 +237,6 @@ export default function SettingsScreen({ navigation }) {
     }
   }, [selectedGoals, modules, user?.id, progressLoading]);
 
-  const notifOn = notifPrefs.daily || notifPrefs.streak || notifPrefs.newContent;
   const permDenied = permInfo.status === 'denied';
 
   const applyNotifPrefs = useCallback(async (next) => {
@@ -277,10 +280,6 @@ export default function SettingsScreen({ navigation }) {
       setNotifSyncing(false);
     }
   }, [notifPrefs, notifSupported, user, streakDays, lastActive, refreshPermInfo, registerPush]);
-
-  const toggleNotifications = useCallback(async (value) => {
-    await applyNotifPrefs({ daily: value, streak: value, newContent: value });
-  }, [applyNotifPrefs]);
 
   const toggleNotifPref = useCallback(async (key, value) => {
     await applyNotifPrefs({ ...notifPrefs, [key]: value });
@@ -329,222 +328,237 @@ export default function SettingsScreen({ navigation }) {
     );
   }
 
+  const switchColors = {
+    trackColor: { false: colors.border, true: colors.primary },
+    thumbColor: '#FFFFFF',
+    ios_backgroundColor: colors.border,
+  };
+
+  const appRows = [
+    {
+      key: 'appearance',
+      icon: 'color-palette-outline',
+      label: 'Appearance',
+      value: isDark ? 'Dark' : 'Light',
+      onPress: toggleTheme,
+    },
+    {
+      key: 'language',
+      icon: 'language-outline',
+      label: 'Language',
+      value: 'English',
+      onPress: () => comingSoon('Language'),
+    },
+    {
+      key: 'legal',
+      icon: 'document-text-outline',
+      label: 'Terms & privacy',
+      onPress: () => openLegal('terms'),
+    },
+    {
+      key: 'support',
+      icon: 'mail-outline',
+      label: 'Contact support',
+      onPress: () => Linking.openURL(`mailto:${LEGAL.contactEmail}`),
+    },
+    {
+      key: 'website',
+      icon: 'globe-outline',
+      label: 'getmoneybot.com',
+      onPress: () => Linking.openURL('https://getmoneybot.com'),
+    },
+  ];
+
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenAppBar
-          showBack={false}
-          rightActions={(
-            <TouchableOpacity
-              style={styles.menuBtn}
-              activeOpacity={0.85}
-              onPress={() => setSettingsMenuOpen(true)}
-              accessibilityLabel="Open quick settings"
-            >
-              <Ionicons name="menu" size={20} color={colors.white} />
-            </TouchableOpacity>
-          )}
-        >
-          <View style={styles.identity}>
-            <View style={styles.identityAvatar}>
-              <Ionicons name="person" size={18} color={colors.primary} />
-            </View>
-            <View style={styles.identityCopy}>
-              <Text style={titleStyles.title} numberOfLines={1}>Settings</Text>
-              <Text style={titleStyles.eyebrow} numberOfLines={1}>Profile & preferences</Text>
-            </View>
-          </View>
-        </ScreenAppBar>
-
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-          {/* Profile hero */}
-          <LinearGradient
-            colors={['rgba(61,220,95,0.16)', 'rgba(61,220,95,0.04)']}
-            style={styles.heroCard}
-          >
-            <TouchableOpacity
-              style={styles.heroEditBtn}
-              activeOpacity={0.8}
-              onPress={openProfileEditor}
-              accessibilityLabel="Edit name"
-            >
-              <Ionicons name="pencil" size={14} color={colors.primary} />
-            </TouchableOpacity>
-
-            <View style={styles.heroTop}>
-              <BrandAvatar character={equippedCharacter} size={52} autoRotate={!!equippedCharacter} />
-              <View style={styles.heroIdentity}>
-                <Text style={styles.heroName} numberOfLines={1}>{displayName}</Text>
-                <Text style={styles.heroEmail} numberOfLines={1}>{emailDisplay}</Text>
-                <View style={styles.chipRow}>
-                  {rank && (
-                    <View style={[styles.chip, { borderColor: rankMeta.color + '55', backgroundColor: rankMeta.color + '1A' }]}>
-                      <Ionicons name={rankMeta.ionIcon} size={11} color={rankMeta.color} />
-                      <Text style={[styles.chipText, { color: rankMeta.color }]}>{rank.label}</Text>
-                    </View>
-                  )}
-                  <View style={styles.chip}>
-                    <Text style={[styles.chipText, { color: colors.primary }]}>Lv {level}</Text>
-                  </View>
+          {/* Profile header */}
+          <View style={styles.profileRow}>
+            <View style={styles.avatarRing}>
+              <BrandAvatar character={equippedCharacter} size={64} autoRotate={!!equippedCharacter} />
+            </View>
+            <View style={styles.profileCopy}>
+              <View style={styles.nameRow}>
+                <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
+                <TouchableOpacity
+                  style={styles.editBtn}
+                  activeOpacity={0.8}
+                  onPress={openProfileEditor}
+                  accessibilityLabel="Edit name"
+                >
+                  <Ionicons name="pencil" size={13} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.email} numberOfLines={1}>{emailDisplay}</Text>
+              <View style={styles.levelRow}>
+                <View style={styles.levelPill}>
+                  <Text style={styles.levelPillText}>LEVEL {level}</Text>
                 </View>
+                <Text style={styles.xpText}>{xpInCurrentLevel} / {XP_PER_LEVEL} XP</Text>
               </View>
             </View>
+          </View>
 
-            <View style={styles.statsStrip}>
-              <View style={styles.stat}>
-                <Text style={[styles.statVal, { color: colors.streak }]}>{streakDays}</Text>
-                <Text style={styles.statLbl}>Streak</Text>
-              </View>
-              <View style={styles.statDiv} />
-              <View style={styles.stat}>
-                <Text style={[styles.statVal, { color: colors.botBucks }]}>{botBucks}</Text>
-                <Text style={styles.statLbl}>Bucks</Text>
-              </View>
-              <View style={styles.statDiv} />
-              <View style={styles.stat}>
-                <Text style={styles.statVal}>{lessonsCompleted}</Text>
-                <Text style={styles.statLbl}>Lessons</Text>
-              </View>
-              <View style={styles.statDiv} />
-              <View style={styles.stat}>
-                <Text style={styles.statVal}>{xp}</Text>
-                <Text style={styles.statLbl}>XP</Text>
-              </View>
+          {/* XP progress */}
+          <View style={styles.xpTrack}>
+            <View style={[styles.xpFill, { width: `${Math.round(xpPct * 100)}%` }]} />
+          </View>
+          <Text style={styles.xpCaption}>{xpToNext} XP to level {level + 1}</Text>
+
+          {/* Stats */}
+          <View style={styles.statsRow}>
+            <View style={styles.statTile}>
+              <Ionicons name="flame" size={22} color={colors.streak} />
+              <Text style={styles.statValue}>{streakDays}</Text>
+              <Text style={styles.statLabel}>Day streak</Text>
             </View>
-          </LinearGradient>
+            <View style={styles.statTile}>
+              <View style={styles.coin}><Text style={styles.coinText}>$</Text></View>
+              <Text style={styles.statValue}>{botBucks}</Text>
+              <Text style={styles.statLabel}>Bot Bucks</Text>
+            </View>
+            <View style={styles.statTile}>
+              <Ionicons name="school" size={22} color={colors.primary} />
+              <Text style={styles.statValue}>{lessonsCompleted}</Text>
+              <Text style={styles.statLabel}>Lessons</Text>
+            </View>
+            <View style={styles.statTile}>
+              <Ionicons name="flash" size={22} color={colors.primary} />
+              <Text style={styles.statValue}>{xp}</Text>
+              <Text style={styles.statLabel}>XP</Text>
+            </View>
+          </View>
 
-          {/* Guest upgrade CTA */}
+          {/* Guest upgrade */}
           {isGuest && (
-            <TouchableOpacity
-              style={styles.guestCta}
-              activeOpacity={0.9}
-              onPress={goToCreateAccount}
-            >
+            <TouchableOpacity style={styles.guestCta} activeOpacity={0.9} onPress={goToCreateAccount}>
               <View style={styles.guestCtaIcon}>
-                <Ionicons name="shield-checkmark" size={22} color={colors.primary} />
+                <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
               </View>
-              <View style={styles.guestCtaText}>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.guestCtaTitle}>Save your progress</Text>
-                <Text style={styles.guestCtaBody}>
-                  Create a free account to keep your XP, streak and Bot Bucks across devices.
-                </Text>
+                <Text style={styles.guestCtaBody}>Create a free account to keep your XP, streak and Bot Bucks.</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
           )}
 
-          {/* Quick settings entry — notifications + dark mode live in the menu (top-right). */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            activeOpacity={0.85}
-            onPress={() => setSettingsMenuOpen(true)}
-          >
-            <View style={styles.menuRowIcon}>
-              <Ionicons name="options-outline" size={20} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.menuRowTitle}>Notifications & appearance</Text>
-              <Text style={styles.menuRowSub}>Reminders, streak alerts, dark mode</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </TouchableOpacity>
-
           {/* Goals */}
-          <Text style={styles.sectionTitle}>Your goals</Text>
-          {GOALS.filter((g) => !selectedGoals.includes(g.key)).slice(0, 1).map((goal) => (
-            <TouchableOpacity
-              key={`suggest-${goal.key}`}
-              style={styles.suggestChip}
-              activeOpacity={0.85}
-              onPress={() => toggleGoal(goal.key)}
-            >
-              <Ionicons name="sparkles" size={14} color={colors.primary} />
-              <Text style={styles.suggestText}>Try adding {goal.label}</Text>
-            </TouchableOpacity>
-          ))}
-          {GOALS.map((goal) => {
-            const selected = selectedGoals.includes(goal.key);
-            const saving = savingGoalKey === goal.key;
-            const { done, total } = goalLessonProgress(goal.key, modules);
-            const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const facts = [
-              total > 0
-                ? `${done} of ${total} matching lessons`
-                : (lessonsCompleted ? `${lessonsCompleted} lessons overall · start this topic on Home` : 'Start a matching lesson on Home'),
-              streakDays ? `${streakDays}-day streak` : null,
-              typeof botBucks === 'number' ? `${botBucks} Bot Bucks` : null,
-            ].filter(Boolean);
-            return (
-              <View key={goal.key} style={[styles.goalCard, selected && styles.goalCardSel]}>
-                <View style={styles.goalTop}>
-                  <View style={[styles.goalIconWrap, selected && styles.goalIconWrapSel]}>
-                    <Ionicons name={goal.icon} size={20} color={selected ? colors.background : colors.primary} />
-                  </View>
-                  <View style={styles.goalCopy}>
-                    <Text style={styles.goalTitle}>{goal.label}</Text>
-                    <Text style={styles.goalFacts} numberOfLines={2}>{facts.join(' · ')}</Text>
-                  </View>
-                  <PuckButton
-                    color={selected ? colors.primary : colors.surfaceElevated}
-                    width={68}
-                    height={40}
-                    borderRadius={14}
-                    lip={5}
-                    disabled={!!savingGoalKey}
-                    onPress={() => toggleGoal(goal.key)}
-                    contentStyle={styles.goalPuckContent}
-                    accessibilityLabel={selected ? `Remove ${goal.label}` : `Add ${goal.label}`}
-                  >
-                    {saving ? (
-                      <ActivityIndicator size="small" color={selected ? colors.background : colors.primary} />
-                    ) : (
-                      <Text style={[styles.goalPuckText, { color: selected ? colors.background : colors.white }]}>
-                        {selected ? 'On' : 'Add'}
-                      </Text>
-                    )}
-                  </PuckButton>
+          <Text style={styles.sectionLabel}>WHAT YOU'RE WORKING ON</Text>
+          <View style={styles.goalWrap}>
+            {GOALS.map((goal) => {
+              const selected = selectedGoals.includes(goal.key);
+              const saving = savingGoalKey === goal.key;
+              return (
+                <TouchableOpacity
+                  key={goal.key}
+                  activeOpacity={0.85}
+                  disabled={!!savingGoalKey}
+                  onPress={() => toggleGoal(goal.key)}
+                  style={[styles.goalPill, selected && styles.goalPillSel]}
+                >
+                  <Ionicons
+                    name={goal.icon}
+                    size={17}
+                    color={selected ? colors.primary : colors.textSecondary}
+                  />
+                  <Text style={[styles.goalPillText, selected && styles.goalPillTextSel]}>{goal.label}</Text>
+                  {saving ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons
+                      name={selected ? 'checkmark-circle' : 'add'}
+                      size={selected ? 18 : 17}
+                      color={selected ? colors.primary : colors.textMuted}
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={styles.hint}>Lessons on these topics get pushed up your path first.</Text>
+
+          {/* Reminders */}
+          <Text style={styles.sectionLabel}>REMINDERS</Text>
+          <View style={styles.card}>
+            {REMINDER_ROWS.map((row, index) => (
+              <View key={row.key} style={[styles.settingRow, index < REMINDER_ROWS.length && styles.rowBorder]}>
+                <View style={styles.rowIcon}>
+                  <Ionicons name={row.icon} size={19} color={colors.primary} />
                 </View>
-                {pct != null && (
-                  <View style={styles.goalTrack}>
-                    <View style={[styles.goalFill, { width: `${pct}%` }]} />
-                  </View>
+                <View style={styles.rowCopy}>
+                  <Text style={styles.rowLabel}>{row.label}</Text>
+                  <Text style={styles.rowHint}>{row.hint}</Text>
+                </View>
+                {notifLoading ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <Switch
+                    value={!!notifPrefs[row.key]}
+                    onValueChange={(value) => toggleNotifPref(row.key, value)}
+                    disabled={notifSyncing}
+                    {...switchColors}
+                  />
                 )}
               </View>
-            );
-          })}
-          <Text style={styles.notifHint}>Progress is lessons in that topic, plus your real streak and Bot Bucks — not a made-up score.</Text>
-
-          {/* Support & legal */}
-          <Text style={styles.sectionTitle}>Support</Text>
-          <View style={styles.linkGrid}>
-            <LinkTile icon="document-text-outline" label="Terms" onPress={() => openLegal('terms')} colors={colors} styles={styles} />
-            <LinkTile icon="shield-checkmark-outline" label="Privacy" onPress={() => openLegal('privacy')} colors={colors} styles={styles} />
-            <LinkTile icon="mail-outline" label="Contact" onPress={() => Linking.openURL(`mailto:${LEGAL.contactEmail}`)} colors={colors} styles={styles} />
-            <LinkTile icon="globe-outline" label="Website" onPress={() => Linking.openURL('https://getmoneybot.com')} colors={colors} styles={styles} />
+            ))}
+            <View style={styles.settingRow}>
+              <View style={styles.rowIcon}>
+                <Ionicons name="accessibility-outline" size={19} color={colors.primary} />
+              </View>
+              <View style={styles.rowCopy}>
+                <Text style={styles.rowLabel}>Reduce motion</Text>
+                <Text style={styles.rowHint}>Calmer transitions and no bobbing</Text>
+              </View>
+              <Switch value={reduceMotion} onValueChange={setReduceMotionPref} {...switchColors} />
+            </View>
           </View>
-          <Text style={styles.version}>MoneyBot v1.0.7</Text>
+          {permDenied && notifSupported && (
+            <TouchableOpacity style={styles.permRow} activeOpacity={0.85} onPress={() => openSystemNotificationSettings()}>
+              <Ionicons name="notifications-off-outline" size={15} color={colors.textMuted} />
+              <Text style={styles.permText}>Notifications are off in iOS Settings. Tap to open.</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* App */}
+          <Text style={styles.sectionLabel}>APP</Text>
+          <View style={styles.card}>
+            {appRows.map((row, index) => (
+              <TouchableOpacity
+                key={row.key}
+                activeOpacity={0.8}
+                onPress={row.onPress}
+                style={[styles.settingRow, index < appRows.length - 1 && styles.rowBorder]}
+              >
+                <View style={styles.rowIcon}>
+                  <Ionicons name={row.icon} size={19} color={colors.primary} />
+                </View>
+                <Text style={styles.rowLabelFlex}>{row.label}</Text>
+                {row.value ? <Text style={styles.rowValue}>{row.value}</Text> : null}
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </View>
 
           {/* Account */}
-          <View style={styles.accountSection}>
-            <TouchableOpacity style={styles.signOutBtn} activeOpacity={0.85} onPress={confirmLogout}>
-              <Ionicons name="log-out-outline" size={18} color={colors.error} />
-              <Text style={styles.signOutText}>{isGuest ? 'Exit Guest Session' : 'Sign Out'}</Text>
+          <TouchableOpacity style={styles.signOutBtn} activeOpacity={0.85} onPress={confirmLogout}>
+            <Ionicons name="log-out-outline" size={18} color={colors.error} />
+            <Text style={styles.signOutText}>{isGuest ? 'Exit guest session' : 'Sign out'}</Text>
+          </TouchableOpacity>
+          {!isGuest && (
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              activeOpacity={0.7}
+              onPress={deletingAccount ? undefined : confirmDeleteAccount}
+              disabled={deletingAccount}
+            >
+              <Text style={styles.deleteText}>{deletingAccount ? 'Deleting…' : 'Delete account'}</Text>
             </TouchableOpacity>
-            {!isGuest && (
-              <TouchableOpacity
-                style={styles.deleteBtn}
-                activeOpacity={0.7}
-                onPress={deletingAccount ? undefined : confirmDeleteAccount}
-                disabled={deletingAccount}
-              >
-                <Text style={styles.deleteText}>
-                  {deletingAccount ? 'Deleting…' : 'Delete Account'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
+          <Text style={styles.version}>MoneyBot v1.0.7</Text>
 
         </ScrollView>
       </SafeAreaView>
@@ -611,136 +625,6 @@ export default function SettingsScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Quick settings sheet: all the on/off toggles in one place */}
-      <Modal visible={settingsMenuOpen} transparent animationType="slide" onRequestClose={() => setSettingsMenuOpen(false)}>
-        <TouchableOpacity
-          style={styles.sheetOverlay}
-          activeOpacity={1}
-          onPress={() => setSettingsMenuOpen(false)}
-        >
-          <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetTitleRow}>
-              <Text style={styles.sheetTitle}>Settings</Text>
-              <TouchableOpacity
-                onPress={() => setSettingsMenuOpen(false)}
-                hitSlop={10}
-                accessibilityLabel="Close"
-              >
-                <Ionicons name="close" size={24} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
-              {!notifSupported && (
-                <View style={styles.notifBanner}>
-                  <Ionicons name="information-circle-outline" size={18} color={colors.primary} />
-                  <Text style={styles.notifBannerText}>
-                    Notifications need a native rebuild. Run{' '}
-                    <Text style={styles.notifBannerCode}>npx expo run:ios</Text>
-                    {' '}from the mobile folder, then reopen the app.
-                  </Text>
-                </View>
-              )}
-              {permDenied && notifSupported && (
-                <View style={styles.notifBanner}>
-                  <Ionicons name="notifications-off-outline" size={18} color={colors.primary} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.notifBannerText}>
-                      Notifications are off in iOS Settings. Turn on Alerts for MoneyBot, then return here.
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => openSystemNotificationSettings()}
-                      style={styles.openSettingsBtn}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.openSettingsText}>Open Settings</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              <Text style={styles.sheetLabel}>NOTIFICATIONS</Text>
-              <View style={[styles.prefCard, !notifSupported && styles.notifGridDisabled]}>
-                <View style={styles.prefRow}>
-                  <View style={styles.prefLeft}>
-                    <Ionicons
-                      name={notifOn ? 'notifications' : 'notifications-off-outline'}
-                      size={20}
-                      color={colors.primary}
-                    />
-                    <Text style={styles.prefLabel}>All reminders</Text>
-                  </View>
-                  {notifLoading ? (
-                    <ActivityIndicator color={colors.primary} />
-                  ) : (
-                    <Switch
-                      value={notifOn}
-                      onValueChange={toggleNotifications}
-                      disabled={notifSyncing}
-                      trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                      thumbColor={notifOn ? colors.primary : colors.textMuted}
-                      ios_backgroundColor={colors.border}
-                    />
-                  )}
-                </View>
-                {NOTIF_ROWS.map((row, index) => (
-                  <View key={row.key} style={[styles.prefRow, styles.prefRowNested, index < NOTIF_ROWS.length - 1 && styles.prefRowBorder]}>
-                    <View style={styles.prefLeft}>
-                      <Ionicons name={row.icon} size={18} color={colors.primary} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.prefLabel}>{row.label}</Text>
-                        <Text style={styles.prefHint}>{row.hint}</Text>
-                      </View>
-                    </View>
-                    <Switch
-                      value={!!notifPrefs[row.key]}
-                      onValueChange={(value) => toggleNotifPref(row.key, value)}
-                      disabled={notifSyncing || notifLoading}
-                      trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                      thumbColor={notifPrefs[row.key] ? colors.primary : colors.textMuted}
-                      ios_backgroundColor={colors.border}
-                    />
-                  </View>
-                ))}
-              </View>
-              <Text style={styles.notifHint}>
-                {notifSupported
-                  ? `Turning a type off cancels those local reminders${notifSyncing ? ' · syncing…' : ''}`
-                  : 'Your choice is saved but won\u2019t fire until you rebuild the app.'}
-              </Text>
-
-              <Text style={styles.sheetLabel}>APPEARANCE</Text>
-              <View style={styles.prefCard}>
-                <View style={styles.prefRow}>
-                  <View style={styles.prefLeft}>
-                    <Ionicons name={isDark ? 'moon' : 'sunny'} size={20} color={colors.primary} />
-                    <Text style={styles.prefLabel}>Dark mode</Text>
-                  </View>
-                  <Switch
-                    value={isDark}
-                    onValueChange={toggleTheme}
-                    trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                    thumbColor={isDark ? colors.primary : colors.textMuted}
-                  />
-                </View>
-              </View>
-            </ScrollView>
-
-            <PuckButton
-              color={colors.primary}
-              height={52}
-              borderRadius={16}
-              lip={5}
-              onPress={() => setSettingsMenuOpen(false)}
-              contentStyle={styles.sheetDoneInner}
-            >
-              <Text style={styles.sheetDoneText}>Done</Text>
-            </PuckButton>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-
       <BrandToast
         visible={!!goalToast}
         message={goalToast}
@@ -753,196 +637,81 @@ export default function SettingsScreen({ navigation }) {
 const makeStyles = (colors, tabBarInset) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: 20, paddingBottom: tabBarInset },
+  scroll: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: tabBarInset },
 
-  identity: {
-    flexDirection: 'row',
+  // Profile header
+  profileRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  avatarRing: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-    height: 44,
-  },
-  identityAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    overflow: 'hidden',
+    justifyContent: 'center',
     borderWidth: 2,
-    borderColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: 'rgba(61,220,95,0.4)',
     backgroundColor: colors.surfaceElevated,
-    flexShrink: 0,
   },
-  identityCopy: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: 'center',
-  },
-  menuBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  profileCopy: { flex: 1, minWidth: 0 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  name: { fontSize: 26, fontWeight: '900', color: colors.white, letterSpacing: -0.5, flexShrink: 1 },
+  editBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.border,
   },
+  email: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+  levelRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  levelPill: {
+    backgroundColor: 'rgba(61,220,95,0.14)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  levelPillText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.5, color: colors.primary },
+  xpText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
 
-  menuRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  // XP bar
+  xpTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceElevated,
+    overflow: 'hidden',
+    marginTop: 18,
+  },
+  xpFill: { height: '100%', borderRadius: 4, backgroundColor: colors.primary },
+  xpCaption: { fontSize: 12, fontWeight: '500', color: colors.textMuted, marginTop: 8 },
+
+  // Stats
+  statsRow: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  statTile: {
+    flex: 1,
     backgroundColor: colors.surfaceElevated,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 24,
-  },
-  menuRowIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)',
-  },
-  menuRowTitle: { fontSize: 15, fontWeight: '800', color: colors.white },
-  menuRowSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-
-  // Quick settings sheet
-  sheetOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 34,
-    borderTopWidth: 1,
-    borderColor: colors.border,
-    maxHeight: '82%',
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    marginBottom: 12,
-  },
-  sheetTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  sheetTitle: { fontSize: 22, fontWeight: '800', color: colors.white, letterSpacing: -0.3 },
-  sheetScroll: { paddingBottom: 8 },
-  sheetLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.textMuted,
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
-  sheetDoneInner: { alignItems: 'center', justifyContent: 'center' },
-  sheetDoneText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-
-  heroCard: {
-    borderRadius: 18,
-    padding: 14,
-    paddingTop: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.25)',
-  },
-  heroEditBtn: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    zIndex: 1,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  heroTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-    paddingRight: 28,
-  },
-  heroIdentity: {
-    flex: 1,
-    minWidth: 0,
-  },
-  heroName: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.white,
-    letterSpacing: -0.3,
-  },
-  heroEmail: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
-    marginBottom: 6,
-  },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.25)',
-    backgroundColor: 'rgba(61,220,95,0.1)',
+    alignItems: 'center',
+    gap: 6,
   },
-  chipText: { fontSize: 11, fontWeight: '700' },
-  statsStrip: {
-    flexDirection: 'row',
-    width: '100%',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
+  statValue: { fontSize: 20, fontWeight: '900', color: colors.white, letterSpacing: -0.5 },
+  statLabel: { fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'center' },
+  coin: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.botBucks,
   },
-  stat: { flex: 1, alignItems: 'center' },
-  statVal: { fontSize: 15, fontWeight: '800', color: colors.white },
-  statLbl: { fontSize: 9, color: colors.textMuted, marginTop: 1, fontWeight: '600' },
-  statDiv: { width: 1, backgroundColor: colors.border, marginVertical: 2 },
+  coinText: { fontSize: 13, fontWeight: '900', color: '#3A2A00' },
 
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.white,
-    marginBottom: 12,
-    letterSpacing: -0.2,
-  },
-  sectionSub: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: -6,
-    marginBottom: 10,
-    lineHeight: 17,
-  },
-
+  // Guest CTA
   guestCta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -951,177 +720,112 @@ const makeStyles = (colors, tabBarInset) => StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(61,220,95,0.3)',
-    padding: 16,
-    marginBottom: 24,
+    padding: 14,
+    marginTop: 20,
   },
   guestCtaIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.14)',
-  },
-  guestCtaText: { flex: 1 },
-  guestCtaTitle: { fontSize: 15, fontWeight: '800', color: colors.white, marginBottom: 2 },
-  guestCtaBody: { fontSize: 12, lineHeight: 17, color: colors.textSecondary },
-
-  notifGridDisabled: { opacity: 0.55 },
-  notifBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: 'rgba(61,220,95,0.1)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.25)',
-    padding: 12,
-    marginBottom: 12,
-  },
-  notifBannerText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.textSecondary,
-  },
-  notifBannerCode: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  notifHint: {
-    fontSize: 11,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 16,
-  },
-
-  prefCard: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 24,
-    overflow: 'hidden',
-  },
-  prefRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  prefLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, marginRight: 12 },
-  prefLabel: { fontSize: 15, fontWeight: '600', color: colors.white },
-  prefHint: { fontSize: 11, color: colors.textMuted, marginTop: 2, lineHeight: 15 },
-  prefRowNested: { paddingTop: 4 },
-  prefRowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  openSettingsBtn: {
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    backgroundColor: colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  openSettingsText: { fontSize: 13, fontWeight: '800', color: colors.background },
-
-  linkGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
-  },
-  linkTile: {
-    width: '47%',
-    flexGrow: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  linkTileLabel: { fontSize: 14, fontWeight: '600', color: colors.white },
-  version: {
-    fontSize: 11,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginBottom: 28,
-    marginTop: 4,
-  },
-
-  accountSection: { gap: 12, alignItems: 'center' },
-  signOutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,77,77,0.35)',
-    backgroundColor: 'rgba(255,77,77,0.08)',
-  },
-  signOutText: { fontSize: 15, fontWeight: '700', color: colors.error },
-  deleteBtn: { paddingVertical: 8 },
-  deleteText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
-
-  // Goals
-  suggestChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    alignSelf: 'flex-start',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginBottom: 12,
-  },
-  suggestText: { fontSize: 13, fontWeight: '700', color: colors.white },
-  goalCard: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-    marginBottom: 10,
-  },
-  goalCardSel: {
-    borderColor: colors.primaryTintStrong,
-    backgroundColor: colors.primaryTint,
-  },
-  goalTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  goalCopy: { flex: 1, minWidth: 0 },
-  goalTitle: { fontSize: 16, fontWeight: '800', color: colors.white, letterSpacing: -0.2 },
-  goalFacts: { fontSize: 12, color: colors.textSecondary, marginTop: 3, lineHeight: 17, fontWeight: '500' },
-  goalPuckContent: { alignItems: 'center', justifyContent: 'center' },
-  goalPuckText: { fontSize: 13, fontWeight: '800' },
-  goalTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-    overflow: 'hidden',
-    marginTop: 12,
-  },
-  goalFill: { height: '100%', borderRadius: 3, backgroundColor: colors.primary },
-  goalIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(61,220,95,0.12)',
+    backgroundColor: 'rgba(61,220,95,0.14)',
   },
-  goalIconWrapSel: { backgroundColor: colors.primary },
+  guestCtaTitle: { fontSize: 15, fontWeight: '800', color: colors.white, marginBottom: 2 },
+  guestCtaBody: { fontSize: 12, lineHeight: 17, color: colors.textSecondary },
+
+  // Section label
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: colors.textMuted,
+    marginTop: 28,
+    marginBottom: 12,
+  },
+
+  // Goals
+  goalWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  goalPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+  },
+  goalPillSel: { borderColor: colors.primary, backgroundColor: 'rgba(61,220,95,0.1)' },
+  goalPillText: { fontSize: 14, fontWeight: '700', color: colors.white },
+  goalPillTextSel: { color: colors.white },
+  hint: { fontSize: 12, fontWeight: '500', color: colors.textMuted, marginTop: 12, lineHeight: 17 },
+
+  // Cards + rows
+  card: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 62,
+  },
+  rowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  rowIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(61,220,95,0.1)',
+  },
+  rowCopy: { flex: 1, minWidth: 0 },
+  rowLabel: { fontSize: 15, fontWeight: '700', color: colors.white },
+  rowLabelFlex: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.white },
+  rowHint: { fontSize: 12, fontWeight: '500', color: colors.textMuted, marginTop: 2, lineHeight: 16 },
+  rowValue: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginRight: 2 },
+
+  permRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingHorizontal: 4,
+  },
+  permText: { flex: 1, fontSize: 12, fontWeight: '500', color: colors.textMuted, lineHeight: 16 },
+
+  // Account
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,77,77,0.35)',
+    backgroundColor: 'rgba(255,77,77,0.08)',
+    marginTop: 28,
+  },
+  signOutText: { fontSize: 16, fontWeight: '800', color: colors.error },
+  deleteBtn: { paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  deleteText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
+  version: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 8,
+  },
 
   // Profile edit modal
   modalOverlay: {

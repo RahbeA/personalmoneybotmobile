@@ -107,7 +107,43 @@
         }
       ],
       "expo-localization",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.moneybot.app.widgets",
+          "groupIdentifier": "group.com.moneybot.app",
+          "widgets": [
+            {
+              "name": "StreakWidget",
+              "displayName": "Streak",
+              "description": "Your MoneyBot learning streak at a glance.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            },
+            {
+              "name": "StatsWidget",
+              "displayName": "Stats",
+              "description": "Bot Bucks, XP, and streak on your home screen.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemMedium"]
+              }
+            },
+            {
+              "name": "DailyRewardWidget",
+              "displayName": "Daily Reward",
+              "description": "See today's Bot Bucks reward and claim status.",
+              "ios": {
+                "contentMarginsDisabled": true,
+                "supportedFamilies": ["systemSmall", "systemMedium"]
+              }
+            }
+          ]
+        }
+      ]
     ]
   }
 }

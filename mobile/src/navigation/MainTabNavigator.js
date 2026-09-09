@@ -180,7 +180,6 @@ function HomeStackNavigator() {
       <HomeStack.Screen name="LessonComplete" component={LessonCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
       <HomeStack.Screen name="MoneyChat" component={MoneyChatScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
       <HomeStack.Screen name="ModuleComplete" component={ModuleCompleteScreen} options={{ animation: 'fade', gestureEnabled: false }} />
-      <HomeStack.Screen name="Leaderboard" component={LeaderboardScreen} />
       <HomeStack.Screen name="Arcade" component={ArcadeScreen} />
       <HomeStack.Screen
         name="BudgetBlitz"
@@ -257,7 +256,8 @@ function TutorStackNavigator() {
 
 function SocialStackNavigator() {
   return (
-    <SocialStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+    <SocialStack.Navigator initialRouteName="Leaderboard" screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+      <SocialStack.Screen name="Leaderboard" component={LeaderboardScreen} />
       <SocialStack.Screen name="Friends" component={FriendsScreen} />
       <SocialStack.Screen name="MyFriends" component={MyFriendsScreen} />
       <SocialStack.Screen name="FriendRequests" component={FriendRequestsScreen} />

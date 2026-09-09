@@ -18,6 +18,7 @@ function StreakWidget(props, environment) {
 
   const bg = '#0E1614';
   const green = '#3DDC5F';
+  const fire = '#FF6B35';
   const track = 'rgba(255,255,255,0.10)';
   const white = '#FFFFFF';
   const muted = '#9BA3A0';
@@ -56,7 +57,7 @@ function StreakWidget(props, environment) {
           ]}>
           {String(streak)}
         </Text>
-        <Text modifiers={[font({ size: numberSize * 0.6 })]}>🔥</Text>
+        <Image systemName="flame.fill" size={numberSize * 0.62} color={fire} />
       </HStack>
     );
   }

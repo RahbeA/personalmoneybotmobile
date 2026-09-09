@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator,
+  View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
@@ -22,23 +22,77 @@ const RARITY_COLORS = {
   legendary: '#F5B72B',
 };
 
+const STRIP_ITEM_W = 64;
+
+function rgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// The Closet: one big stage you can browse, "try on" via the eye button, and
+// buy/equip from. Data model + purchase/equip actions are unchanged.
 export default function CharacterDetailScreen({ navigation, route }) {
-  const { character } = route.params;
+  const routeCharacter = route.params?.character;
   const { isGuest } = useAuth();
-  const { botBucks, equippedCharacter, purchaseCharacter, equipCharacter } = useUserProgress();
+  const {
+    botBucks, equippedCharacter, characters,
+    purchaseCharacter, equipCharacter, refreshCharacterCache,
+  } = useUserProgress();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isFocused = useIsFocused();
+  const stripRef = useRef(null);
 
-  const [owned, setOwned] = useState(!!character.is_owned);
+  // Browse the live context list so ownership/equipped stay in sync. Fall back
+  // to the single character we were opened with if the list isn't ready.
+  const list = characters?.length ? characters : (routeCharacter ? [routeCharacter] : []);
+
+  const initialIndex = useMemo(() => {
+    const i = list.findIndex((c) => c.id === routeCharacter?.id);
+    return i >= 0 ? i : 0;
+  }, [list, routeCharacter?.id]);
+
+  const [index, setIndex] = useState(initialIndex);
+  // The eye button "tries on" a character in live 3D without spending. Reset
+  // whenever you browse away so it clears, per spec.
+  const [previewOn, setPreviewOn] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Instant ownership feedback after a purchase, before the cache reloads.
+  const [ownedOverride, setOwnedOverride] = useState({});
 
-  const isEquipped = equippedCharacter?.id === character.id;
-  const rarityColor = RARITY_COLORS[character.rarity] || colors.primary;
-  const canAfford = botBucks >= character.price;
+  const count = list.length;
+  const safeIndex = count ? Math.min(Math.max(0, index), count - 1) : 0;
+  const character = count ? list[safeIndex] : null;
+
+  const rarityColor = character ? (RARITY_COLORS[character.rarity] || colors.primary) : colors.primary;
+  const owned = character ? (!!character.is_owned || !!ownedOverride[character.id]) : false;
+  const isEquipped = character && equippedCharacter?.id === character.id;
+  const canAfford = character ? botBucks >= character.price : false;
+
+  const select = useCallback((i) => {
+    if (i < 0 || i >= count) return;
+    setIndex(i);
+    setPreviewOn(false); // clears the try-on when you browse away
+  }, [count]);
+
+  const bump = useCallback((delta) => {
+    if (!count) return;
+    const next = ((safeIndex + delta) % count + count) % count;
+    select(next);
+  }, [count, safeIndex, select]);
+
+  // Keep the active thumbnail roughly centered.
+  useEffect(() => {
+    if (!stripRef.current || !count) return;
+    const x = Math.max(0, safeIndex * STRIP_ITEM_W - STRIP_ITEM_W * 2);
+    try { stripRef.current.scrollToOffset({ offset: x, animated: true }); } catch { /* noop */ }
+  }, [safeIndex, count]);
 
   async function handleBuy() {
-    if (busy) return;
+    if (busy || !character) return;
     if (!requireAccount({ isGuest, navigation, feature: 'buy characters with Bot Bucks' })) return;
     if (!canAfford) {
       Alert.alert('Not enough Bot Bucks', `You need ${character.price - botBucks} more Bot Bucks. Complete more lessons to earn them!`);
@@ -47,8 +101,9 @@ export default function CharacterDetailScreen({ navigation, route }) {
     setBusy(true);
     try {
       await purchaseCharacter(character.id);
-      setOwned(true);
-      Alert.alert('Purchased!', `${character.name} is now yours. Equip it to make it your character.`);
+      setOwnedOverride((m) => ({ ...m, [character.id]: true }));
+      refreshCharacterCache(true).catch(() => {});
+      Alert.alert('Purchased!', `${character.name} is now yours. Tap Equip to wear it.`);
     } catch (e) {
       Alert.alert('Purchase failed', e.message || 'Something went wrong.');
     } finally {
@@ -57,7 +112,7 @@ export default function CharacterDetailScreen({ navigation, route }) {
   }
 
   async function handleEquip() {
-    if (busy) return;
+    if (busy || !character) return;
     if (!requireAccount({ isGuest, navigation, feature: 'equip characters' })) return;
     setBusy(true);
     try {
@@ -69,116 +124,213 @@ export default function CharacterDetailScreen({ navigation, route }) {
     }
   }
 
+  const renderStripItem = useCallback(({ item, index: i }) => {
+    const tint = RARITY_COLORS[item.rarity] || colors.primary;
+    const active = i === safeIndex;
+    const itemOwned = !!item.is_owned || !!ownedOverride[item.id];
+    const locked = !itemOwned && botBucks < item.price;
+    return (
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => select(i)}
+        style={[
+          styles.stripThumb,
+          {
+            borderColor: active ? tint : rgba(tint, 0.3),
+            backgroundColor: rgba(tint, active ? 0.22 : 0.1),
+          },
+        ]}
+        accessibilityLabel={item.name}
+      >
+        <CharacterPoster
+          previewUrl={item.preview_url}
+          modelUrl={item.model_url}
+          resizeMode="contain"
+        />
+        {itemOwned ? (
+          <View style={[styles.stripDot, { backgroundColor: colors.primary }]}>
+            <Ionicons name="checkmark" size={8} color="#fff" />
+          </View>
+        ) : locked ? (
+          <View style={styles.stripLock}>
+            <Ionicons name="lock-closed" size={9} color={colors.white} />
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  }, [colors, safeIndex, ownedOverride, botBucks, select, styles]);
+
   return (
     <LinearGradient colors={colors.bgGradient} style={styles.gradient}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={24} color={colors.white} />
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
+            <Ionicons name="chevron-back" size={22} color={colors.white} />
           </TouchableOpacity>
+          <Text style={styles.topTitle}>Closet</Text>
           <View style={styles.coinBadge}>
-            <Ionicons name="logo-bitcoin" size={16} color="#F5B72B" />
+            <Ionicons name="logo-bitcoin" size={16} color={colors.botBucks} />
             <Text style={styles.coinBadgeText}>{botBucks}</Text>
           </View>
         </View>
 
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.viewerWrap}>
-            {/* 3D only while this screen is focused — unmount frees WebView + RAM. */}
-            {isFocused ? (
-              <CharacterViewer
-                modelUrl={character.model_url}
-                previewUrl={character.preview_url}
-                autoRotate
-                allowDrag
-              />
-            ) : (
-              <CharacterPoster previewUrl={character.preview_url} />
-            )}
-            <Text style={styles.dragHint}>Drag to rotate</Text>
+        {!character ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No character selected.</Text>
           </View>
+        ) : (
+          <>
+            {/* Stage */}
+            <View style={styles.stage}>
+              {isFocused && previewOn ? (
+                <CharacterViewer
+                  modelUrl={character.model_url}
+                  previewUrl={character.preview_url}
+                  autoRotate
+                  allowDrag
+                />
+              ) : (
+                <CharacterPoster
+                  previewUrl={character.preview_url}
+                  modelUrl={character.model_url}
+                  resizeMode="contain"
+                />
+              )}
 
-          <View style={styles.header}>
-            <Text style={styles.name}>{character.name}</Text>
-            <View style={[styles.rarityChip, { backgroundColor: rarityColor + '22', borderColor: rarityColor + '55' }]}>
-              <Text style={[styles.rarityChipText, { color: rarityColor }]}>{character.rarity}</Text>
+              {count > 1 ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.arrow, styles.arrowLeft]}
+                    onPress={() => bump(-1)}
+                    hitSlop={16}
+                    accessibilityLabel="Previous character"
+                  >
+                    <Ionicons name="chevron-back" size={22} color={colors.white} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.arrow, styles.arrowRight]}
+                    onPress={() => bump(1)}
+                    hitSlop={16}
+                    accessibilityLabel="Next character"
+                  >
+                    <Ionicons name="chevron-forward" size={22} color={colors.white} />
+                  </TouchableOpacity>
+                </>
+              ) : null}
+
+              {previewOn ? (
+                <Text style={styles.dragHint}>Drag to rotate</Text>
+              ) : null}
             </View>
-          </View>
 
-          {character.description ? (
-            <Text style={styles.description}>{character.description}</Text>
-          ) : null}
+            {/* Meta */}
+            <View style={styles.metaRow}>
+              <View style={[styles.rarityChip, { backgroundColor: rgba(rarityColor, 0.16), borderColor: rgba(rarityColor, 0.5) }]}>
+                <Text style={[styles.rarityChipText, { color: rarityColor }]}>{character.rarity}</Text>
+              </View>
+              {isEquipped ? (
+                <View style={styles.equippedChip}>
+                  <Ionicons name="checkmark-circle" size={13} color={colors.primary} />
+                  <Text style={styles.equippedChipText}>EQUIPPED</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.name}>{character.name}</Text>
 
-          {!owned && (
-            <View style={styles.priceCard}>
-              <Text style={styles.priceLabel}>Price</Text>
-              <View style={styles.priceRow}>
-                <Ionicons name="logo-bitcoin" size={22} color="#F5B72B" />
-                <Text style={styles.priceValue}>{character.price}</Text>
+            {/* Locked: show the balance as distance to the price. */}
+            {!owned && !canAfford ? (
+              <View style={styles.balanceRow}>
+                <View style={styles.balanceTrack}>
+                  <View
+                    style={[
+                      styles.balanceFill,
+                      { width: `${Math.min(1, botBucks / character.price) * 100}%`, backgroundColor: rarityColor },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.balanceText}>
+                  {botBucks} / {character.price}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Actions: eye = try on (no spend), primary = buy/equip */}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                onPress={() => setPreviewOn((v) => !v)}
+                style={[styles.eyeBtn, previewOn && styles.eyeBtnActive]}
+                accessibilityLabel="Preview in 3D"
+              >
+                <Ionicons
+                  name={previewOn ? 'eye' : 'eye-outline'}
+                  size={22}
+                  color={previewOn ? colors.background : colors.white}
+                />
+              </TouchableOpacity>
+
+              <View style={styles.primaryWrap}>
+                {owned ? (
+                  isEquipped ? (
+                    <PuckButton color="#1E3D28" borderRadius={16} lip={5} contentStyle={[styles.ctaContent, styles.ctaEquipped]}>
+                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                      <Text style={[styles.ctaText, { color: colors.primary }]}>Equipped</Text>
+                    </PuckButton>
+                  ) : (
+                    <PuckButton color={colors.primary} borderRadius={16} lip={5} onPress={handleEquip} disabled={busy} contentStyle={styles.ctaContent}>
+                      {busy ? (
+                        <ActivityIndicator color={colors.background} />
+                      ) : (
+                        <>
+                          <Ionicons name="shirt-outline" size={20} color={colors.background} />
+                          <Text style={styles.ctaText}>Equip</Text>
+                        </>
+                      )}
+                    </PuckButton>
+                  )
+                ) : (
+                  <PuckButton
+                    color={!isGuest && !canAfford ? colors.surfaceElevated : colors.primary}
+                    borderRadius={16}
+                    lip={5}
+                    onPress={handleBuy}
+                    disabled={busy}
+                    contentStyle={styles.ctaContent}
+                  >
+                    {busy ? (
+                      <ActivityIndicator color={colors.background} />
+                    ) : isGuest ? (
+                      <>
+                        <Ionicons name="lock-closed" size={18} color={colors.background} />
+                        <Text style={styles.ctaText}>Create account to buy</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="logo-bitcoin" size={20} color={canAfford ? colors.background : colors.textMuted} />
+                        <Text style={[styles.ctaText, !canAfford && styles.ctaTextDisabled]}>
+                          {canAfford ? `Buy for ${character.price}` : `${character.price - botBucks} more to unlock`}
+                        </Text>
+                      </>
+                    )}
+                  </PuckButton>
+                )}
               </View>
             </View>
-          )}
-        </ScrollView>
 
-        <View style={styles.footer}>
-          {owned ? (
-            isEquipped ? (
-              <PuckButton
-                color="#1E3D28"
-                borderRadius={16}
-                lip={5}
-                contentStyle={[styles.ctaContent, styles.ctaEquippedContent]}
-              >
-                <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                <Text style={[styles.ctaText, { color: colors.primary }]}>Equipped</Text>
-              </PuckButton>
-            ) : (
-              <PuckButton
-                color={colors.primary}
-                borderRadius={16}
-                lip={5}
-                onPress={handleEquip}
-                disabled={busy}
-                contentStyle={styles.ctaContent}
-              >
-                {busy ? (
-                  <ActivityIndicator color={colors.background} />
-                ) : (
-                  <>
-                    <Ionicons name="shirt-outline" size={20} color={colors.background} />
-                    <Text style={styles.ctaText}>Equip Character</Text>
-                  </>
-                )}
-              </PuckButton>
-            )
-          ) : (
-            <PuckButton
-              color={!isGuest && !canAfford ? colors.surfaceElevated : colors.primary}
-              borderRadius={16}
-              lip={5}
-              onPress={handleBuy}
-              disabled={busy}
-              contentStyle={styles.ctaContent}
-            >
-              {busy ? (
-                <ActivityIndicator color={colors.background} />
-              ) : isGuest ? (
-                <>
-                  <Ionicons name="lock-closed" size={18} color={colors.background} />
-                  <Text style={styles.ctaText}>Create account to buy</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="logo-bitcoin" size={20} color={canAfford ? colors.background : colors.textMuted} />
-                  <Text style={[styles.ctaText, !canAfford && styles.ctaTextDisabled]}>
-                    {canAfford ? `Buy for ${character.price}` : 'Not enough Bot Bucks'}
-                  </Text>
-                </>
-              )}
-            </PuckButton>
-          )}
-        </View>
+            {/* Thumbnail strip */}
+            <FlatList
+              ref={stripRef}
+              horizontal
+              data={list}
+              keyExtractor={(item) => String(item.id)}
+              renderItem={renderStripItem}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.stripContent}
+              getItemLayout={(_, i) => ({ length: STRIP_ITEM_W, offset: STRIP_ITEM_W * i, index: i })}
+              style={styles.strip}
+            />
+          </>
+        )}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -187,51 +339,112 @@ export default function CharacterDetailScreen({ navigation, route }) {
 const makeStyles = (colors) => StyleSheet.create({
   gradient: { flex: 1 },
   safe: { flex: 1 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { color: colors.textMuted, fontSize: 14 },
+
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8,
   },
-  backBtn: { padding: 4 },
+  backBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  topTitle: { fontSize: 18, fontWeight: '800', color: colors.white },
   coinBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: 'rgba(245,183,43,0.14)', borderWidth: 1, borderColor: 'rgba(245,183,43,0.35)',
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
   },
-  coinBadgeText: { fontSize: 15, fontWeight: '800', color: '#F5B72B' },
-  scroll: { paddingHorizontal: 20, paddingBottom: 20 },
-  viewerWrap: {
-    height: 340, borderRadius: 24, overflow: 'hidden', marginBottom: 20,
-    backgroundColor: 'rgba(127,127,127,0.06)', borderWidth: 1, borderColor: colors.border,
+  coinBadgeText: { fontSize: 15, fontWeight: '800', color: colors.botBucks },
+
+  stage: {
+    flex: 1,
+    marginHorizontal: 20,
+    marginTop: 4,
+    borderRadius: 28,
+    overflow: 'hidden',
+    alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
+  arrow: {
+    position: 'absolute',
+    top: '46%',
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  arrowLeft: { left: 12 },
+  arrowRight: { right: 12 },
   dragHint: {
     position: 'absolute', bottom: 12, alignSelf: 'center',
     fontSize: 12, color: colors.textMuted, fontWeight: '500',
   },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' },
-  name: { fontSize: 26, fontWeight: '800', color: colors.white, letterSpacing: -0.4, flexShrink: 1 },
-  rarityChip: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1 },
-  rarityChipText: { fontSize: 13, fontWeight: '800', textTransform: 'capitalize' },
-  description: { fontSize: 15, color: colors.textSecondary, lineHeight: 22, marginBottom: 18 },
-  priceCard: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.surfaceElevated, borderRadius: 18, padding: 18,
-    borderWidth: 1, borderColor: colors.border,
+
+  metaRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 20, marginTop: 16,
   },
-  priceLabel: { fontSize: 15, fontWeight: '600', color: colors.textSecondary },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  priceValue: { fontSize: 24, fontWeight: '800', color: '#F5B72B' },
-  footer: { paddingHorizontal: 20, paddingBottom: 16, paddingTop: 8 },
+  rarityChip: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
+  rarityChipText: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  equippedChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  equippedChipText: { fontSize: 12, fontWeight: '800', color: colors.primary, letterSpacing: 0.5 },
+  name: {
+    fontSize: 30, fontWeight: '800', color: colors.white, letterSpacing: -0.5,
+    paddingHorizontal: 20, marginTop: 8,
+  },
+
+  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, marginTop: 14 },
+  balanceTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
+  balanceFill: { height: '100%', borderRadius: 3 },
+  balanceText: { fontSize: 13, fontWeight: '800', color: colors.textSecondary },
+
+  actionRow: {
+    flexDirection: 'row', alignItems: 'stretch', gap: 12,
+    paddingHorizontal: 20, marginTop: 14,
+  },
+  eyeBtn: {
+    width: 58, borderRadius: 16,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  eyeBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  primaryWrap: { flex: 1 },
   ctaContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
     paddingVertical: 18,
   },
-  ctaEquippedContent: {
+  ctaEquipped: {
     backgroundColor: 'rgba(61,220,95,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(61,220,95,0.3)',
-    borderRadius: 16,
+    borderWidth: 1, borderColor: 'rgba(61,220,95,0.3)', borderRadius: 16,
   },
   ctaText: { fontSize: 17, fontWeight: '800', color: colors.background },
   ctaTextDisabled: { color: colors.textMuted },
+
+  strip: { flexGrow: 0, marginTop: 18 },
+  stripContent: { paddingHorizontal: 20, gap: 8, alignItems: 'center' },
+  stripThumb: {
+    width: STRIP_ITEM_W - 8,
+    height: STRIP_ITEM_W - 8,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripDot: {
+    position: 'absolute', top: 3, right: 3,
+    width: 14, height: 14, borderRadius: 7,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stripLock: {
+    position: 'absolute', top: 3, right: 3,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
+  },
 });

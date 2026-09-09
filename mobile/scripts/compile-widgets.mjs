@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const preset = require('expo/node_modules/babel-preset-expo');
+const preset = require('babel-preset-expo');
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
 const dir = path.join(projectRoot, 'src/widgets');
